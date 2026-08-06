@@ -68,16 +68,14 @@ pub fn all_scripts() -> Vec<(&'static str, CardScript)> {
     out
 }
 
-/// Card numbers that are deliberately vanilla — no text, or text that is
-/// entirely a printed keyword the database already carries. Listed explicitly
-/// so the coverage report can tell "done" apart from "not started".
-pub const INTENTIONALLY_VANILLA: &[&str] = &[
-    // ST-01: no card text.
-    "ST01-003", "ST01-008", "ST01-009", "ST01-010",
-    // ST-01: [Blocker] only, which is a printed keyword.
-    "ST01-006",
-    // ST-02: no card text.
-    "ST02-002", "ST02-006", "ST02-011", "ST02-012",
-    // ST-02: [Blocker] only.
-    "ST02-004",
+/// Cards whose entire text is a printed keyword the database already carries,
+/// so a script would add nothing.
+///
+/// Cards with *no* text at all are not listed here — the coverage report
+/// detects those from the card data, which is the only approach that scales to
+/// the full pool. This list exists for the cases that can't be detected: text
+/// is present, but it is purely `[Blocker]` and its reminder sentence.
+pub const KEYWORD_ONLY: &[&str] = &[
+    "ST01-006", // [Blocker]
+    "ST02-004", // [Blocker]
 ];

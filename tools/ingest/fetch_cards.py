@@ -7,14 +7,22 @@ by vegapull (https://github.com/Coko7/vegapull) from the official Bandai site.
 Card text and images are Bandai's copyright. Everything this writes lands in
 data/, which is gitignored; nothing here is vendored into the repo.
 
+One request per product: upstream publishes a per-pack aggregate under
+`english/data/<pack_id>.json` carrying the same fields as the individual card
+files, so fetching every set is 59 requests rather than ~2,700. Nothing here
+touches the GitHub API, so the 60-requests-per-hour unauthenticated limit does
+not apply.
+
 Usage:
     python3 tools/ingest/fetch_cards.py                 # ST-01 and ST-02 only
     python3 tools/ingest/fetch_cards.py --packs ST-03 OP-01
     python3 tools/ingest/fetch_cards.py --packs PROMO
     python3 tools/ingest/fetch_cards.py --all
+    python3 tools/ingest/fetch_cards.py --all --refresh # re-download everything
 
-Alternate printings (OP01-016_p1, EB01-006_r1) are skipped: they are the same
-card as their base, including for the four-copy deck limit.
+Already-fetched packs are skipped, so an interrupted run resumes where it left
+off. Alternate printings (OP01-016_p1, EB01-006_r1) are dropped: they are the
+same card as their base, including for the four-copy deck limit.
 """
 
 from __future__ import annotations
@@ -23,28 +31,53 @@ import argparse
 import json
 import re
 import sys
+import time
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 RAW = "https://raw.githubusercontent.com/buhbbl/punk-records/main/english"
-API = "https://api.github.com/repos/buhbbl/punk-records/contents/english"
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DATA = REPO_ROOT / "data"
+CARDS = DATA / "cards"
 
 DEFAULT_PACKS = ["ST-01", "ST-02"]
 
-
-def get(url: str) -> bytes:
-    req = urllib.request.Request(url, headers={"User-Agent": "OnePieceSim-ingest"})
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        return resp.read()
+RETRIES = 4
+BACKOFF = 2.0
 
 
-def get_json(url: str):
-    return json.loads(get(url))
+def get(url: str, timeout: int = 30) -> bytes:
+    """Fetches a URL, retrying transient failures with exponential backoff.
+
+    Connection timeouts are the common failure when pulling many files in a row
+    — GitHub stalls the TLS handshake rather than refusing it — so `URLError`
+    has to be retried, not just bad HTTP statuses. A retry loop here is what
+    keeps one blip from discarding a whole run's progress.
+    """
+    last = None
+    for attempt in range(RETRIES):
+        try:
+            req = urllib.request.Request(
+                url, headers={"User-Agent": "OnePieceSim-ingest"}
+            )
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return resp.read()
+        except urllib.error.HTTPError as exc:
+            # 404 is a real answer; retrying will not change it.
+            if exc.code == 404:
+                raise
+            last = exc
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            last = exc
+
+        if attempt < RETRIES - 1:
+            delay = BACKOFF**attempt
+            print(f"    retrying in {delay:.0f}s ({last})", file=sys.stderr)
+            time.sleep(delay)
+    raise RuntimeError(f"giving up on {url} after {RETRIES} attempts: {last}")
 
 
 def normalize(name: str) -> str:
@@ -88,48 +121,41 @@ def load_packs() -> dict:
     DATA.mkdir(parents=True, exist_ok=True)
     raw = get(f"{RAW}/packs.json")
     (DATA / "packs.json").write_bytes(raw)
-    packs = json.loads(raw)
 
     out = {}
-    for pack_id, meta in packs.items():
+    for pack_id, meta in json.loads(raw).items():
         for alias in pack_aliases(meta):
             out.setdefault(alias, []).append(pack_id)
     return out
 
 
-def is_art_variant(filename: str) -> bool:
-    """Alternate printings — `OP01-016_p1.json`, `EB01-006_r1.json`.
+def is_art_variant(card_id: str) -> bool:
+    """Alternate printings — `OP01-016_p1`, `EB01-006_r1`.
 
-    These are the same card as their base: same characteristics, and same card
-    number for the four-copy deck limit (5-1-2-3). The engine drops them at load
-    (`op_core::card::is_art_variant`); skipping the download too avoids fetching
-    ~2,000 files nothing reads.
+    These are the same card as their base: same characteristics, and the same
+    card number that the four-copy deck limit counts against (5-1-2-3). The
+    engine drops them at load too (`op_core::card::is_art_variant`), so a stale
+    data/ cannot reintroduce them.
     """
-    return "_" in filename
+    return "_" in card_id
 
 
-def fetch_pack(label: str, pack_id: str) -> int:
-    listing = get_json(f"{API}/cards/{pack_id}")
-    names = [
-        e["name"]
-        for e in listing
-        if e["type"] == "file" and not is_art_variant(e["name"])
-    ]
-    dest = DATA / "cards" / pack_id
-    dest.mkdir(parents=True, exist_ok=True)
+def fetch_pack(name: str, pack_id: str, refresh: bool) -> int:
+    dest = CARDS / f"{pack_id}.json"
+    if dest.exists() and not refresh:
+        cards = json.loads(dest.read_text())
+        print(f"  {name:12} ({pack_id})  {len(cards):>4} cards  (cached)")
+        return len(cards)
 
-    def one(name: str) -> bool:
-        try:
-            (dest / name).write_bytes(get(f"{RAW}/cards/{pack_id}/{name}"))
-            return True
-        except urllib.error.HTTPError as exc:
-            print(f"  ! {name}: HTTP {exc.code}", file=sys.stderr)
-            return False
+    cards = json.loads(get(f"{RAW}/data/{pack_id}.json"))
+    kept = [c for c in cards if not is_art_variant(c.get("id", ""))]
 
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        ok = sum(pool.map(one, names))
-    print(f"  {label} ({pack_id}): {ok}/{len(names)} cards")
-    return ok
+    dest.write_text(json.dumps(kept, indent=1) + "\n")
+
+    skipped = len(cards) - len(kept)
+    note = f"  ({skipped} alternate printings skipped)" if skipped else ""
+    print(f"  {name:12} ({pack_id})  {len(kept):>4} cards{note}")
+    return len(kept)
 
 
 def main() -> int:
@@ -138,20 +164,27 @@ def main() -> int:
                     help="packs to fetch, e.g. ST-01 OP-01 PROMO (case and "
                          "dashes are ignored)")
     ap.add_argument("--all", action="store_true", help="fetch every pack")
+    ap.add_argument("--refresh", action="store_true",
+                    help="re-download packs already present")
+    ap.add_argument("--list", action="store_true",
+                    help="list available pack names and exit")
+    ap.add_argument("--jobs", type=int, default=4, metavar="N",
+                    help="parallel downloads (default 4; use 1 if throttled)")
     args = ap.parse_args()
 
     print("fetching pack index...")
     packs = load_packs()
 
-    if args.all:
-        wanted = sorted(packs)
-    else:
-        wanted = args.packs or DEFAULT_PACKS
+    if args.list:
+        print(f"{len(packs)} names available:\n  {', '.join(sorted(packs))}")
+        return 0
+
+    wanted = sorted(packs) if args.all else (args.packs or DEFAULT_PACKS)
 
     unknown = [p for p in wanted if normalize(p) not in packs]
     if unknown:
         print(f"unknown pack name(s): {', '.join(unknown)}", file=sys.stderr)
-        print(f"known: {', '.join(sorted(packs))}", file=sys.stderr)
+        print("run with --list to see the available names", file=sys.stderr)
         return 1
 
     # A name may resolve to several products — EB-04 shipped inside both the
@@ -162,18 +195,43 @@ def main() -> int:
         for pack_id in packs[normalize(name)]:
             selected.setdefault(pack_id, name)
 
-    print(f"fetching {len(selected)} product(s) into {DATA}")
-    total = 0
-    for pack_id, name in selected.items():
-        total += fetch_pack(name, pack_id)
+    print(f"fetching {len(selected)} product(s) into {CARDS} with {args.jobs} job(s)")
+    CARDS.mkdir(parents=True, exist_ok=True)
 
-    # Manifest maps the names asked for onto the numeric pack dirs.
+    # Kept deliberately low. An earlier version fetched one file per *card* —
+    # ~2,700 requests — across 8 workers, and GitHub responded by stalling the
+    # TLS handshake until the run died. Per-pack aggregates cut that to 59
+    # requests, which is comfortably under any throttling threshold; a handful
+    # of workers shaves the wall time without going back towards it. Use
+    # `--jobs 1` if a network ever objects.
+    total = 0
+    failed = []
+    with ThreadPoolExecutor(max_workers=args.jobs) as pool:
+        futures = {
+            pool.submit(fetch_pack, name, pack_id, args.refresh): (name, pack_id)
+            for pack_id, name in selected.items()
+        }
+        for future in futures:
+            name, pack_id = futures[future]
+            try:
+                total += future.result()
+            except Exception as exc:
+                # One unreachable product should not discard the rest of the
+                # run; re-running picks up only what is missing.
+                print(f"  {name:12} ({pack_id})  FAILED: {exc}", file=sys.stderr)
+                failed.append(name)
+
     manifest = {
         "packs": {name: packs[normalize(name)] for name in wanted},
         "cards": total,
     }
     (DATA / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
-    print(f"done: {total} cards")
+
+    print(f"done: {total} cards across {len(selected) - len(failed)} product(s)")
+    if failed:
+        print(f"{len(failed)} failed: {', '.join(failed)} — re-run to retry",
+              file=sys.stderr)
+        return 1
     return 0
 
 

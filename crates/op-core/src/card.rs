@@ -137,6 +137,27 @@ impl CardDef {
     }
 }
 
+/// A data file holds either one card or a whole pack.
+///
+/// The ingest writes one file per product, but upstream also publishes one file
+/// per card and earlier revisions of the ingest used that layout. Accepting
+/// both means a `data/` directory fetched by any version still loads.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum RawFile {
+    One(Box<RawCard>),
+    Many(Vec<RawCard>),
+}
+
+impl RawFile {
+    fn into_cards(self) -> Vec<RawCard> {
+        match self {
+            RawFile::One(card) => vec![*card],
+            RawFile::Many(cards) => cards,
+        }
+    }
+}
+
 /// The shape punk-records writes per card. Deliberately mirrors the upstream
 /// JSON so ingestion stays a dumb mapping.
 #[derive(Debug, Deserialize)]
@@ -223,16 +244,19 @@ impl CardDb {
                 path: path.display().to_string(),
                 source,
             })?;
-            let raw: RawCard = serde_json::from_str(&text).map_err(|source| CardDbError::Json {
-                path: path.display().to_string(),
-                source,
-            })?;
-            // Checked on the parsed id rather than the filename, so a variant is
-            // dropped however the file happens to be named.
-            if is_art_variant(&raw.id) {
-                continue;
+            let file: RawFile =
+                serde_json::from_str(&text).map_err(|source| CardDbError::Json {
+                    path: path.display().to_string(),
+                    source,
+                })?;
+            for raw in file.into_cards() {
+                // Checked on the parsed id rather than the filename, so a
+                // variant is dropped however the file happens to be named.
+                if is_art_variant(&raw.id) {
+                    continue;
+                }
+                db.insert(convert(raw)?);
             }
-            db.insert(convert(raw)?);
         }
         Ok(db)
     }
@@ -319,7 +343,7 @@ fn convert(raw: RawCard) -> Result<CardDef, CardDbError> {
         _ => (raw.cost.unwrap_or(0) as u8, None),
     };
 
-    let effect = raw.effect.filter(|s| !s.is_empty());
+    let effect = text(raw.effect);
     let keywords = effect
         .as_deref()
         .map(scan_keywords)
@@ -338,8 +362,19 @@ fn convert(raw: RawCard) -> Result<CardDef, CardDbError> {
         attributes: raw.attributes,
         keywords,
         effect,
-        trigger: raw.trigger.filter(|s| !s.is_empty()),
+        trigger: text(raw.trigger),
     })
+}
+
+/// Normalises an upstream text field to `None` when the card has no such text.
+///
+/// Upstream writes a literal `"-"` rather than null or an empty string for a
+/// card with no rules text — 317 cards across the full pool. Treating that as
+/// real text makes vanilla cards look like they need scripts.
+fn text(field: Option<String>) -> Option<String> {
+    field
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty() && s != "-")
 }
 
 /// Pulls standing keyword effects out of rules text.
@@ -398,6 +433,19 @@ mod tests {
         let def = convert(raw).unwrap();
         assert_eq!(def.life, Some(5));
         assert_eq!(def.cost, 0);
+    }
+
+    #[test]
+    fn a_dash_means_the_card_has_no_rules_text() {
+        assert_eq!(text(Some("-".into())), None);
+        assert_eq!(text(Some("  -  ".into())), None);
+        assert_eq!(text(Some(String::new())), None);
+        assert_eq!(text(None), None);
+        // A real effect that merely contains a dash must survive.
+        assert_eq!(
+            text(Some("Give up to 1 of your opponent's Characters −2000 power.".into())),
+            Some("Give up to 1 of your opponent's Characters −2000 power.".into())
+        );
     }
 
     #[test]

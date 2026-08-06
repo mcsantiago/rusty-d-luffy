@@ -207,10 +207,12 @@ fn report_unscripted(db: &CardDb, cards: &Cards, options: &Options) {
                 continue;
             };
             let card = db.get(def);
+            // A card with no rules text is correctly a vanilla body; only text
+            // that goes unimplemented is worth warning about.
             let has_text = card.effect.is_some() || card.trigger.is_some();
             if has_text
                 && cards.script(def).is_vanilla()
-                && !op_cards::INTENTIONALLY_VANILLA.contains(&number.as_str())
+                && !op_cards::KEYWORD_ONLY.contains(&number.as_str())
                 && !unscripted.contains(&card.number.as_str())
             {
                 unscripted.push(&card.number);

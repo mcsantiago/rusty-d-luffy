@@ -76,16 +76,26 @@ binaries.
 ```bash
 python3 tools/ingest/fetch_cards.py                   # ST-01 and ST-02
 python3 tools/ingest/fetch_cards.py --packs OP-01 EB-04 PROMO
-python3 tools/ingest/fetch_cards.py --all
+python3 tools/ingest/fetch_cards.py --all             # 2,665 cards, ~1s
+python3 tools/ingest/fetch_cards.py --list            # available pack names
 ```
 
 Names are matched case- and dash-insensitively, so `OP-01`, `op01` and `OP 01`
-are the same pack.
+are the same pack. Already-fetched packs are skipped, so an interrupted run
+resumes; `--refresh` forces a re-download and `--jobs 1` serialises if a network
+objects.
+
+One request per product, from upstream's `english/data/<pack_id>.json`
+aggregates. The GitHub API is not used at all, so the 60-requests-per-hour
+unauthenticated limit never applies.
 
 ### Upstream quirks the ingest handles
 
 - **A Leader's Life value is stored in the `cost` field.** Mapped in
   `card.rs`; pinned by a test against real data.
+- **"No rules text" is a literal `"-"`,** not null or an empty string — 317
+  cards across the pool. Normalised to `None` in `card.rs`, so vanilla cards
+  aren't mistaken for unimplemented ones.
 - **Alternate printings get their own ids** — `OP01-016_p1` (parallel),
   `EB01-006_r1`. They are the *same card*, including for the four-copy deck
   limit (5-1-2-3), so registering them separately would let a deck field eight.
@@ -110,15 +120,19 @@ Card *scripts* — our encoding of what each card does — are compiled in and k
 by card number.
 
 A card with no script plays as a vanilla body, which is correct for the many
-cards with no text; `cargo run -p op-cards --bin coverage` reports the
-difference between "deliberately vanilla" and "not yet implemented".
+cards with no text. The coverage report separates the two:
+
+```bash
+cargo run -p op-cards --bin coverage          # one line per set
+cargo run -p op-cards --bin coverage -- EB01  # what EB01 still needs, with text
+```
 
 ## Adding a set
 
 1. `python3 tools/ingest/fetch_cards.py --packs OP-01`
-2. Add `crates/op-cards/src/sets/op01.rs`, register it in `sets/mod.rs` and
-   `all_scripts()`
-3. `cargo run -p op-cards --bin coverage` until the set reports `OK`
+2. `cargo run -p op-cards --bin coverage -- OP01` to list what needs scripting
+3. Add `crates/op-cards/src/sets/op01.rs`, register it in `sets/mod.rs` and
+   `all_scripts()`, until the set reports `OK`
 4. Extend the DSL vocabulary in `op-cards/src/dsl.rs` (and the ops in
    `op-core/src/effect.rs`) where existing pieces do not fit
 
