@@ -42,6 +42,7 @@ RAW = "https://raw.githubusercontent.com/buhbbl/punk-records/main/english"
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DATA = REPO_ROOT / "data"
 CARDS = DATA / "cards"
+IMAGES = DATA / "images"
 
 DEFAULT_PACKS = ["ST-01", "ST-02"]
 
@@ -158,6 +159,54 @@ def fetch_pack(name: str, pack_id: str, refresh: bool) -> int:
     return len(kept)
 
 
+def fetch_images(jobs: int, pack_ids: set | None = None) -> int:
+    """Caches card art, for `pack_ids` if given or everything in data/cards.
+
+    The UI needs the images offline, and re-fetching Bandai's CDN on every
+    render would be rude. Existing files are left alone, so this is resumable
+    and cheap to re-run after adding a pack.
+
+    Scoping matters: the full pool is ~2,700 images and several hundred MB.
+    Passing the packs actually being fetched keeps a routine run small.
+    """
+    IMAGES.mkdir(parents=True, exist_ok=True)
+    paths = (
+        [CARDS / f"{pid}.json" for pid in sorted(pack_ids)]
+        if pack_ids is not None
+        else sorted(CARDS.glob("*.json"))
+    )
+    wanted = {}
+    for path in paths:
+        if not path.exists():
+            continue
+        for card in json.loads(path.read_text()):
+            url = card.get("img_full_url")
+            if url and card.get("id"):
+                wanted[card["id"]] = url
+
+    todo = [(cid, url) for cid, url in wanted.items()
+            if not (IMAGES / f"{cid}.png").exists()]
+    if not todo:
+        print(f"images: {len(wanted)} already cached")
+        return 0
+
+    print(f"images: fetching {len(todo)} of {len(wanted)} with {jobs} job(s)")
+
+    def one(item) -> bool:
+        cid, url = item
+        try:
+            (IMAGES / f"{cid}.png").write_bytes(get(url))
+            return True
+        except Exception as exc:
+            print(f"  ! {cid}: {exc}", file=sys.stderr)
+            return False
+
+    with ThreadPoolExecutor(max_workers=jobs) as pool:
+        ok = sum(pool.map(one, todo))
+    print(f"images: {ok}/{len(todo)} fetched")
+    return len(todo) - ok
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--packs", nargs="+", metavar="NAME",
@@ -170,7 +219,14 @@ def main() -> int:
                     help="list available pack names and exit")
     ap.add_argument("--jobs", type=int, default=4, metavar="N",
                     help="parallel downloads (default 4; use 1 if throttled)")
+    ap.add_argument("--images", action="store_true",
+                    help="also cache card art for every pack in data/cards")
     args = ap.parse_args()
+
+    # Images are cached for whatever is already fetched, so this can be run on
+    # its own without re-touching the card JSON.
+    if args.images and not args.packs and not args.all:
+        return fetch_images(args.jobs)
 
     print("fetching pack index...")
     packs = load_packs()
@@ -226,6 +282,9 @@ def main() -> int:
         "cards": total,
     }
     (DATA / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+
+    if args.images:
+        fetch_images(args.jobs, set(selected))
 
     print(f"done: {total} cards across {len(selected) - len(failed)} product(s)")
     if failed:

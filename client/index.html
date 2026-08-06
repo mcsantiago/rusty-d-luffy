@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>One Piece Card Game</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div id="setup" class="overlay">
+      <div class="panel">
+        <h1>One Piece Card Game</h1>
+        <p class="sub">Local play against the AI</p>
+
+        <label>
+          Your deck
+          <select id="your-deck">
+            <option value="ST01">ST-01 Straw Hat Crew</option>
+            <option value="ST02">ST-02 Worst Generation</option>
+          </select>
+        </label>
+
+        <label>
+          Opponent deck
+          <select id="ai-deck">
+            <option value="ST02">ST-02 Worst Generation</option>
+            <option value="ST01">ST-01 Straw Hat Crew</option>
+          </select>
+        </label>
+
+        <label>
+          Difficulty
+          <select id="difficulty">
+            <option value="easy">Easy — one-ply greedy</option>
+            <option value="normal" selected>Normal — search</option>
+            <option value="hard">Hard — deeper search</option>
+          </select>
+        </label>
+
+        <label class="check">
+          <input type="checkbox" id="you-first" checked />
+          You go first
+        </label>
+
+        <button id="start" class="primary">Start game</button>
+        <p id="setup-error" class="error"></p>
+      </div>
+    </div>
+
+    <main id="game" hidden>
+      <header id="topbar">
+        <span id="turn-label"></span>
+        <span id="phase-label" class="muted"></span>
+        <button id="new-game" class="ghost">New game</button>
+      </header>
+
+      <section id="board">
+        <div class="side" id="opponent-side">
+          <div class="side-meta">
+            <span class="who">Opponent</span>
+            <span class="stat" id="opp-life"></span>
+            <span class="stat" id="opp-hand"></span>
+            <span class="stat" id="opp-deck"></span>
+            <span class="stat" id="opp-don"></span>
+          </div>
+          <div class="row">
+            <div class="leader-slot" id="opp-leader"></div>
+            <div class="characters" id="opp-characters"></div>
+            <div class="stage-slot" id="opp-stage"></div>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="side" id="your-side">
+          <div class="row">
+            <div class="leader-slot" id="you-leader"></div>
+            <div class="characters" id="you-characters"></div>
+            <div class="stage-slot" id="you-stage"></div>
+          </div>
+          <div class="side-meta">
+            <span class="who">You</span>
+            <span class="stat" id="you-life"></span>
+            <span class="stat" id="you-deck"></span>
+            <span class="stat" id="you-don"></span>
+          </div>
+        </div>
+
+        <div id="hand-area">
+          <div class="hand-label">Hand</div>
+          <div class="hand" id="hand"></div>
+        </div>
+      </section>
+
+      <aside id="sidebar">
+        <div id="prompt">
+          <h2 id="question">—</h2>
+          <div id="options"></div>
+        </div>
+        <div id="log-area">
+          <h3>Log</h3>
+          <div id="log"></div>
+        </div>
+      </aside>
+
+      <div id="result" class="overlay" hidden>
+        <div class="panel">
+          <h1 id="result-text"></h1>
+          <button id="result-new" class="primary">New game</button>
+        </div>
+      </div>
+    </main>
+
+    <div id="preview" hidden></div>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

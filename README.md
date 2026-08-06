@@ -14,7 +14,11 @@ test suite is named for the clauses it pins down.
 # 1. Fetch card data (not vendored — it is Bandai's copyright)
 python3 tools/ingest/fetch_cards.py
 
-# 2. Play
+# 2. Play — desktop app (card art, clickable actions)
+python3 tools/ingest/fetch_cards.py --images   # cache art for the fetched packs
+cargo run -p op-desktop --release
+
+# ...or in the terminal
 cargo run -p op-cli --release -- --help
 cargo run -p op-cli --release            # you (ST-01) vs AI (ST-02)
 cargo run -p op-cli --release -- --hard --second
@@ -33,6 +37,7 @@ cargo run -p op-cards --bin coverage     # which cards have scripts
 | `op-cards` | Card scripts, one module per product, plus the scripting DSL |
 | `op-ai` | Determinization, a heuristic evaluation/agent, and ISMCTS |
 | `op-cli` | Terminal client |
+| `op-desktop` | Tauri desktop client; `client/` holds the front end |
 | `tools/ingest` | Fetches card data into `data/` |
 
 ## Design
@@ -64,6 +69,26 @@ could occupy.
 **One legal-action generator.** `op_core::legal_actions` is the move generator
 for search, the RL action mask, and the server's validator — so the three cannot
 disagree about what is legal.
+
+## Desktop client
+
+Tauri rather than Electron because the engine is already Rust: `op-core` links
+straight into the app binary, so a UI click calls `Game::step` in-process. No
+sidecar, no hand-written IPC protocol, no bundled Chromium. The front end under
+`client/` is plain ES modules — there is no JavaScript build step.
+
+The UI is a **renderer**. It is handed a `PlayerView`, a log of already-projected
+`PlayerEvent`s, and the legal actions for the human seat — never `GameState`.
+That is the same boundary the multiplayer server will use, so this front end
+should survive the transport becoming a socket.
+
+Card art is cached under `data/images/` by `fetch_cards.py --images` and served
+as data URIs. Without it the UI falls back to drawing text cards, so the app
+still runs.
+
+> `client/` is embedded into the binary at compile time, so **editing the front
+> end requires `cargo build -p op-desktop`** — a browser refresh will not pick
+> changes up.
 
 ## Card data
 

@@ -1,0 +1,23 @@
+[package]
+name = "op-desktop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Desktop client for the One Piece Card Game simulator"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+op-core = { workspace = true }
+op-cards = { workspace = true }
+op-ai = { workspace = true }
+tauri = { version = "2", features = [] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+rand = { workspace = true }
+base64 = "0.22"
+
+[[bin]]
+name = "onepiece-desktop"
+path = "src/main.rs"

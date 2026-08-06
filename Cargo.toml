@@ -5,6 +5,7 @@ members = [
     "crates/op-cards",
     "crates/op-ai",
     "crates/op-cli",
+    "crates/op-desktop",
 ]
 
 [workspace.package]
