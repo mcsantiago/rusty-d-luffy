@@ -156,6 +156,19 @@ struct RawCard {
     trigger: Option<String>,
 }
 
+/// Whether a card id from upstream names an alternate printing rather than a
+/// distinct card.
+///
+/// Upstream gives every alternate art its own id by suffixing the card number:
+/// `OP01-016_p1` (parallel art) and `EB01-006_r1`. These are the *same card* —
+/// they share printed characteristics and, critically, the card number that the
+/// four-copy deck-construction limit counts against (5-1-2-3). Registering them
+/// as separate defs would let a deck run four of each and field eight, so they
+/// are dropped at load; every variant has a base card, making this lossless.
+pub fn is_art_variant(number: &str) -> bool {
+    number.contains('_')
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum CardDbError {
     #[error("card data directory not found at {0}\n\nRun: python3 tools/ingest/fetch_cards.py")]
@@ -214,6 +227,11 @@ impl CardDb {
                 path: path.display().to_string(),
                 source,
             })?;
+            // Checked on the parsed id rather than the filename, so a variant is
+            // dropped however the file happens to be named.
+            if is_art_variant(&raw.id) {
+                continue;
+            }
             db.insert(convert(raw)?);
         }
         Ok(db)
@@ -380,6 +398,19 @@ mod tests {
         let def = convert(raw).unwrap();
         assert_eq!(def.life, Some(5));
         assert_eq!(def.cost, 0);
+    }
+
+    #[test]
+    fn alternate_printings_are_recognised() {
+        // Upstream's two variant families.
+        assert!(is_art_variant("OP01-016_p1"));
+        assert!(is_art_variant("OP01-016_p12"));
+        assert!(is_art_variant("EB01-006_r1"));
+        // Real card numbers, including the synthetic DON!! def.
+        assert!(!is_art_variant("OP01-016"));
+        assert!(!is_art_variant("ST01-001"));
+        assert!(!is_art_variant("P-001"));
+        assert!(!is_art_variant("DON"));
     }
 
     #[test]

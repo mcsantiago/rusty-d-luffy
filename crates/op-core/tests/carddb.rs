@@ -3,7 +3,7 @@
 //! Skipped when `data/` has not been populated, so the suite still runs on a
 //! fresh clone. Populate it with `python3 tools/ingest/fetch_cards.py`.
 
-use op_core::card::{CardDb, Category, Keyword};
+use op_core::card::{CardDb, CardDef, Category, Color, Keyword};
 
 fn data_dir() -> Option<std::path::PathBuf> {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -11,6 +11,75 @@ fn data_dir() -> Option<std::path::PathBuf> {
         .canonicalize()
         .ok()?;
     dir.exists().then_some(dir)
+}
+
+/// Alternate printings share their base card's *card number*, which is what the
+/// four-copy limit counts against (5-1-2-3). If `OP01-016_p1` were loaded as its
+/// own def, a deck could hold four of each and field eight — so the loader must
+/// never produce a number containing a variant suffix.
+#[test]
+fn alternate_printings_never_become_separate_cards() {
+    let Some(dir) = data_dir() else {
+        eprintln!("skipping: run tools/ingest/fetch_cards.py to populate data/");
+        return;
+    };
+    let db = CardDb::load_dir(dir).expect("ingested card data should load");
+
+    for (_, def) in db.iter() {
+        assert!(
+            !def.number.contains('_'),
+            "{} is an alternate printing and should have been dropped at load",
+            def.number
+        );
+    }
+}
+
+/// Guards the same property without needing `data/`: writing a parallel art
+/// into a directory must not add a second def.
+#[test]
+fn a_parallel_art_file_does_not_add_a_second_def() {
+    let dir = std::env::temp_dir().join(format!("opsim-parallel-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+
+    let card = |id: &str| {
+        format!(
+            r#"{{"id":"{id}","name":"Nami","category":"Character","colors":["Red"],
+                 "cost":1,"power":1000,"counter":1000,"types":["Straw Hat Crew"],
+                 "attributes":[],"effect":null,"trigger":null,"pack_id":"569001"}}"#
+        )
+    };
+    std::fs::write(dir.join("ST01-007.json"), card("ST01-007")).unwrap();
+    std::fs::write(dir.join("ST01-007_p1.json"), card("ST01-007_p1")).unwrap();
+    std::fs::write(dir.join("ST01-007_r1.json"), card("ST01-007_r1")).unwrap();
+
+    let db = CardDb::load_dir(&dir).expect("should load");
+    std::fs::remove_dir_all(&dir).ok();
+
+    // The DON!! def plus exactly one Nami.
+    assert_eq!(db.len(), 2, "expected only DON!! and one ST01-007");
+    assert!(db.by_number("ST01-007").is_some());
+    assert!(db.by_number("ST01-007_p1").is_none());
+    assert!(db.by_number("ST01-007_r1").is_none());
+
+    // Sanity: the loader is not simply rejecting everything with a suffix-like
+    // shape — a hand-inserted def is unaffected.
+    let mut db = db;
+    db.insert(CardDef {
+        number: "P-001".into(),
+        name: "Promo".into(),
+        category: Category::Character,
+        colors: vec![Color::Red],
+        cost: 1,
+        life: None,
+        power: Some(1000),
+        counter: None,
+        types: vec![],
+        attributes: vec![],
+        keywords: vec![],
+        effect: None,
+        trigger: None,
+    });
+    assert!(db.by_number("P-001").is_some());
 }
 
 #[test]

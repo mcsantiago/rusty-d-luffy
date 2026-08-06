@@ -73,13 +73,45 @@ from Bandai's official site) into `data/`, which is gitignored. Card text and
 images are Bandai's copyright; nothing is vendored into this repo or its
 binaries.
 
-Note that upstream stores a Leader's **Life** value in the `cost` field; the
-ingest maps it correctly.
+```bash
+python3 tools/ingest/fetch_cards.py                   # ST-01 and ST-02
+python3 tools/ingest/fetch_cards.py --packs OP-01 EB-04 PROMO
+python3 tools/ingest/fetch_cards.py --all
+```
+
+Names are matched case- and dash-insensitively, so `OP-01`, `op01` and `OP 01`
+are the same pack.
+
+### Upstream quirks the ingest handles
+
+- **A Leader's Life value is stored in the `cost` field.** Mapped in
+  `card.rs`; pinned by a test against real data.
+- **Alternate printings get their own ids** — `OP01-016_p1` (parallel),
+  `EB01-006_r1`. They are the *same card*, including for the four-copy deck
+  limit (5-1-2-3), so registering them separately would let a deck field eight.
+  They are skipped on fetch and dropped again at load
+  (`op_core::card::is_art_variant`); every variant has a base card, so this is
+  lossless. Of upstream's 4,672 entries, **2,665 are distinct cards** and 2,007
+  are alternate art.
+- **Not every product code appears as a label.** OP-14 and OP-15 ship as
+  combined products labelled `OP14-EB04` / `OP15-EB04`, and the promo and
+  "Other Product" packs carry no label at all. The ingest registers each
+  component as an alias, so `--packs OP-14` and `--packs PROMO` resolve;
+  `EB-04` correctly resolves to both boosters that carry it.
+
+### Coverage of the source
+
+Complete, with no gaps in card numbering, for **OP-01 → OP-16, EB-01 → EB-04,
+ST-01 → ST-36**. Two known holes: promos are partial (~105 of ~155 `P-xxx`
+numbers), and `PRB-01` has a single entry. Neither affects the starter-deck
+pool this project currently scripts.
 
 Card *scripts* — our encoding of what each card does — are compiled in and keyed
-by card number. A card with no script plays as a vanilla body, which is correct
-for the many cards with no text; `cargo run -p op-cards --bin coverage` reports
-the difference between "deliberately vanilla" and "not yet implemented".
+by card number.
+
+A card with no script plays as a vanilla body, which is correct for the many
+cards with no text; `cargo run -p op-cards --bin coverage` reports the
+difference between "deliberately vanilla" and "not yet implemented".
 
 ## Adding a set
 
