@@ -322,3 +322,67 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
 .pmeta { color: var(--muted); font-size: 11px; margin: 2px 0 8px; }
 .peffect { font-size: 12px; line-height: 1.4; }
 .ptrigger { font-size: 12px; margin-top: 6px; color: var(--accent-2); }
+
+/* ---- DON!! ----
+
+   DON!! are fungible and have no art, so they are drawn rather than imaged.
+   Rested ones tilt and dim like any other rested card, which makes the
+   available pool readable without counting. */
+
+.don-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+  min-height: 46px;
+  padding: 4px 0;
+}
+
+.don-card {
+  width: 34px;
+  height: 46px;
+  border-radius: 5px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  flex: 0 0 auto;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: #4a3608;
+  background: linear-gradient(160deg, #f5d477 0%, var(--accent-2) 55%, #c98f10 100%);
+  border: 1px solid #a97a12;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45);
+  outline: 2px solid transparent;
+  transition: transform 0.1s, filter 0.1s, outline-color 0.1s;
+}
+
+.don-card .bangs { font-size: 11px; line-height: 0.8; }
+
+.don-card.rested {
+  transform: rotate(12deg);
+  filter: saturate(0.35) brightness(0.62);
+}
+
+.don-card.highlight {
+  outline-color: var(--ink);
+  box-shadow: 0 0 0 4px rgba(232, 238, 246, 0.22);
+}
+
+/* Remaining DON!! deck, shown as a count rather than 10 more cards. */
+.don-deck {
+  width: 34px;
+  height: 46px;
+  margin-left: 8px;
+  border-radius: 5px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+  background: rgba(240, 180, 41, 0.07);
+  border: 1px dashed #6c5a2a;
+}

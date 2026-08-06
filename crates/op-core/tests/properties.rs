@@ -274,6 +274,20 @@ fn player_views_never_leak_hidden_information() {
             if let Some(pending) = &view.pending {
                 assert_eq!(pending.player(), viewer);
             }
+
+            // The cost area is open (3-1-5), so every DON!! is visible to both
+            // players and its totals must agree with the cards themselves.
+            for side in [&view.you, &view.opponent] {
+                assert_eq!(side.don.len(), side.don_active + side.don_rested);
+                assert_eq!(
+                    side.don.iter().filter(|d| !d.rested).count(),
+                    side.don_active
+                );
+                assert!(
+                    side.don.iter().all(|d| d.number.is_some()),
+                    "DON!! in the cost area are public"
+                );
+            }
         }
 
         game.step(legal[policy.gen_range(0..legal.len())].clone())

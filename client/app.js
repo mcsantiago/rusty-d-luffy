@@ -112,6 +112,34 @@ function hidePreview() {
   $("preview").hidden = true;
 }
 
+/** A single DON!! card. Fungible and art-less, so drawn rather than imaged. */
+function donEl(card) {
+  const el = document.createElement("div");
+  el.className = "don-card" + (card.rested ? " rested" : "");
+  el.dataset.id = String(card.id);
+  if (highlighted.has(card.id)) el.classList.add("highlight");
+  el.innerHTML = `<span>DON</span><span class="bangs">!!</span>`;
+  return el;
+}
+
+function renderDon(side, prefix, deckCount) {
+  const row = $(`${prefix}-don-row`);
+  row.innerHTML = "";
+
+  if (side.don.length === 0) {
+    row.innerHTML = `<div class="empty">no DON!!</div>`;
+  }
+  // Active first so the usable pool reads at a glance.
+  const ordered = [...side.don].sort((a, b) => Number(a.rested) - Number(b.rested));
+  for (const d of ordered) row.appendChild(donEl(d));
+
+  const remaining = document.createElement("div");
+  remaining.className = "don-deck";
+  remaining.title = "DON!! deck";
+  remaining.textContent = deckCount;
+  row.appendChild(remaining);
+}
+
 function renderSide(view, side, prefix) {
   const leader = $(`${prefix}-leader`);
   leader.innerHTML = "";
@@ -142,18 +170,16 @@ function render(snap) {
   $("opp-life").innerHTML = `life ${lifePips(view.opponent.life_count)}`;
   $("opp-hand").textContent = `hand ${view.opponent.hand_count}`;
   $("opp-deck").textContent = `deck ${view.opponent.deck_count}`;
-  $("opp-don").textContent = `DON!! ${view.opponent.don_active}/${
-    view.opponent.don_active + view.opponent.don_rested
-  }`;
+  $("opp-don").textContent = `${view.opponent.don_active} active DON!!`;
 
   $("you-life").innerHTML = `life ${lifePips(view.you.life_count)}`;
   $("you-deck").textContent = `deck ${view.you.deck_count}`;
-  $("you-don").textContent = `DON!! ${view.you.don_active}/${
-    view.you.don_active + view.you.don_rested
-  }`;
+  $("you-don").textContent = `${view.you.don_active} active DON!!`;
 
   renderSide(view, view.opponent, "opp");
   renderSide(view, view.you, "you");
+  renderDon(view.opponent, "opp", view.opponent.don_deck);
+  renderDon(view.you, "you", view.you.don_deck);
 
   const hand = $("hand");
   hand.innerHTML = "";
@@ -201,7 +227,7 @@ function render(snap) {
  * currently under the cursor, re-firing mouseenter and looping forever.
  */
 function applyHighlight() {
-  for (const el of document.querySelectorAll(".card")) {
+  for (const el of document.querySelectorAll(".card, .don-card")) {
     el.classList.toggle("highlight", highlighted.has(Number(el.dataset.id)));
   }
 }

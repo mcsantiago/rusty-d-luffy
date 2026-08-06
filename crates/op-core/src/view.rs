@@ -33,7 +33,11 @@ pub struct PlayerSide {
     pub leader: Option<VisibleCard>,
     pub characters: Vec<VisibleCard>,
     pub stage: Option<VisibleCard>,
-    /// Cost area is open (3-1-5); only the active/rested split matters.
+    /// The cost area, card by card. It is an open area (3-1-5), so both
+    /// players may see it in full — and effects that target a specific DON!!
+    /// (ST02-008) need the ids to be addressable.
+    pub don: Vec<VisibleCard>,
+    /// Convenience totals over [`PlayerSide::don`].
     pub don_active: usize,
     pub don_rested: usize,
     pub don_deck: usize,
@@ -108,6 +112,7 @@ fn side(
         leader: ps.leader.map(visible),
         characters: ps.characters.iter().copied().map(visible).collect(),
         stage: ps.stage.map(visible),
+        don: ps.cost_area.iter().copied().map(visible).collect(),
         don_active: ps
             .cost_area
             .iter()
