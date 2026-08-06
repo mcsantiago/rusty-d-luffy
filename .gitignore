@@ -8,3 +8,6 @@ __pycache__/
 /rl/.venv/
 /rl/runs/
 *.pdf
+
+# Tauri build artifacts
+/crates/op-desktop/gen/
