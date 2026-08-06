@@ -1,0 +1,10 @@
+/target
+/data/
+__pycache__/
+*.pyc
+.venv/
+/client/node_modules/
+/client/dist/
+/rl/.venv/
+/rl/runs/
+*.pdf

@@ -1,0 +1,15 @@
+[package]
+name = "op-cards"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+op-core = { workspace = true }
+
+[dev-dependencies]
+rand = { workspace = true }
+
+[[bin]]
+name = "coverage"
+path = "src/bin/coverage.rs"

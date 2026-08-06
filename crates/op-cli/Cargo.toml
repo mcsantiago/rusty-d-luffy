@@ -1,0 +1,16 @@
+[package]
+name = "op-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+op-core = { workspace = true }
+op-cards = { workspace = true }
+op-ai = { workspace = true }
+anyhow = { workspace = true }
+rand = { workspace = true }
+
+[[bin]]
+name = "onepiece"
+path = "src/main.rs"

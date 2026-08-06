@@ -1,0 +1,13 @@
+[package]
+name = "op-ai"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+op-core = { workspace = true }
+rand = { workspace = true }
+rand_chacha = { workspace = true }
+
+[dev-dependencies]
+op-cards = { workspace = true }

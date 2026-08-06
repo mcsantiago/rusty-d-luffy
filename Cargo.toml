@@ -1,0 +1,29 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/op-core",
+    "crates/op-cards",
+    "crates/op-ai",
+    "crates/op-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+
+[workspace.dependencies]
+op-core = { path = "crates/op-core" }
+op-cards = { path = "crates/op-cards" }
+op-ai = { path = "crates/op-ai" }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rand = "0.8"
+rand_chacha = { version = "0.3", features = ["serde1"] }
+thiserror = "1"
+anyhow = "1"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
