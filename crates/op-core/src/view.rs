@@ -37,7 +37,13 @@ pub struct PlayerSide {
     pub don_active: usize,
     pub don_rested: usize,
     pub don_deck: usize,
-    /// Hand contents when this is the viewer, card count otherwise.
+    /// The viewer's own hand. **Always empty for the opponent** — see
+    /// [`PlayerSide::hand_count`].
+    ///
+    /// The opponent's hand cannot be represented as redacted `VisibleCard`s,
+    /// because a `CardInstanceId` is not an opaque token: ids are assigned in
+    /// decklist order at setup, so shipping one for a hidden card leaks the
+    /// card to anyone who knows the decklist. Only the count crosses.
     pub hand: Vec<VisibleCard>,
     pub hand_count: usize,
     pub deck_count: usize,
@@ -113,15 +119,12 @@ fn side(
             .filter(|&&d| !state.card(d).is_active())
             .count(),
         don_deck: ps.don_deck.len(),
-        // 3-4-2: the hand is a secret area. The viewer sees their own.
+        // 3-4-2: the hand is a secret area. The viewer sees their own, and of
+        // the opponent's learns only the size (3-1-4).
         hand: if is_viewer {
             ps.hand.iter().copied().map(visible).collect()
         } else {
-            ps.hand
-                .iter()
-                .copied()
-                .map(|id| visible_card(state, db, derived, id, false))
-                .collect()
+            Vec::new()
         },
         hand_count: ps.hand.len(),
         // 3-2-2: neither player may see the deck.

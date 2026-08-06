@@ -100,7 +100,13 @@ fn main() -> Result<()> {
     println!("\nOne Piece Card Game — seed {}\n", options.seed);
 
     loop {
-        for line in events.iter().filter_map(|e| render::event(e, &game, human)) {
+        // Rendered from the human's projection, so the log physically cannot
+        // name a card they are not entitled to see.
+        for line in events
+            .iter()
+            .map(|e| e.project(&game.state, human))
+            .filter_map(|e| render::event(&e, &game, human))
+        {
             println!("  {line}");
         }
 

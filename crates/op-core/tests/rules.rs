@@ -8,7 +8,7 @@ mod common;
 use common::{deck_of, game_with, TestCards, TestScripts};
 use op_core::state::Placement;
 use op_core::zone::Zone;
-use op_core::{Action, BattleStep, Event, Game, GameOver, Pending, PlayerId};
+use op_core::{Action, BattleStep, GameEvent, Game, GameOver, Pending, PlayerId};
 
 /// Drives the game to the turn player's Main Phase, taking the default answer
 /// to any setup decision along the way.
@@ -156,7 +156,7 @@ fn rule_6_2_3_refresh_returns_given_don_rested_to_the_cost_area() {
 fn decline_defenses(
     game: &mut Game,
     out: op_core::StepOutcome,
-) -> (Vec<Event>, Option<Pending>) {
+) -> (Vec<GameEvent>, Option<Pending>) {
     let mut events = out.events;
     let mut pending = out.pending;
     loop {
@@ -218,7 +218,7 @@ fn rule_7_1_4_1_attacker_wins_ties_and_kos_the_character() {
     // Equal power: the attacker wins (7-1-4-1) and the target is K.O.'d.
     assert!(events
         .iter()
-        .any(|e| matches!(e, Event::KnockedOut { card } if *card == defender)));
+        .any(|e| matches!(e, GameEvent::KnockedOut { card } if *card == defender)));
     assert_eq!(game.state.card(defender).zone, Zone::Trash);
 }
 
@@ -251,7 +251,7 @@ fn rule_7_1_4_2_weaker_attacker_achieves_nothing() {
 
     assert!(events.iter().any(|e| matches!(
         e,
-        Event::BattleResolved {
+        GameEvent::BattleResolved {
             attacker_won: false,
             ..
         }
@@ -323,7 +323,7 @@ fn rule_10_1_4_blocker_becomes_the_new_target() {
     assert!(out
         .events
         .iter()
-        .any(|e| matches!(e, Event::Blocked { blocker: b, .. } if *b == blocker)));
+        .any(|e| matches!(e, GameEvent::Blocked { blocker: b, .. } if *b == blocker)));
     // 1000-power blocker eats a 7000-power attack and dies; the Leader is safe.
     assert_eq!(game.state.card(blocker).zone, Zone::Trash);
     assert_eq!(game.state.player(PlayerId::P1).life.len(), 4);
@@ -398,7 +398,7 @@ fn rule_7_1_3_2_1_counter_from_hand_can_save_the_leader() {
 
     assert!(out.events.iter().any(|e| matches!(
         e,
-        Event::BattleResolved {
+        GameEvent::BattleResolved {
             attacker_won: false,
             target_power: 6000,
             ..
@@ -503,7 +503,7 @@ fn rule_10_1_3_banish_trashes_the_life_card_instead_of_handing_it_over() {
     assert!(out
         .events
         .iter()
-        .any(|e| matches!(e, Event::LifeTaken { banished: true, .. })));
+        .any(|e| matches!(e, GameEvent::LifeTaken { banished: true, .. })));
     assert_eq!(game.state.player(PlayerId::P1).hand.len(), hand_before);
     assert_eq!(game.state.player(PlayerId::P1).trash.len(), trash_before + 1);
 }
@@ -639,7 +639,7 @@ fn rule_9_2_1_1_damage_at_zero_life_loses_the_game() {
     assert!(out
         .events
         .iter()
-        .any(|e| matches!(e, Event::GameEnded { .. })));
+        .any(|e| matches!(e, GameEvent::GameEnded { .. })));
     assert_eq!(game.result().unwrap().winner(), Some(PlayerId::P0));
 }
 
@@ -725,12 +725,12 @@ fn rule_7_1_battle_runs_attack_block_counter_damage_end_in_order() {
         })
         .unwrap();
     steps.extend(out.events.iter().filter_map(|e| match e {
-        Event::BattleStepStarted { step } => Some(*step),
+        GameEvent::BattleStepStarted { step } => Some(*step),
         _ => None,
     }));
     let out = game.step(Action::Block { blocker: None }).unwrap();
     steps.extend(out.events.iter().filter_map(|e| match e {
-        Event::BattleStepStarted { step } => Some(*step),
+        GameEvent::BattleStepStarted { step } => Some(*step),
         _ => None,
     }));
 

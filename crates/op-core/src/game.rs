@@ -8,7 +8,7 @@ use crate::action::{Action, IllegalAction, Pending};
 use crate::card::{CardDb, Category, Keyword};
 use crate::derive::{self, Derived};
 use crate::effect::{Duration, EffectFrame, ModKind, Modifier, Timing};
-use crate::event::Event;
+use crate::event::{GameEvent, PlayerEvent};
 use crate::ids::{CardInstanceId, PlayerId};
 use crate::script::ScriptSource;
 use crate::state::{
@@ -66,9 +66,34 @@ fn dig_pool_key(key: &str) -> String {
 /// The result of one [`Game::step`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StepOutcome {
-    /// Everything that happened, in order.
-    pub events: Vec<Event>,
+    /// Everything that happened, in order. Omniscient — project it with
+    /// [`StepOutcome::for_player`] before sending it anywhere.
+    pub events: Vec<GameEvent>,
     /// What the engine now needs, if the game is still running.
+    pub pending: Option<Pending>,
+}
+
+impl StepOutcome {
+    /// The events and pending decision as `viewer` may see them.
+    ///
+    /// A pending decision belonging to the opponent is withheld: which choice
+    /// they are facing can itself be informative.
+    pub fn for_player(&self, state: &GameState, viewer: PlayerId) -> PlayerOutcome {
+        PlayerOutcome {
+            events: self
+                .events
+                .iter()
+                .map(|e| e.project(state, viewer))
+                .collect(),
+            pending: self.pending.clone().filter(|p| p.player() == viewer),
+        }
+    }
+}
+
+/// A [`StepOutcome`] redacted for one player. Safe to send to them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlayerOutcome {
+    pub events: Vec<PlayerEvent>,
     pub pending: Option<Pending>,
 }
 
@@ -126,7 +151,7 @@ impl Game {
         scripts: Arc<dyn ScriptSource + Send + Sync>,
     ) -> Result<(Game, StepOutcome), SetupError> {
         let mut state = GameState::new(config.seed, config.first_player);
-        let mut events = vec![Event::GameStarted {
+        let mut events = vec![GameEvent::GameStarted {
             first_player: config.first_player,
         }];
 
@@ -172,7 +197,7 @@ impl Game {
             let player = PlayerId(idx as u8);
             for _ in 0..5 {
                 if let Some(card) = draw_one(&mut state, player) {
-                    events.push(Event::Drew { player, card });
+                    events.push(GameEvent::Drew { player, card });
                 }
             }
         }
@@ -214,7 +239,7 @@ impl Game {
         &mut self,
         pending: Pending,
         action: Action,
-        events: &mut Vec<Event>,
+        events: &mut Vec<GameEvent>,
     ) -> Result<(), IllegalAction> {
         match (&pending, &action) {
             (Pending::Mulligan { player }, Action::Mulligan(take)) => {
@@ -223,7 +248,7 @@ impl Game {
                     self.mulligan(player, events);
                 }
                 self.state.player_mut(player).mulliganed = true;
-                events.push(Event::Mulliganed {
+                events.push(GameEvent::Mulliganed {
                     player,
                     took: *take,
                 });
@@ -296,7 +321,7 @@ impl Game {
         &mut self,
         player: PlayerId,
         action: Action,
-        events: &mut Vec<Event>,
+        events: &mut Vec<GameEvent>,
     ) -> Result<(), IllegalAction> {
         match action {
             Action::EndMainPhase => {
@@ -322,7 +347,7 @@ impl Game {
                 self.state.lift(don);
                 self.state.card_mut(don).zone = Zone::Cost;
                 self.state.card_mut(to).attached_don.push(don);
-                events.push(Event::DonGiven {
+                events.push(GameEvent::DonGiven {
                     player,
                     don,
                     to,
@@ -352,7 +377,7 @@ impl Game {
         &mut self,
         player: PlayerId,
         card: CardInstanceId,
-        events: &mut Vec<Event>,
+        events: &mut Vec<GameEvent>,
     ) -> Result<(), IllegalAction> {
         if self.state.card(card).zone != Zone::Hand || self.state.card(card).controller != player {
             return Err(IllegalAction::Illegal("card is not in your hand".into()));
@@ -386,7 +411,7 @@ impl Game {
                 self.state
                     .move_card(card, player, Zone::Character, Placement::Bottom);
                 self.state.card_mut(card).played_on_turn = Some(self.state.turn);
-                events.push(Event::CardPlayed {
+                events.push(GameEvent::CardPlayed {
                     player,
                     card,
                     cost_paid: cost,
@@ -401,7 +426,7 @@ impl Game {
                 }
                 self.state
                     .move_card(card, player, Zone::Stage, Placement::Bottom);
-                events.push(Event::CardPlayed {
+                events.push(GameEvent::CardPlayed {
                     player,
                     card,
                     cost_paid: cost,
@@ -421,13 +446,13 @@ impl Game {
                     .unwrap_or_default();
                 self.state
                     .move_card(card, player, Zone::Trash, Placement::Top);
-                events.push(Event::CardPlayed {
+                events.push(GameEvent::CardPlayed {
                     player,
                     card,
                     cost_paid: cost,
                 });
                 if !ops.is_empty() {
-                    events.push(Event::EffectActivated {
+                    events.push(GameEvent::EffectActivated {
                         source: card,
                         controller: player,
                     });
@@ -449,7 +474,7 @@ impl Game {
         player: PlayerId,
         card: CardInstanceId,
         slot: u8,
-        events: &mut Vec<Event>,
+        events: &mut Vec<GameEvent>,
     ) -> Result<(), IllegalAction> {
         if self.state.card(card).controller != player || !self.state.card(card).zone.is_field() {
             return Err(IllegalAction::Illegal("card is not on your field".into()));
@@ -487,7 +512,7 @@ impl Game {
         if effect.once_per_turn {
             self.state.card_mut(card).used_once_per_turn.push(slot);
         }
-        events.push(Event::EffectActivated {
+        events.push(GameEvent::EffectActivated {
             source: card,
             controller: player,
         });
@@ -521,7 +546,7 @@ impl Game {
         player: PlayerId,
         card: CardInstanceId,
         cost: &crate::script::ActivationCost,
-        events: &mut Vec<Event>,
+        events: &mut Vec<GameEvent>,
     ) {
         for don in self
             .active_don(player)
@@ -532,7 +557,7 @@ impl Game {
         }
         if cost.rest_self {
             self.state.card_mut(card).rested = true;
-            events.push(Event::Rested { card });
+            events.push(GameEvent::Rested { card });
         }
         // Which cards are trashed is a choice the player should make; until the
         // choice plumbing covers costs, the leftmost cards are taken. Only
@@ -553,7 +578,7 @@ impl Game {
         player: PlayerId,
         attacker: CardInstanceId,
         target: CardInstanceId,
-        events: &mut Vec<Event>,
+        events: &mut Vec<GameEvent>,
     ) -> Result<(), IllegalAction> {
         let derived = self.derived();
         if self.state.card(attacker).controller != player {
@@ -570,7 +595,7 @@ impl Game {
 
         // 7-1-1-1: declaring rests the attacker.
         self.state.card_mut(attacker).rested = true;
-        events.push(Event::Rested { card: attacker });
+        events.push(GameEvent::Rested { card: attacker });
 
         self.state.battle = Some(BattleState {
             step: BattleStep::Attack,
@@ -581,8 +606,8 @@ impl Game {
             attacker_zone: self.state.card(attacker).zone,
             target_zone: self.state.card(target).zone,
         });
-        events.push(Event::AttackDeclared { attacker, target });
-        events.push(Event::BattleStepStarted {
+        events.push(GameEvent::AttackDeclared { attacker, target });
+        events.push(GameEvent::BattleStepStarted {
             step: BattleStep::Attack,
         });
         self.state.pending = None;
@@ -600,20 +625,20 @@ impl Game {
             && self.state.card(b.target).zone == b.target_zone
     }
 
-    fn enter_battle_step(&mut self, step: BattleStep, events: &mut Vec<Event>) {
+    fn enter_battle_step(&mut self, step: BattleStep, events: &mut Vec<GameEvent>) {
         if let Some(b) = &mut self.state.battle {
             b.step = step;
             b.attacker_zone = self.state.cards[b.attacker.index()].zone;
             b.target_zone = self.state.cards[b.target.index()].zone;
         }
-        events.push(Event::BattleStepStarted { step });
+        events.push(GameEvent::BattleStepStarted { step });
     }
 
     fn resolve_block(
         &mut self,
         player: PlayerId,
         blocker: Option<CardInstanceId>,
-        events: &mut Vec<Event>,
+        events: &mut Vec<GameEvent>,
     ) -> Result<(), IllegalAction> {
         if let Some(blocker) = blocker {
             let legal = self.legal_blockers();
@@ -623,12 +648,12 @@ impl Game {
             let old_target = self.state.battle.as_ref().unwrap().target;
             // 10-1-4-1: resting the blocker makes it the new target.
             self.state.card_mut(blocker).rested = true;
-            events.push(Event::Rested { card: blocker });
+            events.push(GameEvent::Rested { card: blocker });
             if let Some(b) = &mut self.state.battle {
                 b.target = blocker;
                 b.blocker_used = true;
             }
-            events.push(Event::Blocked {
+            events.push(GameEvent::Blocked {
                 blocker,
                 replacing: old_target,
             });
@@ -699,7 +724,7 @@ impl Game {
         player: PlayerId,
         card: CardInstanceId,
         to: CardInstanceId,
-        events: &mut Vec<Event>,
+        events: &mut Vec<GameEvent>,
     ) -> Result<(), IllegalAction> {
         if !self.legal_counters().contains(&card) {
             return Err(IllegalAction::Illegal(
@@ -730,7 +755,7 @@ impl Game {
             source: card,
             controller: player,
         });
-        events.push(Event::Countered {
+        events.push(GameEvent::Countered {
             player,
             card,
             target: to,
@@ -768,7 +793,7 @@ impl Game {
         player: PlayerId,
         card: CardInstanceId,
         to: CardInstanceId,
-        events: &mut Vec<Event>,
+        events: &mut Vec<GameEvent>,
     ) -> Result<(), IllegalAction> {
         if !self.legal_counter_events().contains(&card) {
             return Err(IllegalAction::Illegal(
@@ -792,7 +817,7 @@ impl Game {
         // 8-4-2: the Event is trashed, then its effect is carried out.
         self.state
             .move_card(card, player, Zone::Trash, Placement::Top);
-        events.push(Event::CardPlayed {
+        events.push(GameEvent::CardPlayed {
             player,
             card,
             cost_paid: cost,
@@ -808,7 +833,7 @@ impl Game {
         Ok(())
     }
 
-    fn resolve_damage_step(&mut self, events: &mut Vec<Event>) {
+    fn resolve_damage_step(&mut self, events: &mut Vec<GameEvent>) {
         let Some(b) = self.state.battle.clone() else {
             return;
         };
@@ -818,7 +843,7 @@ impl Game {
         // 7-1-4-1: attacker wins ties.
         let won = attacker_power >= target_power;
 
-        events.push(Event::BattleResolved {
+        events.push(GameEvent::BattleResolved {
             attacker: b.attacker,
             target: b.target,
             attacker_power,
@@ -841,7 +866,7 @@ impl Game {
                 } else {
                     1
                 };
-                events.push(Event::DamageDealt {
+                events.push(GameEvent::DamageDealt {
                     player: victim,
                     amount,
                 });
@@ -861,7 +886,7 @@ impl Game {
 
     /// Applies one point of damage, suspending for a `[Trigger]` decision if
     /// the revealed life card has one (8-6-2-1, 10-1-5).
-    fn apply_one_damage(&mut self, events: &mut Vec<Event>) {
+    fn apply_one_damage(&mut self, events: &mut Vec<GameEvent>) {
         let Some(dmg) = self.state.damage else {
             return;
         };
@@ -911,11 +936,11 @@ impl Game {
         player: PlayerId,
         card: CardInstanceId,
         banish: bool,
-        events: &mut Vec<Event>,
+        events: &mut Vec<GameEvent>,
     ) {
         let to = if banish { Zone::Trash } else { Zone::Hand };
         self.state.move_card(card, player, to, Placement::Top);
-        events.push(Event::LifeTaken {
+        events.push(GameEvent::LifeTaken {
             player,
             card,
             banished: banish,
@@ -927,11 +952,11 @@ impl Game {
         player: PlayerId,
         card: CardInstanceId,
         use_it: bool,
-        events: &mut Vec<Event>,
+        events: &mut Vec<GameEvent>,
     ) {
         self.state.pending = None;
         if use_it {
-            events.push(Event::TriggerActivated { player, card });
+            events.push(GameEvent::TriggerActivated { player, card });
             let ops = self
                 .scripts
                 .script(self.state.card(card).def)
@@ -956,13 +981,13 @@ impl Game {
         }
     }
 
-    fn knock_out(&mut self, card: CardInstanceId, events: &mut Vec<Event>) {
+    fn knock_out(&mut self, card: CardInstanceId, events: &mut Vec<GameEvent>) {
         let owner = self.state.card(card).owner;
         self.state.move_card(card, owner, Zone::Trash, Placement::Top);
-        events.push(Event::KnockedOut { card });
+        events.push(GameEvent::KnockedOut { card });
     }
 
-    fn end_battle(&mut self, events: &mut Vec<Event>) {
+    fn end_battle(&mut self, events: &mut Vec<GameEvent>) {
         // 7-1-5-2: "at the end of this battle" effects activate, before the
         // battle-scoped modifiers are cleared.
         if let Some(b) = self.state.battle.clone() {
@@ -978,13 +1003,13 @@ impl Game {
             .retain(|m| m.duration != Duration::ThisBattle);
         self.state.battle = None;
         self.state.damage = None;
-        events.push(Event::BattleEnded);
+        events.push(GameEvent::BattleEnded);
     }
 
     // ---- the forward loop --------------------------------------------------
 
     /// Runs the engine until it needs a decision or the game ends.
-    fn advance(&mut self, events: &mut Vec<Event>) {
+    fn advance(&mut self, events: &mut Vec<GameEvent>) {
         // Bounded so a rules bug surfaces as a panic in tests rather than a
         // hang in a training run.
         for _ in 0..10_000 {
@@ -1010,7 +1035,7 @@ impl Game {
     }
 
     /// One unit of forward progress. Returns false when the engine is parked.
-    fn tick(&mut self, events: &mut Vec<Event>) -> bool {
+    fn tick(&mut self, events: &mut Vec<GameEvent>) -> bool {
         // Suspended effect resolution takes priority over everything else.
         if !self.state.stack.is_empty() {
             self.resolve_top_frame(events);
@@ -1027,7 +1052,7 @@ impl Game {
         self.tick_phase(events)
     }
 
-    fn tick_battle(&mut self, events: &mut Vec<Event>) {
+    fn tick_battle(&mut self, events: &mut Vec<GameEvent>) {
         let Some(b) = self.state.battle.clone() else {
             return;
         };
@@ -1076,7 +1101,7 @@ impl Game {
     }
 
     /// Advances the turn machine. Returns false only when parked on a decision.
-    fn tick_phase(&mut self, events: &mut Vec<Event>) -> bool {
+    fn tick_phase(&mut self, events: &mut Vec<GameEvent>) -> bool {
         // Setup: both players mulligan, then Life is placed and turn 1 begins.
         if self.state.turn == 0 {
             let first = self.state.first_player;
@@ -1099,7 +1124,7 @@ impl Game {
             Phase::Refresh => {
                 self.refresh_phase(events);
                 self.state.phase = Phase::Draw;
-                events.push(Event::PhaseStarted {
+                events.push(GameEvent::PhaseStarted {
                     phase: Phase::Draw,
                     player: self.state.turn_player,
                 });
@@ -1110,7 +1135,7 @@ impl Game {
                     return true;
                 }
                 self.state.phase = Phase::Don;
-                events.push(Event::PhaseStarted {
+                events.push(GameEvent::PhaseStarted {
                     phase: Phase::Don,
                     player: self.state.turn_player,
                 });
@@ -1118,7 +1143,7 @@ impl Game {
             Phase::Don => {
                 self.don_phase(events);
                 self.state.phase = Phase::Main;
-                events.push(Event::PhaseStarted {
+                events.push(GameEvent::PhaseStarted {
                     phase: Phase::Main,
                     player: self.state.turn_player,
                 });
@@ -1145,7 +1170,7 @@ impl Game {
         true
     }
 
-    fn begin_turn(&mut self, events: &mut Vec<Event>) {
+    fn begin_turn(&mut self, events: &mut Vec<GameEvent>) {
         self.state.turn += 1;
         // Turn 1 belongs to the first player; afterwards it alternates.
         if self.state.turn > 1 {
@@ -1154,17 +1179,17 @@ impl Game {
             self.state.turn_player = self.state.first_player;
         }
         self.state.phase = Phase::Refresh;
-        events.push(Event::TurnStarted {
+        events.push(GameEvent::TurnStarted {
             turn: self.state.turn,
             player: self.state.turn_player,
         });
-        events.push(Event::PhaseStarted {
+        events.push(GameEvent::PhaseStarted {
             phase: Phase::Refresh,
             player: self.state.turn_player,
         });
     }
 
-    fn refresh_phase(&mut self, events: &mut Vec<Event>) {
+    fn refresh_phase(&mut self, events: &mut Vec<GameEvent>) {
         let player = self.state.turn_player;
 
         // 6-2-1: effects lasting until the start of your turn end. The
@@ -1183,7 +1208,7 @@ impl Game {
             }
         }
         if returned > 0 {
-            events.push(Event::DonReturned {
+            events.push(GameEvent::DonReturned {
                 player,
                 count: returned,
             });
@@ -1194,27 +1219,27 @@ impl Game {
             for id in self.state.player(player).zone(zone).to_vec() {
                 if self.state.card(id).rested {
                     self.state.card_mut(id).rested = false;
-                    events.push(Event::SetActive { card: id });
+                    events.push(GameEvent::SetActive { card: id });
                 }
             }
         }
     }
 
-    fn draw_phase(&mut self, events: &mut Vec<Event>) {
+    fn draw_phase(&mut self, events: &mut Vec<GameEvent>) {
         let player = self.state.turn_player;
         // 6-3-1: the player going first does not draw on their first turn.
         if self.state.turn == 1 && player == self.state.first_player {
             return;
         }
         match draw_one(&mut self.state, player) {
-            Some(card) => events.push(Event::Drew { player, card }),
+            Some(card) => events.push(GameEvent::Drew { player, card }),
             // 9-2-1-2 is checked by rule processing; drawing from an empty deck
             // simply does nothing here.
             None => {}
         }
     }
 
-    fn don_phase(&mut self, events: &mut Vec<Event>) {
+    fn don_phase(&mut self, events: &mut Vec<GameEvent>) {
         let player = self.state.turn_player;
         // 6-4-1: 2 DON!!, but only 1 on the first player's first turn.
         let want = if self.state.turn == 1 && player == self.state.first_player {
@@ -1234,14 +1259,14 @@ impl Game {
             placed += 1;
         }
         if placed > 0 {
-            events.push(Event::DonPlaced {
+            events.push(GameEvent::DonPlaced {
                 player,
                 count: placed,
             });
         }
     }
 
-    fn end_phase(&mut self, events: &mut Vec<Event>) {
+    fn end_phase(&mut self, events: &mut Vec<GameEvent>) {
         // 6-6-1-1: [End of Your Turn] resolves before [End of Your Opponent's
         // Turn] (6-6-1-1-2), turn player's first within each group.
         let turn_player = self.state.turn_player;
@@ -1270,7 +1295,7 @@ impl Game {
         }
     }
 
-    fn place_life(&mut self, events: &mut Vec<Event>) {
+    fn place_life(&mut self, events: &mut Vec<GameEvent>) {
         for idx in 0..2 {
             let player = PlayerId(idx as u8);
             let Some(leader) = self.state.player(player).leader else {
@@ -1289,14 +1314,14 @@ impl Game {
                 self.state.lift(card);
                 self.state.put(card, player, Zone::Life, Placement::Top);
             }
-            events.push(Event::LifeSet {
+            events.push(GameEvent::LifeSet {
                 player,
                 count: life,
             });
         }
     }
 
-    fn mulligan(&mut self, player: PlayerId, events: &mut Vec<Event>) {
+    fn mulligan(&mut self, player: PlayerId, events: &mut Vec<GameEvent>) {
         // 5-2-1-6-1: return the hand, reshuffle, redraw 5.
         let hand = std::mem::take(&mut self.state.player_mut(player).hand);
         for card in hand {
@@ -1308,7 +1333,7 @@ impl Game {
         self.state.players[player.index()].deck = deck;
         for _ in 0..5 {
             if let Some(card) = draw_one(&mut self.state, player) {
-                events.push(Event::Drew { player, card });
+                events.push(GameEvent::Drew { player, card });
             }
         }
     }
@@ -1317,7 +1342,7 @@ impl Game {
 
     /// Rule processing (9). Runs before every tick and resolves immediately.
     /// Returns true if the game ended.
-    fn run_rule_processing(&mut self, events: &mut Vec<Event>) -> bool {
+    fn run_rule_processing(&mut self, events: &mut Vec<GameEvent>) -> bool {
         // 9-2-1-2: a player with an empty deck loses. Checked for both players
         // so a simultaneous condition is a draw (9-2-1).
         let p0_out = self.state.player(PlayerId::P0).deck.is_empty();
@@ -1339,10 +1364,10 @@ impl Game {
         false
     }
 
-    fn end_game(&mut self, result: GameOver, events: &mut Vec<Event>) {
+    fn end_game(&mut self, result: GameOver, events: &mut Vec<GameEvent>) {
         self.state.game_over = Some(result);
         self.state.pending = None;
-        events.push(Event::GameEnded { result });
+        events.push(GameEvent::GameEnded { result });
     }
 
     // ---- effect resolution -------------------------------------------------
@@ -1352,7 +1377,7 @@ impl Game {
     /// Suspension leaves `ip` pointing *at* the op that needs input, so that
     /// resuming re-runs it — by which time the answer is in `bindings` and it
     /// falls through.
-    fn resolve_top_frame(&mut self, events: &mut Vec<Event>) {
+    fn resolve_top_frame(&mut self, events: &mut Vec<GameEvent>) {
         loop {
             let Some(frame) = self.state.stack.frames.last().cloned() else {
                 return;
@@ -1386,7 +1411,7 @@ impl Game {
         idx: usize,
         frame: &crate::effect::EffectFrame,
         op: crate::effect::EffectOp,
-        events: &mut Vec<Event>,
+        events: &mut Vec<GameEvent>,
     ) -> OpOutcome {
         use crate::effect::EffectOp as Op;
 
@@ -1441,7 +1466,7 @@ impl Game {
                 for &target in frame.bound(&key) {
                     if !self.state.card(target).rested {
                         self.state.card_mut(target).rested = true;
-                        events.push(Event::Rested { card: target });
+                        events.push(GameEvent::Rested { card: target });
                     }
                 }
                 OpOutcome::Advance
@@ -1451,7 +1476,7 @@ impl Game {
                 for &target in frame.bound(&key) {
                     if self.state.card(target).rested {
                         self.state.card_mut(target).rested = false;
-                        events.push(Event::SetActive { card: target });
+                        events.push(GameEvent::SetActive { card: target });
                     }
                 }
                 OpOutcome::Advance
@@ -1461,7 +1486,7 @@ impl Game {
                 let who = self.who(frame.controller, player);
                 for _ in 0..n {
                     match draw_one(&mut self.state, who) {
-                        Some(card) => events.push(Event::Drew { player: who, card }),
+                        Some(card) => events.push(GameEvent::Drew { player: who, card }),
                         None => break,
                     }
                 }
@@ -1489,7 +1514,7 @@ impl Game {
                         self.state.card_mut(don).zone = Zone::Cost;
                         self.state.card_mut(don).rested = rested;
                         self.state.card_mut(target).attached_don.push(don);
-                        events.push(Event::DonGiven {
+                        events.push(GameEvent::DonGiven {
                             player: frame.controller,
                             don,
                             to: target,
@@ -1525,7 +1550,7 @@ impl Game {
                             self.state
                                 .move_card(card, player, Zone::Character, Placement::Bottom);
                             self.state.card_mut(card).played_on_turn = Some(self.state.turn);
-                            events.push(Event::CardPlayed {
+                            events.push(GameEvent::CardPlayed {
                                 player,
                                 card,
                                 cost_paid: 0,
@@ -1539,7 +1564,7 @@ impl Game {
                             }
                             self.state
                                 .move_card(card, player, Zone::Stage, Placement::Bottom);
-                            events.push(Event::CardPlayed {
+                            events.push(GameEvent::CardPlayed {
                                 player,
                                 card,
                                 cost_paid: 0,
@@ -1684,7 +1709,7 @@ impl Game {
 
     /// Pushes any auto effects on `card` whose timing has just been met
     /// (8-1-3-1). Conditions are checked at activation time (8-3-2).
-    fn queue_autos(&mut self, timing: Timing, card: CardInstanceId, events: &mut Vec<Event>) {
+    fn queue_autos(&mut self, timing: Timing, card: CardInstanceId, events: &mut Vec<GameEvent>) {
         let def = self.state.card(card).def;
         let controller = self.state.card(card).controller;
         let effects: Vec<_> = self
@@ -1708,7 +1733,7 @@ impl Game {
             if effect.once_per_turn {
                 self.state.card_mut(card).used_once_per_turn.push(effect.slot);
             }
-            events.push(Event::EffectActivated {
+            events.push(GameEvent::EffectActivated {
                 source: card,
                 controller,
             });

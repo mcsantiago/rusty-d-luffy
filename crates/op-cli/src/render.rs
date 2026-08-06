@@ -6,7 +6,7 @@
 
 use op_core::card::CardDb;
 use op_core::view::{PlayerSide, PlayerView, VisibleCard};
-use op_core::{Action, Game, PlayerId};
+use op_core::{Action, CardRef, Game, PlayerEvent, PlayerId};
 
 const RULE: &str = "──────────────────────────────────────────────────────────────";
 
@@ -159,12 +159,16 @@ pub fn action(action: &Action, game: &Game) -> String {
 }
 
 /// A human-readable line for an event, or `None` for events not worth showing.
-pub fn event(event: &op_core::Event, game: &Game, viewer: PlayerId) -> Option<String> {
-    use op_core::Event as E;
+///
+/// Takes a [`PlayerEvent`], not a `GameEvent`: a card the viewer may not
+/// identify arrives as [`CardRef::Hidden`] and simply has no id to look up, so
+/// this cannot print something the player should not see even by mistake.
+pub fn event(event: &PlayerEvent, game: &Game, viewer: PlayerId) -> Option<String> {
+    use op_core::PlayerEvent as E;
     let db = game.db();
-    let name = |id: op_core::CardInstanceId| {
-        let def = db.get(game.state.card(id).def);
-        def.name.clone()
+    let name = |card: CardRef| match card.id() {
+        Some(id) => db.get(game.state.card(id).def).name.clone(),
+        None => "a card".to_string(),
     };
     let who = |p: PlayerId| if p == viewer { "you" } else { "opponent" };
 

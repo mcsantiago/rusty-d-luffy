@@ -5,7 +5,8 @@ mod common;
 
 use common::{deck_of, game_with, TestCards, TestScripts};
 use op_core::view::PlayerView;
-use op_core::{legal_actions, Action, Game, PlayerId};
+use op_core::zone::Zone;
+use op_core::{legal_actions, Action, Game, GameEvent, PlayerId};
 
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -112,6 +113,124 @@ fn serializing_and_restoring_mid_game_preserves_the_position() {
 
     assert_eq!(restored.state_hash(), game.state.state_hash());
     assert_eq!(restored, game.state);
+}
+
+/// The wire format must never name a card the viewer could not legitimately
+/// identify.
+///
+/// This is stricter than "don't send the card number": `CardInstanceId`s are
+/// assigned in decklist order at setup, so an id is close to a direct function
+/// of the card number for anyone holding the decklist. An id is only safe to
+/// send for a card in an open area, or in the viewer's own hand.
+#[test]
+fn the_event_stream_never_names_a_card_the_viewer_cannot_identify() {
+    let cards = TestCards::new();
+    let (mut game, opening) = game_with(
+        &cards,
+        TestScripts::default(),
+        23,
+        ("LDR-001", deck_of("CHR-5K", 40)),
+        ("LDR-002", deck_of("CHR-BLOCK", 40)),
+    );
+
+    let mut policy = StdRng::seed_from_u64(5);
+    let mut outcome = opening;
+    let mut checked = 0;
+
+    for _ in 0..500 {
+        for viewer in [PlayerId::P0, PlayerId::P1] {
+            let projected = outcome.for_player(&game.state, viewer);
+
+            for event in &projected.events {
+                for id in event.exposed_ids() {
+                    let card = game.state.card(id);
+                    let legitimate =
+                        card.zone.is_open() || (card.zone == Zone::Hand && card.controller == viewer);
+                    assert!(
+                        legitimate,
+                        "{viewer:?} was told about card {id:?} in {:?} (controller {:?}) \
+                         via {event:?}",
+                        card.zone, card.controller
+                    );
+                    checked += 1;
+                }
+            }
+
+            // A decision the opponent is facing is itself informative.
+            if let Some(pending) = &projected.pending {
+                assert_eq!(pending.player(), viewer);
+            }
+        }
+
+        if game.is_over() {
+            break;
+        }
+        let legal = legal_actions(&game);
+        if legal.is_empty() {
+            break;
+        }
+        outcome = game
+            .step(legal[policy.gen_range(0..legal.len())].clone())
+            .unwrap();
+    }
+
+    assert!(checked > 100, "test exercised too few events ({checked})");
+}
+
+/// A card drawn by the opponent must never be identifiable, and the viewer's
+/// own draw must be.
+#[test]
+fn draws_are_visible_only_to_the_drawing_player() {
+    let cards = TestCards::new();
+    let (mut game, _) = game_with(
+        &cards,
+        TestScripts::default(),
+        3,
+        ("LDR-001", deck_of("CHR-5K", 40)),
+        ("LDR-002", deck_of("CHR-BLOCK", 40)),
+    );
+
+    let mut policy = StdRng::seed_from_u64(8);
+    let mut seen_own = false;
+    let mut seen_opponent = false;
+
+    for _ in 0..300 {
+        if game.is_over() {
+            break;
+        }
+        let legal = legal_actions(&game);
+        if legal.is_empty() {
+            break;
+        }
+        let outcome = game
+            .step(legal[policy.gen_range(0..legal.len())].clone())
+            .unwrap();
+
+        for event in &outcome.events {
+            let GameEvent::Drew { player, .. } = event else {
+                continue;
+            };
+            let drawer = *player;
+            let watcher = drawer.opponent();
+
+            match event.project(&game.state, drawer) {
+                op_core::PlayerEvent::Drew { card, .. } => {
+                    assert!(!card.is_hidden(), "a player must see their own draw");
+                    seen_own = true;
+                }
+                other => panic!("projection changed the variant: {other:?}"),
+            }
+            match event.project(&game.state, watcher) {
+                op_core::PlayerEvent::Drew { card, .. } => {
+                    assert!(card.is_hidden(), "an opponent's draw must be hidden");
+                    seen_opponent = true;
+                }
+                other => panic!("projection changed the variant: {other:?}"),
+            }
+        }
+    }
+
+    assert!(seen_own && seen_opponent, "no draws were exercised");
 }
 
 #[test]
