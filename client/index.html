@@ -51,9 +51,12 @@
             <span id="ingest-title">Fetching card data…</span>
           </div>
           <p class="ingest-note">
-            Card data is not bundled — it is fetched from the official card
-            list on first run. This takes a few seconds.
+            Card data and art are not bundled — the whole set list is fetched
+            once, then the app works offline. This takes a few minutes and
+            about 750&nbsp;MB. It resumes if interrupted.
           </p>
+          <div class="bar"><div class="bar-fill" id="ingest-bar"></div></div>
+          <div class="bar-label" id="ingest-count"></div>
           <pre id="ingest-log"></pre>
           <button id="ingest-retry" class="ghost" hidden>Retry</button>
         </div>

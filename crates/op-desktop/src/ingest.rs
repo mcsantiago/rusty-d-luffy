@@ -19,13 +19,21 @@ use tauri::{AppHandle, Emitter};
 /// Event name the UI listens on for ingest progress.
 pub const PROGRESS_EVENT: &str = "ingest://progress";
 
+/// Prefix the ingest script uses for machine-readable progress lines.
+const PROGRESS_PREFIX: &str = "@progress";
+
 #[derive(Debug, Clone, Serialize)]
 pub struct Progress {
     /// A line of output from the script, or a status message from here.
+    /// Empty on a pure counter update, which the UI should not log.
     pub line: String,
     pub done: bool,
     /// Meaningful only when `done`.
     pub ok: bool,
+    /// Which pass is running: "packs" or "images".
+    pub phase: Option<String>,
+    pub current: u64,
+    pub total: u64,
 }
 
 impl Progress {
@@ -34,6 +42,9 @@ impl Progress {
             line: line.into(),
             done: false,
             ok: false,
+            phase: None,
+            current: 0,
+            total: 0,
         }
     }
 
@@ -42,7 +53,28 @@ impl Progress {
             line: line.into(),
             done: true,
             ok,
+            phase: None,
+            current: 0,
+            total: 0,
         }
+    }
+
+    /// Parses `@progress <phase> <done> <total>`, or `None` for ordinary
+    /// output.
+    fn parse_counter(line: &str) -> Option<Progress> {
+        let rest = line.strip_prefix(PROGRESS_PREFIX)?;
+        let mut parts = rest.split_whitespace();
+        let phase = parts.next()?.to_string();
+        let current = parts.next()?.parse().ok()?;
+        let total = parts.next()?.parse().ok()?;
+        Some(Progress {
+            line: String::new(),
+            done: false,
+            ok: false,
+            phase: Some(phase),
+            current,
+            total,
+        })
     }
 }
 
@@ -58,22 +90,31 @@ pub fn is_populated(cards_dir: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// The ingest is two passes, because card data and card art are wildly
-/// different in cost.
+/// How many known cards have no cached art.
 ///
-/// Every set's card data is 59 requests and under 2 MB — worth taking in full,
-/// since it makes the whole pool available to the coverage report and to any
-/// deck added later. Art for the same pool is ~2,700 images and roughly 736 MB,
-/// which is not something to inflict on a first launch, so only the decks the
-/// app can actually play are cached. `fetch_cards.py --all --images` pulls the
-/// rest when it is wanted.
-const STEPS: &[(&str, &[&str])] = &[
-    ("Fetching card data for every set…", &["--all"]),
-    (
-        "Caching art for the starter decks…",
-        &["--packs", "ST-01", "ST-02", "--images"],
-    ),
-];
+/// Card data being present does not mean the download finished — art is the
+/// overwhelming majority of it, and an interrupted run leaves cards complete
+/// and art partial. Checking only for card JSON would declare that state
+/// finished and never fill the gap.
+pub fn missing_art(db: &op_core::card::CardDb, images_dir: &Path) -> usize {
+    db.iter()
+        .filter(|(_, def)| def.number != "DON")
+        .filter(|(_, def)| !images_dir.join(format!("{}.png", def.number)).exists())
+        .count()
+}
+
+/// Everything, in one pass, the way a phone TCG client does it: one long
+/// download on first launch, then the app is fully offline forever after.
+///
+/// That is ~2,700 images and roughly 736 MB, so it takes minutes rather than
+/// seconds. Two things make it tolerable. The script skips files already on
+/// disk, so an interrupted or killed run resumes rather than restarting. And it
+/// reports per-file counts, so the UI can show a real bar — a download this
+/// long with no feedback is indistinguishable from a hang.
+const STEPS: &[(&str, &[&str])] = &[(
+    "Downloading every set — card data and art…",
+    &["--all", "--images"],
+)];
 
 /// Runs the ingest, emitting each line of output as it arrives.
 ///
@@ -126,8 +167,13 @@ fn run_step(
     if let Some(stdout) = child.stdout.take() {
         for line in BufReader::new(stdout).lines().map_while(Result::ok) {
             let line = line.trim_end().to_string();
-            if !line.is_empty() {
-                emit(app, Progress::line(line));
+            if line.is_empty() {
+                continue;
+            }
+            // Counter updates drive the bar; everything else is log output.
+            match Progress::parse_counter(&line) {
+                Some(counter) => emit(app, counter),
+                None => emit(app, Progress::line(line)),
             }
         }
     }

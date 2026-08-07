@@ -302,10 +302,13 @@ async function start() {
 // starting a game is gated, since that is the one thing that genuinely needs
 // the data.
 
-function setIngestVisible(visible) {
+/// `gated` is separate from `visible`: once card data is loaded the game is
+/// playable, and remaining art can keep downloading behind a visible panel
+/// without blocking Start.
+function setIngestVisible(visible, gated = visible) {
   $("ingest").hidden = !visible;
-  $("start").disabled = visible;
-  $("start").textContent = visible ? "Waiting for card data…" : "Start game";
+  $("start").disabled = gated;
+  $("start").textContent = gated ? "Waiting for card data…" : "Start game";
 }
 
 function appendIngestLine(line) {
@@ -327,11 +330,12 @@ async function bootstrap() {
     return;
   }
 
-  if (status.ready) {
+  if (status.ready && !status.fetching) {
     setIngestVisible(false);
     return;
   }
-  setIngestVisible(true);
+  // Playable but still downloading art: show progress, leave Start enabled.
+  setIngestVisible(true, !status.ready);
   $("ingest-title").textContent = status.message;
   if (!status.fetching) {
     appendIngestLine(status.message);
@@ -339,13 +343,30 @@ async function bootstrap() {
   }
 }
 
+const PHASE_LABELS = { packs: "card data", images: "card art" };
+
 listen("ingest://progress", (event) => {
-  const { line, done, ok } = event.payload;
-  appendIngestLine(line);
+  const { line, done, ok, phase, current, total } = event.payload;
+
+  // Counter updates carry no text; they drive the bar instead of the log, so a
+  // few thousand of them do not drown the useful output.
+  if (phase && total > 0) {
+    const pct = Math.round((current / total) * 100);
+    $("ingest-bar").style.width = `${pct}%`;
+    $("ingest-count").textContent =
+      `${PHASE_LABELS[phase] ?? phase}: ${current} / ${total} (${pct}%)`;
+    return;
+  }
+
+  if (line) appendIngestLine(line);
   if (!done) return;
 
   $("ingest").classList.toggle("failed", !ok);
   $("ingest-title").textContent = ok ? "Card data ready" : "Fetch failed";
+  if (ok) {
+    $("ingest-bar").style.width = "100%";
+    $("ingest-count").textContent = "complete";
+  }
   if (ok) {
     // The backend only reports done-ok once the data is parsed, so this is a
     // genuine ready signal rather than merely "downloaded".
@@ -358,6 +379,8 @@ listen("ingest://progress", (event) => {
 
 $("ingest-retry").addEventListener("click", () => {
   $("ingest-log").textContent = "";
+  $("ingest-bar").style.width = "0%";
+  $("ingest-count").textContent = "";
   $("ingest").classList.remove("failed");
   bootstrap();
 });

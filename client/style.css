@@ -484,3 +484,31 @@ button:disabled {
   border-color: var(--line);
 }
 button:disabled:hover { background: var(--felt); border-color: var(--line); }
+
+/* Progress bar for the first-run download. Long enough that a bar is not
+   decoration — without one it is indistinguishable from a hang. */
+.bar {
+  height: 6px;
+  margin: 4px 0 6px;
+  border-radius: 3px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+
+.bar-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--accent-2), #f5d477);
+  transition: width 0.25s ease-out;
+}
+
+#ingest.failed .bar-fill { background: var(--accent); }
+
+.bar-label {
+  font-size: 10.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  margin-bottom: 8px;
+  min-height: 14px;
+}

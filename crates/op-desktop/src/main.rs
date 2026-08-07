@@ -125,18 +125,36 @@ fn bootstrap(app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> Bootst
         };
     }
 
+    // Load whatever is already on disk first, so a complete install starts
+    // instantly and offline.
+    let mut ready = false;
+    let mut message = String::new();
     if ingest::is_populated(&state.cards_dir()) {
-        return match state.load_cards() {
-            Ok(count) => BootstrapStatus {
-                ready: true,
-                fetching: false,
-                message: format!("{count} cards loaded"),
-            },
-            Err(message) => BootstrapStatus {
-                ready: false,
-                fetching: false,
-                message,
-            },
+        match state.load_cards() {
+            Ok(count) => {
+                ready = true;
+                message = format!("{count} cards loaded");
+            }
+            Err(err) => message = err,
+        }
+    }
+
+    // Card data present does not mean the download finished: art is the bulk of
+    // it, and an interrupted run leaves cards complete and art partial. Ask what
+    // is actually missing rather than assuming.
+    let outstanding = if ready {
+        let guard = state.cards.read().unwrap();
+        let db = &guard.as_ref().expect("just loaded").db;
+        ingest::missing_art(db, &state.data_dir.join("images"))
+    } else {
+        usize::MAX
+    };
+
+    if ready && outstanding == 0 {
+        return BootstrapStatus {
+            ready: true,
+            fetching: false,
+            message,
         };
     }
 
@@ -145,9 +163,9 @@ fn bootstrap(app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> Bootst
         let mut ingesting = state.ingesting.lock().unwrap();
         if *ingesting {
             return BootstrapStatus {
-                ready: false,
+                ready,
                 fetching: true,
-                message: "Fetching card data…".into(),
+                message: "Downloading card data…".into(),
             };
         }
         *ingesting = true;
@@ -168,6 +186,9 @@ fn bootstrap(app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> Bootst
                         line: format!("card data downloaded but failed to load: {err}"),
                         done: true,
                         ok: false,
+                        phase: None,
+                        current: 0,
+                        total: 0,
                     },
                 );
             }
@@ -176,9 +197,14 @@ fn bootstrap(app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> Bootst
     });
 
     BootstrapStatus {
-        ready: false,
+        ready,
         fetching: true,
-        message: "Fetching card data…".into(),
+        message: if ready {
+            // Playable already; the rest of the art tops up in the background.
+            format!("{outstanding} card images still to download")
+        } else {
+            "Downloading card data…".into()
+        },
     }
 }
 

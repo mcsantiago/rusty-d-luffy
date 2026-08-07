@@ -88,12 +88,16 @@ the fetch keeps one copy of the fiddly parts (pack aliasing, alternate-printing
 filtering, retries), at the cost of needing `python3` on PATH — which is
 reported plainly if missing.
 
-The ingest runs in two passes, because card data and card art differ wildly in
-cost. **Every set's card data** is taken — 59 requests, under 2 MB — so the whole
-pool is available to the coverage report and to any deck added later. **Art is
-cached only for the starter decks**, since the same pool of images is ~2,700
-files and roughly 736 MB. First run lands at about 8 MB in a few seconds; run
-`fetch_cards.py --all --images` if you want the rest.
+Everything is fetched up front, the way a phone TCG client does it: all 59
+sets, card data and art, ~2,700 files and roughly 750 MB. It takes a few
+minutes once, and afterwards the app is entirely offline.
+
+Two things make that survivable. The fetch **skips what is already on disk**, so
+an interrupted run resumes instead of restarting. And startup checks for missing
+*art*, not just missing card data — an interrupted run leaves cards complete and
+art partial, and checking only for card JSON would call that finished. Once card
+data is loaded the game is playable immediately, with any outstanding art
+continuing to download behind a progress bar.
 
 Card art is served as data URIs. Without it the UI falls back to drawing text
 cards, so the app still runs.

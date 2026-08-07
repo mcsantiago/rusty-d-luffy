@@ -31,6 +31,7 @@ import argparse
 import json
 import re
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -48,6 +49,14 @@ DEFAULT_PACKS = ["ST-01", "ST-02"]
 
 RETRIES = 4
 BACKOFF = 2.0
+
+# Machine-readable progress, for a caller driving a progress bar. Anything not
+# prefixed this way is human-facing log output.
+PROGRESS_PREFIX = "@progress"
+
+
+def progress(phase: str, done: int, total: int) -> None:
+    print(f"{PROGRESS_PREFIX} {phase} {done} {total}", flush=True)
 
 
 def get(url: str, timeout: int = 30) -> bytes:
@@ -192,14 +201,25 @@ def fetch_images(jobs: int, pack_ids: set | None = None) -> int:
 
     print(f"images: fetching {len(todo)} of {len(wanted)} with {jobs} job(s)")
 
+    done = 0
+    lock = threading.Lock()
+    progress("images", 0, len(todo))
+
     def one(item) -> bool:
+        nonlocal done
         cid, url = item
+        ok = True
         try:
             (IMAGES / f"{cid}.png").write_bytes(get(url))
-            return True
         except Exception as exc:
             print(f"  ! {cid}: {exc}", file=sys.stderr)
-            return False
+            ok = False
+        with lock:
+            done += 1
+            # Throttled: smooth enough for a bar, without thousands of lines.
+            if done % 10 == 0 or done == len(todo):
+                progress("images", done, len(todo))
+        return ok
 
     with ThreadPoolExecutor(max_workers=jobs) as pool:
         ok = sum(pool.map(one, todo))
@@ -262,6 +282,8 @@ def main() -> int:
     # `--jobs 1` if a network ever objects.
     total = 0
     failed = []
+    completed = 0
+    progress("packs", 0, len(selected))
     with ThreadPoolExecutor(max_workers=args.jobs) as pool:
         futures = {
             pool.submit(fetch_pack, name, pack_id, args.refresh): (name, pack_id)
@@ -276,6 +298,8 @@ def main() -> int:
                 # run; re-running picks up only what is missing.
                 print(f"  {name:12} ({pack_id})  FAILED: {exc}", file=sys.stderr)
                 failed.append(name)
+            completed += 1
+            progress("packs", completed, len(selected))
 
     manifest = {
         "packs": {name: packs[normalize(name)] for name in wanted},
