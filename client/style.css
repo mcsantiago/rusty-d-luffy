@@ -753,3 +753,13 @@ button:disabled:hover { background: var(--felt); border-color: var(--line); }
   color: #9fb3c8;
   white-space: pre;
 }
+
+.session-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--muted);
+  margin-left: auto;
+  cursor: help;
+}
+#topbar button { margin-left: 0; }
+.wide-ghost { width: 100%; margin-top: 8px; }

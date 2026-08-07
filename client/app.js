@@ -208,6 +208,16 @@ function openTrash(side, label) {
   $("trash-modal").hidden = false;
 }
 
+$("open-logs").addEventListener("click", async () => {
+  try {
+    await invoke("open_log_dir");
+  } catch (err) {
+    // Falling back to the path is enough to be useful.
+    const dir = await invoke("log_dir").catch(() => null);
+    $("setup-error").textContent = dir ? `Logs are in ${dir}` : String(err);
+  }
+});
+
 $("show-debug").addEventListener("click", async () => {
   let info;
   try {
@@ -339,6 +349,8 @@ function render(snap) {
   battleDefender = view.battle ? view.battle.target : null;
 
   $("turn-label").textContent = snap.turn_label;
+  $("session-id").textContent = snap.session_id ? `#${snap.session_id}` : "";
+  $("session-id").title = "session id — matches the log filename";
   $("phase-label").textContent = `${view.phase} phase · turn ${view.turn}`;
 
   $("opp-life").innerHTML = `life ${lifePips(view.opponent.life_count)}`;

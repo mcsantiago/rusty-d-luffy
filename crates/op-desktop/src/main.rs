@@ -477,6 +477,35 @@ fn debug_info(state: tauri::State<'_, AppState>) -> DebugInfo {
     }
 }
 
+/// The directory session logs are written to.
+#[tauri::command]
+fn log_dir(state: tauri::State<'_, AppState>) -> String {
+    state.data_dir.join("debug").display().to_string()
+}
+
+/// Opens the log directory in the system file manager.
+///
+/// A convenience, not a dependency: if the platform command is missing the
+/// path is still shown in the UI, so nothing is lost.
+#[tauri::command]
+fn open_log_dir(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let dir = state.data_dir.join("debug");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+
+    let program = if cfg!(target_os = "macos") {
+        "open"
+    } else if cfg!(target_os = "windows") {
+        "explorer"
+    } else {
+        "xdg-open"
+    };
+    std::process::Command::new(program)
+        .arg(&dir)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("could not open {}: {e}", dir.display()))
+}
+
 /// Card art as a data URI, or `None` when it has not been cached.
 ///
 /// Served through a command rather than the asset protocol so the app degrades
@@ -513,7 +542,14 @@ fn main() {
             art: Mutex::new(HashMap::new()),
         })
         .invoke_handler(tauri::generate_handler![
-            bootstrap, new_game, choose, snapshot, card_art, debug_info
+            bootstrap,
+            new_game,
+            choose,
+            snapshot,
+            card_art,
+            debug_info,
+            log_dir,
+            open_log_dir
         ])
         .run(tauri::generate_context!())
         .expect("failed to start the desktop app");

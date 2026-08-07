@@ -59,6 +59,9 @@ pub struct Snapshot {
     pub turn_label: String,
     /// The AI owes a decision; the UI should expect a `game://update` shortly.
     pub thinking: bool,
+    /// Short identifier for this session, matching its log filename, so a bug
+    /// report can name the trace without digging for the file.
+    pub session_id: String,
 }
 
 /// Where session logs go, or `None` when disabled.
@@ -79,6 +82,7 @@ pub struct Session {
     human: PlayerId,
     log: Vec<String>,
     db: Arc<CardDb>,
+    session_id: String,
     /// Omniscient debug log for this session. Never shown to the player — it
     /// records `GameEvent`, so it contains both hands.
     debug: Option<op_core::SessionLog>,
@@ -168,6 +172,9 @@ impl Session {
             human: PlayerId::P0,
             log: Vec::new(),
             db,
+            // The low half of the seed: short enough to read aloud, and it
+            // appears verbatim in the log filename.
+            session_id: format!("{:08x}", seed as u32),
             debug,
         };
         if let Some(path) = session.debug_log_path() {
@@ -316,6 +323,7 @@ impl Session {
             over,
             turn_label,
             thinking: self.ai_to_act(),
+            session_id: self.session_id.clone(),
         }
     }
 
