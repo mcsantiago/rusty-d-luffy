@@ -6,6 +6,7 @@ members = [
     "crates/op-ai",
     "crates/op-cli",
     "crates/op-desktop",
+    "crates/op-ingest",
 ]
 
 [workspace.package]
@@ -17,6 +18,7 @@ rust-version = "1.88"
 op-core = { path = "crates/op-core" }
 op-cards = { path = "crates/op-cards" }
 op-ai = { path = "crates/op-ai" }
+op-ingest = { path = "crates/op-ingest" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

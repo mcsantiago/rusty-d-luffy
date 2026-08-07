@@ -12,6 +12,7 @@ tauri-build = { version = "2", features = [] }
 op-core = { workspace = true }
 op-cards = { workspace = true }
 op-ai = { workspace = true }
+op-ingest = { workspace = true }
 tauri = { version = "2", features = [] }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -1,17 +1,15 @@
-//! Fetching card data on first run.
+//! Fetching card data on first run, and where it lives.
 //!
-//! The app is useless without `data/`, and requiring a manual Python step
-//! before the first launch is a poor greeting. Startup therefore shells out to
-//! `tools/ingest/fetch_cards.py` and streams its output to the UI.
+//! The fetch itself is [`op_ingest`], in Rust. It used to shell out to
+//! `tools/ingest/fetch_cards.py`, which was fine while this only ran from a
+//! checkout but cannot ship: `python3` is absent by default on Windows, where
+//! the name often resolves to a Store stub that opens the Store rather than
+//! running anything.
 //!
-//! Shelling out rather than reimplementing the fetch keeps one copy of the
-//! awkward parts — pack-name aliasing, alternate-printing filtering, retries —
-//! which are easy to get subtly wrong twice. The cost is a dependency on
-//! `python3` being present, which is reported plainly rather than swallowed.
+//! This module is the bridge to the UI — deciding what still needs fetching,
+//! and turning progress into events.
 
-use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
@@ -19,13 +17,12 @@ use tauri::{AppHandle, Emitter};
 /// Event name the UI listens on for ingest progress.
 pub const PROGRESS_EVENT: &str = "ingest://progress";
 
-/// Prefix the ingest script uses for machine-readable progress lines.
-const PROGRESS_PREFIX: &str = "@progress";
+/// Bundle identifier, and the per-user data directory's name.
+const APP_ID: &str = "dev.onepiecesim.desktop";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Progress {
-    /// A line of output from the script, or a status message from here.
-    /// Empty on a pure counter update, which the UI should not log.
+    /// A line of output, or empty on a pure counter update.
     pub line: String,
     pub done: bool,
     /// Meaningful only when `done`.
@@ -48,7 +45,18 @@ impl Progress {
         }
     }
 
-    fn finished(ok: bool, line: impl Into<String>) -> Progress {
+    fn counter(phase: &str, current: u64, total: u64) -> Progress {
+        Progress {
+            line: String::new(),
+            done: false,
+            ok: false,
+            phase: Some(phase.to_string()),
+            current,
+            total,
+        }
+    }
+
+    pub fn finished(ok: bool, line: impl Into<String>) -> Progress {
         Progress {
             line: line.into(),
             done: true,
@@ -58,44 +66,15 @@ impl Progress {
             total: 0,
         }
     }
-
-    /// Parses `@progress <phase> <done> <total>`, or `None` for ordinary
-    /// output.
-    fn parse_counter(line: &str) -> Option<Progress> {
-        let rest = line.strip_prefix(PROGRESS_PREFIX)?;
-        let mut parts = rest.split_whitespace();
-        let phase = parts.next()?.to_string();
-        let current = parts.next()?.parse().ok()?;
-        let total = parts.next()?.parse().ok()?;
-        Some(Progress {
-            line: String::new(),
-            done: false,
-            ok: false,
-            phase: Some(phase),
-            current,
-            total,
-        })
-    }
 }
 
-/// Whether `data/cards` already holds something loadable.
-pub fn is_populated(cards_dir: &Path) -> bool {
-    std::fs::read_dir(cards_dir)
-        .map(|mut entries| {
-            entries.any(|e| {
-                e.map(|e| e.path().extension().is_some_and(|x| x == "json"))
-                    .unwrap_or(false)
-            })
-        })
-        .unwrap_or(false)
-}
+pub use op_ingest::is_populated;
 
 /// How many known cards have no cached art.
 ///
 /// Card data being present does not mean the download finished — art is the
 /// overwhelming majority of it, and an interrupted run leaves cards complete
-/// and art partial. Checking only for card JSON would declare that state
-/// finished and never fill the gap.
+/// and art partial. Checking only for card JSON would call that finished.
 pub fn missing_art(db: &op_core::card::CardDb, images_dir: &Path) -> usize {
     db.iter()
         .filter(|(_, def)| def.number != "DON")
@@ -103,110 +82,71 @@ pub fn missing_art(db: &op_core::card::CardDb, images_dir: &Path) -> usize {
         .count()
 }
 
-/// Everything, in one pass, the way a phone TCG client does it: one long
-/// download on first launch, then the app is fully offline forever after.
+/// Where card data lives.
 ///
-/// That is ~2,700 images and roughly 736 MB, so it takes minutes rather than
-/// seconds. Two things make it tolerable. The script skips files already on
-/// disk, so an interrupted or killed run resumes rather than restarting. And it
-/// reports per-file counts, so the UI can show a real bar — a download this
-/// long with no feedback is indistinguishable from a hang.
-const STEPS: &[(&str, &[&str])] = &[(
-    "Downloading every set — card data and art…",
-    &["--all", "--images"],
-)];
-
-/// Runs the ingest, emitting each line of output as it arrives.
-///
-/// Blocking — call it on a worker thread.
-pub fn run(app: &AppHandle, repo_root: &Path) -> Result<(), String> {
-    let script = repo_root.join("tools/ingest/fetch_cards.py");
-    if !script.exists() {
-        let message = format!("ingest script not found at {}", script.display());
-        emit(app, Progress::finished(false, &message));
-        return Err(message);
+/// A checkout's `data/` wins when present, so development keeps using the
+/// working copy. Otherwise the platform's per-user application data directory —
+/// never the install directory, which is not user-writable on Windows or macOS.
+pub fn data_dir() -> PathBuf {
+    if let Some(dir) = std::env::var_os("OPSIM_DATA_DIR") {
+        return PathBuf::from(dir);
     }
-
-    for (label, args) in STEPS {
-        emit(app, Progress::line(*label));
-        run_step(app, repo_root, &script, args)?;
+    let checkout = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+    if checkout.join("cards").is_dir() {
+        if let Ok(dir) = checkout.canonicalize() {
+            return dir;
+        }
     }
-
-    emit(app, Progress::finished(true, "Card data ready"));
-    Ok(())
+    op_ingest::default_data_dir(APP_ID)
 }
 
-fn run_step(
-    app: &AppHandle,
-    repo_root: &Path,
-    script: &Path,
-    args: &[&str],
-) -> Result<(), String> {
-    let mut child = match Command::new("python3")
-        .arg(script)
-        .args(args)
-        .current_dir(repo_root)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-    {
-        Ok(child) => child,
-        Err(err) => {
-            let message = format!(
-                "could not run python3 ({err}).\n\
-                 Fetch the data manually:\n  \
-                 python3 tools/ingest/fetch_cards.py --images"
-            );
-            emit(app, Progress::finished(false, &message));
-            return Err(message);
-        }
+/// Everything, in one pass, the way a phone TCG client does it: one long
+/// download on first launch, then the app is fully offline.
+///
+/// Resumable — anything already on disk is skipped — and reports per-file
+/// counts, because a download this long with no feedback is indistinguishable
+/// from a hang.
+pub fn run(app: &AppHandle, data_dir: &Path) -> Result<(), String> {
+    let plan = op_ingest::Plan {
+        packs: Vec::new(), // every pack
+        images: true,
+        refresh: false,
+        jobs: 4,
     };
 
-    // Stream stdout so the modal shows progress rather than sitting blank for
-    // the whole download.
-    if let Some(stdout) = child.stdout.take() {
-        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-            let line = line.trim_end().to_string();
-            if line.is_empty() {
-                continue;
-            }
-            // Counter updates drive the bar; everything else is log output.
-            match Progress::parse_counter(&line) {
-                Some(counter) => emit(app, counter),
-                None => emit(app, Progress::line(line)),
-            }
+    let report = |p: op_ingest::Progress| {
+        let progress = match p {
+            op_ingest::Progress::Message(line) => Progress::line(line),
+            op_ingest::Progress::Counter {
+                phase,
+                current,
+                total,
+            } => Progress::counter(phase, current, total),
+        };
+        // A UI that has gone away is not a reason to abort the download.
+        let _ = app.emit(PROGRESS_EVENT, progress);
+    };
+
+    match op_ingest::run(data_dir, &plan, &report) {
+        Ok(summary) if summary.failed.is_empty() => {
+            let _ = app.emit(
+                PROGRESS_EVENT,
+                Progress::finished(
+                    true,
+                    format!("{} cards ready", summary.cards),
+                ),
+            );
+            Ok(())
+        }
+        Ok(summary) => {
+            let message = format!("{} product(s) failed: {}", summary.failed.len(), summary.failed.join(", "));
+            let _ = app.emit(PROGRESS_EVENT, Progress::finished(false, &message));
+            Err(message)
+        }
+        Err(err) => {
+            let message = err.to_string();
+            let _ = app.emit(PROGRESS_EVENT, Progress::finished(false, &message));
+            Err(message)
         }
     }
-
-    let status = child.wait().map_err(|e| e.to_string())?;
-    if status.success() {
-        Ok(())
-    } else {
-        // stderr is drained only on failure; on success it is just retry noise.
-        let mut detail = String::new();
-        if let Some(mut stderr) = child.stderr.take() {
-            use std::io::Read;
-            let _ = stderr.read_to_string(&mut detail);
-        }
-        let message = format!(
-            "ingest failed ({status}). {}",
-            detail.lines().last().unwrap_or("")
-        );
-        emit(app, Progress::finished(false, &message));
-        Err(message)
-    }
-}
-
-fn emit(app: &AppHandle, progress: Progress) {
-    // A UI that has gone away is not a reason to abort the download.
-    let _ = app.emit(PROGRESS_EVENT, progress);
-}
-
-/// The repository root, resolved from this crate so the app runs from a
-/// checkout without an install step.
-pub fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .canonicalize()
-        .unwrap_or_else(|_| Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
 }

@@ -2,7 +2,7 @@
 //!
 //!     cargo run -p op-cli --release -- --help
 //!
-//! Requires card data: `python3 tools/ingest/fetch_cards.py`.
+//! Card data is fetched automatically on first run.
 
 mod decks;
 mod render;
@@ -66,8 +66,24 @@ fn main() -> Result<()> {
         None => return Ok(()),
     };
 
-    let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/cards");
-    let db = CardDb::load_dir(&data).with_context(|| "loading card data")?;
+    let data_dir = data_dir();
+    let cards = data_dir.join("cards");
+    if !op_ingest::is_populated(&cards) {
+        println!("No card data yet — fetching (this happens once)...");
+        let plan = op_ingest::Plan {
+            packs: Vec::new(),
+            images: false, // the terminal client draws text, not art
+            refresh: false,
+            jobs: 4,
+        };
+        op_ingest::run(&data_dir, &plan, &|p| {
+            if let op_ingest::Progress::Message(m) = p {
+                println!("  {m}");
+            }
+        })
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    }
+    let db = CardDb::load_dir(&cards).with_context(|| "loading card data")?;
     let cards = Cards::new(&db);
 
     report_unscripted(&db, &cards, &options);
@@ -280,6 +296,21 @@ fn parse_args() -> Result<Option<Options>> {
         difficulty,
         autoplay,
     }))
+}
+
+/// A checkout's `data/` wins when present; otherwise the per-user data
+/// directory, shared with the desktop client so they do not fetch twice.
+fn data_dir() -> std::path::PathBuf {
+    if let Some(dir) = std::env::var_os("OPSIM_DATA_DIR") {
+        return std::path::PathBuf::from(dir);
+    }
+    let checkout = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+    if checkout.join("cards").is_dir() {
+        if let Ok(dir) = checkout.canonicalize() {
+            return dir;
+        }
+    }
+    op_ingest::default_data_dir("dev.onepiecesim.desktop")
 }
 
 fn resolve_deck(spec: &str) -> Result<DeckList> {

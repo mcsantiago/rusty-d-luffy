@@ -87,7 +87,6 @@ struct Loaded {
 }
 
 struct AppState {
-    repo_root: std::path::PathBuf,
     data_dir: std::path::PathBuf,
     /// `None` until card data has been fetched and parsed.
     cards: RwLock<Option<Loaded>>,
@@ -200,9 +199,9 @@ fn bootstrap(app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> Bootst
         *ingesting = true;
     }
 
-    let repo_root = state.repo_root.clone();
+    let data_dir = state.data_dir.clone();
     std::thread::spawn(move || {
-        let result = ingest::run(&app, &repo_root);
+        let result = ingest::run(&app, &data_dir);
         let state = tauri::Manager::state::<AppState>(&app);
         if result.is_ok() {
             *state.install_complete.lock().unwrap() = true;
@@ -383,14 +382,12 @@ fn card_art(state: tauri::State<'_, AppState>, number: String) -> Option<String>
 }
 
 fn main() {
-    let repo_root = ingest::repo_root();
-    let data_dir = repo_root.join("data");
+    let data_dir = ingest::data_dir();
 
     // Card data is deliberately *not* loaded here. It may not exist yet, and a
     // window that opens and explains itself beats a process that exits.
     tauri::Builder::default()
         .manage(AppState {
-            repo_root,
             data_dir,
             cards: RwLock::new(None),
             ingesting: Mutex::new(false),

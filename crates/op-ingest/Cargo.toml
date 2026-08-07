@@ -1,0 +1,12 @@
+[package]
+name = "op-ingest"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Fetches One Piece Card Game card data and art"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+ureq = { version = "2", default-features = false, features = ["tls", "json"] }

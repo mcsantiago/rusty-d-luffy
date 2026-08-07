@@ -8,6 +8,7 @@ rust-version.workspace = true
 op-core = { workspace = true }
 op-cards = { workspace = true }
 op-ai = { workspace = true }
+op-ingest = { workspace = true }
 anyhow = { workspace = true }
 rand = { workspace = true }
 

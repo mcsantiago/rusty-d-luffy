@@ -69,7 +69,7 @@ fn debug_dir() -> Option<std::path::PathBuf> {
     match std::env::var("OPSIM_DEBUG_DIR") {
         Ok(dir) if dir.is_empty() => None,
         Ok(dir) => Some(std::path::PathBuf::from(dir)),
-        Err(_) => Some(crate::ingest::repo_root().join("debug")),
+        Err(_) => Some(crate::ingest::data_dir().join("debug")),
     }
 }
 
@@ -164,6 +164,9 @@ impl Session {
             db,
             debug,
         };
+        if let Some(path) = session.debug_log_path() {
+            eprintln!("session log: {}", path.display());
+        }
         if let Some(debug) = session.debug.as_mut() {
             debug.record(None, &opening.events, &session.game.state, session.db.as_ref());
         }
@@ -366,7 +369,7 @@ mod tests {
     use op_cards::Cards;
 
     fn fixture() -> Option<Session> {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/cards");
+        let dir = crate::ingest::data_dir().join("cards");
         let db = CardDb::load_dir(dir).ok()?;
         let scripts: Arc<dyn ScriptSource + Send + Sync> = Arc::new(Cards::new(&db));
         Session::new(
