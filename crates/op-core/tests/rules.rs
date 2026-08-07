@@ -471,6 +471,128 @@ fn rule_7_1_3_2_1_counter_from_hand_can_save_the_leader() {
     assert_eq!(game.state.player(PlayerId::P1).life.len(), 4);
 }
 
+/// 7-1-3-2-1: a printed Counter raises "their Leader or 1 Character card" —
+/// the *player* chooses, it is not forced onto the card under attack. Multiple
+/// Counters stack, and applied to the defending card they repel the attack.
+#[test]
+fn rule_7_1_3_2_1_counters_stack_on_the_chosen_card() {
+    let cards = TestCards::new();
+    let (mut game, _) = game_with(
+        &cards,
+        TestScripts::default(),
+        7,
+        ("LDR-001", deck_of("CHR-7K", 30)),
+        ("LDR-002", deck_of("CHR-5K", 30)), // 1000 Counter each
+    );
+    to_main(&mut game);
+    end_turn(&mut game);
+    end_turn(&mut game);
+
+    let attacker = put_in_play(&mut game, PlayerId::P0, "CHR-7K");
+    game.state.card_mut(attacker).played_on_turn = None;
+    let enemy_leader = game.state.player(PlayerId::P1).leader.unwrap();
+
+    let out = game
+        .step(Action::Attack {
+            attacker,
+            target: enemy_leader,
+        })
+        .unwrap();
+    assert!(matches!(out.pending, Some(Pending::Counter { .. })));
+
+    // 7000 attacker into a 5000 Leader: two 1000 Counters is not enough, three
+    // is — the attacker winning ties means the defender must strictly exceed.
+    let hand: Vec<_> = game.state.player(PlayerId::P1).hand.clone();
+    for card in hand.iter().take(3) {
+        game.step(Action::Counter {
+            card: *card,
+            to: enemy_leader,
+        })
+        .unwrap();
+    }
+    assert_eq!(game.derived().power(enemy_leader), 8000);
+
+    let out = game.step(Action::DoneCountering).unwrap();
+    assert!(
+        out.events.iter().any(|e| matches!(
+            e,
+            GameEvent::BattleResolved {
+                attacker_won: false,
+                target_power: 8000,
+                ..
+            }
+        )),
+        "8000 defender repels a 7000 attacker"
+    );
+    assert_eq!(
+        game.state.player(PlayerId::P1).life.len(),
+        4,
+        "no life is taken when the attack is repelled"
+    );
+}
+
+/// The same Counters spent on a bystander are legal and achieve nothing.
+///
+/// This is the trap: the rules let you pick any of your Leader or Characters,
+/// so an agent that does not model the battle will happily spend Counters
+/// where they cannot matter.
+#[test]
+fn rule_7_1_3_2_1_a_counter_on_a_bystander_does_not_save_the_defender() {
+    let cards = TestCards::new();
+    let (mut game, _) = game_with(
+        &cards,
+        TestScripts::default(),
+        7,
+        ("LDR-001", deck_of("CHR-7K", 30)),
+        ("LDR-002", deck_of("CHR-5K", 30)),
+    );
+    to_main(&mut game);
+    end_turn(&mut game);
+    end_turn(&mut game);
+
+    let attacker = put_in_play(&mut game, PlayerId::P0, "CHR-7K");
+    game.state.card_mut(attacker).played_on_turn = None;
+    let bystander = put_in_play(&mut game, PlayerId::P1, "CHR-5K");
+    let enemy_leader = game.state.player(PlayerId::P1).leader.unwrap();
+
+    game.step(Action::Attack {
+        attacker,
+        target: enemy_leader,
+    })
+    .unwrap();
+
+    // Legal — 7-1-3-2-1 says "their Leader or 1 Character card", not "the card
+    // being attacked".
+    let hand: Vec<_> = game.state.player(PlayerId::P1).hand.clone();
+    for card in hand.iter().take(3) {
+        game.step(Action::Counter {
+            card: *card,
+            to: bystander,
+        })
+        .unwrap();
+    }
+    assert_eq!(game.derived().power(bystander), 8000);
+    assert_eq!(
+        game.derived().power(enemy_leader),
+        5000,
+        "the card under attack is untouched"
+    );
+
+    let out = game.step(Action::DoneCountering).unwrap();
+    assert!(out.events.iter().any(|e| matches!(
+        e,
+        GameEvent::BattleResolved {
+            attacker_won: true,
+            ..
+        }
+    )));
+    assert_eq!(
+        game.state.player(PlayerId::P1).life.len(),
+        3,
+        "three Counters were spent and a life was still lost"
+    );
+}
+
 #[test]
 fn rule_7_1_5_3_this_battle_modifiers_expire_at_end_of_battle() {
     let cards = TestCards::new();

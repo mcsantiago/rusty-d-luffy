@@ -43,6 +43,18 @@ struct DeckSummary<'a> {
     list: Vec<(String, usize)>,
 }
 
+/// An instance id resolved to the card it actually is.
+///
+/// Traces are written against runtime ids, which say nothing on their own. A
+/// reader should not have to reconstruct the game to find out what `card=84`
+/// was, so every id a record mentions is resolved here.
+#[derive(Serialize)]
+struct CardRef {
+    instance: u32,
+    definition: String,
+    name: String,
+}
+
 #[derive(Serialize)]
 struct Step<'a> {
     kind: &'static str,
@@ -59,6 +71,18 @@ struct Step<'a> {
     /// Who owes the next decision, if anyone.
     pending: Option<String>,
     game_over: Option<String>,
+    /// Every instance id mentioned above, resolved. Includes the current
+    /// battle's participants, so a Counter can be checked against the card
+    /// actually under attack without cross-referencing earlier records.
+    cards: Vec<CardRef>,
+    battle: Option<BattleRef>,
+}
+
+#[derive(Serialize)]
+struct BattleRef {
+    step: String,
+    attacker: u32,
+    target: u32,
 }
 
 /// A debug log for one session.
@@ -113,11 +137,52 @@ impl SessionLog {
     }
 
     /// Records one step. `action` is `None` for the setup record.
-    pub fn record(&mut self, action: Option<&Action>, events: &[GameEvent], state: &GameState) {
+    pub fn record(
+        &mut self,
+        action: Option<&Action>,
+        events: &[GameEvent],
+        state: &GameState,
+        db: &crate::card::CardDb,
+    ) {
         let Some(writer) = self.writer.as_mut() else {
             return;
         };
         self.steps += 1;
+
+        // Resolve every id this record mentions, plus the battle participants.
+        let mut ids: Vec<u32> = Vec::new();
+        let mut note = |id: crate::ids::CardInstanceId| {
+            if !ids.contains(&id.0) {
+                ids.push(id.0);
+            }
+        };
+        if let Some(action) = action {
+            for id in action_ids(action) {
+                note(id);
+            }
+        }
+        for event in events {
+            for id in event_ids(event) {
+                note(id);
+            }
+        }
+        if let Some(b) = &state.battle {
+            note(b.attacker);
+            note(b.target);
+        }
+
+        let cards = ids
+            .iter()
+            .filter(|&&i| (i as usize) < state.cards.len())
+            .map(|&i| {
+                let def = db.get(state.cards[i as usize].def);
+                CardRef {
+                    instance: i,
+                    definition: def.number.clone(),
+                    name: def.name.clone(),
+                }
+            })
+            .collect();
 
         let step = Step {
             kind: "step",
@@ -130,6 +195,12 @@ impl SessionLog {
             phase: format!("{:?}", state.phase),
             pending: state.pending.as_ref().map(|p| format!("{p:?}")),
             game_over: state.game_over.map(|r| format!("{r:?}")),
+            cards,
+            battle: state.battle.as_ref().map(|b| BattleRef {
+                step: format!("{:?}", b.step),
+                attacker: b.attacker.0,
+                target: b.target.0,
+            }),
         };
 
         let line = match serde_json::to_string(&step) {
@@ -141,6 +212,39 @@ impl SessionLog {
         if writeln!(writer, "{line}").and_then(|_| writer.flush()).is_err() {
             self.writer = None;
         }
+    }
+}
+
+fn action_ids(action: &Action) -> Vec<crate::ids::CardInstanceId> {
+    match action {
+        Action::PlayCard { card } | Action::ActivateEffect { card, .. } => vec![*card],
+        Action::GiveDon { to } => vec![*to],
+        Action::Attack { attacker, target } => vec![*attacker, *target],
+        Action::Block { blocker: Some(c) } => vec![*c],
+        Action::Counter { card, to } | Action::CounterEvent { card, to } => vec![*card, *to],
+        Action::Choose { cards } => cards.clone(),
+        _ => Vec::new(),
+    }
+}
+
+fn event_ids(event: &GameEvent) -> Vec<crate::ids::CardInstanceId> {
+    use GameEvent as E;
+    match event {
+        E::Drew { card, .. }
+        | E::CardPlayed { card, .. }
+        | E::CardMoved { card, .. }
+        | E::Rested { card }
+        | E::SetActive { card }
+        | E::KnockedOut { card }
+        | E::LifeTaken { card, .. }
+        | E::TriggerActivated { card, .. } => vec![*card],
+        E::DonGiven { don, to, .. } => vec![*don, *to],
+        E::AttackDeclared { attacker, target } => vec![*attacker, *target],
+        E::Blocked { blocker, replacing } => vec![*blocker, *replacing],
+        E::Countered { card, target, .. } => vec![*card, *target],
+        E::BattleResolved { attacker, target, .. } => vec![*attacker, *target],
+        E::EffectActivated { source, .. } | E::NoLegalTargets { source, .. } => vec![*source],
+        _ => Vec::new(),
     }
 }
 

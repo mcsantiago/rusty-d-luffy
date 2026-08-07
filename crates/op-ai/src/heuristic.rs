@@ -7,6 +7,7 @@
 use rand::Rng;
 
 use op_core::card::Category;
+use op_core::derive::Derived;
 use op_core::{legal_actions, Action, Game, PlayerId};
 
 use crate::Agent;
@@ -46,7 +47,40 @@ pub fn evaluate(game: &Game, player: PlayerId) -> f64 {
         score += sign * 0.5 * ps.cost_area.len() as f64;
     }
 
-    score
+    score + battle_outlook(game, &derived, player)
+}
+
+/// How the battle in progress is about to go, from `player`'s seat.
+///
+/// Without this the evaluation is blind to the one thing a Counter decision
+/// turns on. Boosting *any* Character raises the power term, so countering a
+/// bystander scored the same as countering the card actually under attack —
+/// and the agent would spend Counters achieving nothing. Only the battle
+/// target's power decides the Damage Step (7-1-4-1).
+fn battle_outlook(game: &Game, derived: &Derived, player: PlayerId) -> f64 {
+    let Some(battle) = &game.state.battle else {
+        return 0.0;
+    };
+
+    let attacker = battle.attacker;
+    let target = battle.target;
+    let attacking = game.state.card(attacker).controller;
+    // 7-1-4-1: the attacker wins ties.
+    let attack_lands = derived.power(attacker) >= derived.power(target);
+
+    let stake = match game.db().get(game.state.card(target).def).category {
+        // A life point, which the evaluation already prices at 22.
+        Category::Leader => 22.0,
+        // Losing the body, plus the tempo of having spent it.
+        _ => 3.0 + derived.power(target) as f64 / 1500.0,
+    };
+
+    let sign = if attacking == player { 1.0 } else { -1.0 };
+    if attack_lands {
+        sign * stake
+    } else {
+        0.0
+    }
 }
 
 /// Picks the action with the best immediate evaluation, breaking ties randomly.

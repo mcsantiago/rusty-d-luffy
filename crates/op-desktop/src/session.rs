@@ -165,7 +165,7 @@ impl Session {
             debug,
         };
         if let Some(debug) = session.debug.as_mut() {
-            debug.record(None, &opening.events, &session.game.state);
+            debug.record(None, &opening.events, &session.game.state, session.db.as_ref());
         }
         session.absorb(&opening.events);
         // The AI is deliberately *not* run here. If it moves first, that is a
@@ -229,7 +229,7 @@ impl Session {
 
     fn record(&mut self, action: Option<&op_core::Action>, events: &[op_core::GameEvent]) {
         if let Some(debug) = self.debug.as_mut() {
-            debug.record(action, events, &self.game.state);
+            debug.record(action, events, &self.game.state, self.db.as_ref());
         }
     }
 
