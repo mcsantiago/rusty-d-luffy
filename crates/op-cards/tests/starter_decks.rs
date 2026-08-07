@@ -210,7 +210,7 @@ fn st06_cost_reduction_brings_a_character_into_ko_range() {
     // ST06-012 Garp is a cost-5 Character; ST06-012's own effect reaches
     // cost 4 or less, so unmodified it cannot touch him.
     let target = put_in_play(&mut game, PlayerId::P0, "ST06-012");
-    assert_eq!(game.derived().get(target).cost, 5);
+    assert_eq!(game.derived().get(target).effective_cost(), 5);
 
     // Two applications of -2 cost put him at 1.
     for _ in 0..2 {
@@ -222,7 +222,7 @@ fn st06_cost_reduction_brings_a_character_into_ko_range() {
             controller: PlayerId::P1,
         });
     }
-    assert_eq!(game.derived().get(target).cost, 1);
+    assert_eq!(game.derived().get(target).effective_cost(), 1);
 
     // Cost never goes negative, however much is stacked on.
     for _ in 0..5 {
@@ -234,7 +234,7 @@ fn st06_cost_reduction_brings_a_character_into_ko_range() {
             controller: PlayerId::P1,
         });
     }
-    assert_eq!(game.derived().get(target).cost, 0, "cost is clamped at 0");
+    assert_eq!(game.derived().get(target).effective_cost(), 0, "cost is clamped at 0");
 }
 
 /// ST06-004 Smoker cannot be K.O.'d by effects, but a lost battle still
@@ -253,7 +253,7 @@ fn st06_001_reports_when_it_has_no_legal_target() {
 
     // A cost-1 Character is not a legal target for a "cost of 0" effect.
     let victim = put_in_play(&mut game, PlayerId::P1, "ST06-003");
-    assert_eq!(game.derived().get(victim).cost, 1);
+    assert_eq!(game.derived().get(victim).effective_cost(), 1);
 
     let sakazuki = game.state.player(PlayerId::P1).leader.unwrap();
     if game.db().get(game.state.card(sakazuki).def).number == "ST06-001" {
@@ -271,7 +271,107 @@ fn st06_001_reports_when_it_has_no_legal_target() {
         source: victim,
         controller: PlayerId::P0,
     });
-    assert_eq!(game.derived().get(victim).cost, 0);
+    assert_eq!(game.derived().get(victim).effective_cost(), 0);
+}
+
+/// The whole ST-06 loop, end to end: reduce a Character's cost to 0, then
+/// K.O. it with an effect that only reaches cost 0.
+///
+/// Every step has a way to go silently wrong. If `CostAtMost` read printed
+/// cost the reduction would be cosmetic; if reduction went negative rather
+/// than clamping, a -4 on a 3-cost Character would miss; and the activation
+/// has to become available only after the reduction lands.
+#[test]
+fn st06_reduce_to_zero_then_remove_is_a_working_loop() {
+    let Some((db, cards)) = load() else { return };
+    let mut game = game_at_main(db, cards, 5, 1);
+
+    // ST06-013 T-Bone costs 3. Sakazuki reaches cost 0 only.
+    let victim = put_in_play(&mut game, PlayerId::P1, "ST06-013");
+    assert_eq!(game.derived().get(victim).effective_cost(), 3);
+
+    // Sengoku's -4 on a 3-cost Character: clamps to 0 rather than -1, which is
+    // what makes the "or more reduction than you need" case work at all.
+    game.state.modifiers.push(op_core::effect::Modifier {
+        target: victim,
+        kind: op_core::effect::ModKind::Cost(-4),
+        duration: op_core::effect::Duration::ThisTurn,
+        source: victim,
+        controller: PlayerId::P0,
+    });
+    assert_eq!(
+        game.derived().get(victim).effective_cost(),
+        0,
+        "-4 on a 3-cost Character clamps to 0, it does not go negative"
+    );
+
+    // And a cost-0 filter now reaches it, which is the point of the whole deck.
+    let derived = game.derived();
+    assert!(op_core::derive::matches_filters(
+        &game.state,
+        game.db(),
+        &derived,
+        victim,
+        victim,
+        &[op_core::effect::Filter::CostAtMost(0)],
+    ));
+
+    // A Character that has not been reduced is still out of reach.
+    let untouched = put_in_play(&mut game, PlayerId::P1, "ST06-011");
+    let derived = game.derived();
+    assert!(!op_core::derive::matches_filters(
+        &game.state,
+        game.db(),
+        &derived,
+        untouched,
+        untouched,
+        &[op_core::effect::Filter::CostAtMost(0)],
+    ));
+
+    // The reduction is "during this turn" and must not outlive it.
+    game.step(Action::EndMainPhase).unwrap();
+    while game.state.turn < 3 {
+        if game.step(Action::EndMainPhase).is_err() {
+            break;
+        }
+    }
+    assert_eq!(
+        game.derived().get(victim).effective_cost(),
+        3,
+        "cost reduction expires with the turn (6-6-1-3)"
+    );
+}
+
+/// 1-3: a negative cost keeps its value for the duration of a calculation and
+/// is only treated as 0 outside one. Clamping each modifier as it applied
+/// would lose that — a 3-cost Character given -4 then +2 would read 2 rather
+/// than 1.
+#[test]
+fn negative_cost_survives_the_calculation_and_clamps_only_on_read() {
+    let Some((db, cards)) = load() else { return };
+    let mut game = game_at_main(db, cards, 5, 1);
+    let card = put_in_play(&mut game, PlayerId::P1, "ST06-013"); // cost 3
+
+    let modifier = |amount: i32| op_core::effect::Modifier {
+        target: card,
+        kind: op_core::effect::ModKind::Cost(amount),
+        duration: op_core::effect::Duration::ThisTurn,
+        source: card,
+        controller: PlayerId::P0,
+    };
+
+    game.state.modifiers.push(modifier(-4));
+    let derived = game.derived();
+    assert_eq!(derived.get(card).cost, -1, "the raw value goes negative");
+    assert_eq!(derived.get(card).effective_cost(), 0, "and reads as 0");
+
+    game.state.modifiers.push(modifier(2));
+    let derived = game.derived();
+    assert_eq!(
+        derived.get(card).effective_cost(),
+        1,
+        "3 - 4 + 2 is 1; clamping per modifier would give 2"
+    );
 }
 
 #[test]

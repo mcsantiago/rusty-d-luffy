@@ -1,8 +1,14 @@
 //! ST-06 — Absolute Justice.
 //!
-//! The deck is built almost entirely on lowering an opponent Character's cost
-//! so that a "cost N or less" removal effect can reach it. That only works
-//! because `Filter::CostAtMost` reads *derived* cost rather than printed cost.
+//! The deck's plan is a loop: reduce an opponent Character's cost to 0, then
+//! remove it with an effect that only reaches cost 0. Sakazuki K.O.s "a
+//! Character with a cost of 0", and nothing is *printed* at cost 0 — the
+//! target is manufactured by Sengoku, Hina, Helmeppo and Tashigi first.
+//!
+//! Two things make that work, and both are easy to get wrong. `CostAtMost`
+//! reads *derived* cost, so a reduction actually changes what removal can
+//! reach. And a reduction past 0 is not an error: -4 on a 3-cost Character
+//! still leaves a legal target, because a negative cost reads as 0 (1-3).
 //!
 //! Vanilla cards (ST06-003, -009, -011, -013) and keyword-only cards
 //! (ST06-007 `[Blocker]`) need no entry.

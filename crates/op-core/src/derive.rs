@@ -28,8 +28,13 @@ const FIXPOINT_LIMIT: usize = 8;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Characteristics {
     pub power: i32,
-    /// Current cost, after any modification. Never negative.
-    pub cost: u8,
+    /// Cost after modification, which may be **negative** mid-calculation.
+    ///
+    /// The rules keep a negative value for the duration of a calculation and
+    /// treat it as 0 only outside one, so clamping per modifier would be wrong:
+    /// a 3-cost Character given -4 then +2 is 1, not 2. Read it through
+    /// [`Characteristics::effective_cost`].
+    pub cost: i32,
     /// Effects cannot K.O. this card; battle still can (10-2-1-1).
     pub cannot_be_koed_by_effect: bool,
     pub keywords: Vec<Keyword>,
@@ -42,6 +47,11 @@ pub struct Characteristics {
 impl Characteristics {
     pub fn has_keyword(&self, kw: Keyword) -> bool {
         self.keywords.contains(&kw)
+    }
+
+    /// The cost as the game sees it: negative values are treated as 0.
+    pub fn effective_cost(&self) -> u8 {
+        self.cost.max(0) as u8
     }
 }
 
@@ -70,7 +80,7 @@ pub fn derive_all(state: &GameState, db: &CardDb, scripts: &dyn ScriptSource) ->
             let def = db.get(c.def);
             Characteristics {
                 power: def.power.unwrap_or(0),
-                cost: def.cost,
+                cost: def.cost as i32,
                 cannot_be_koed_by_effect: false,
                 keywords: def.keywords.clone(),
                 cannot_be_blocked: false,
@@ -137,7 +147,8 @@ fn apply(ch: &mut Characteristics, kind: ModKind) {
     match kind {
         ModKind::Power(delta) => ch.power += delta,
         ModKind::Cost(delta) => {
-            ch.cost = (ch.cost as i32 + delta).max(0) as u8;
+            // Deliberately unclamped; see the field's documentation.
+            ch.cost += delta;
         }
         ModKind::CannotBeKoedByEffect => ch.cannot_be_koed_by_effect = true,
         ModKind::GrantKeyword(kw) => {
@@ -231,7 +242,7 @@ pub fn matches_filters(
     filters.iter().all(|f| match f {
         // Derived, not printed: ST-06 is built on lowering a Character's cost
         // so that a "cost N or less" removal effect can reach it.
-        Filter::CostAtMost(n) => derived.get(card).cost <= *n,
+        Filter::CostAtMost(n) => derived.get(card).effective_cost() <= *n,
         Filter::PowerAtMost(p) => derived.power(card) <= *p,
         Filter::HasAnyType(types) => types.iter().any(|t| def.has_type(t)),
         Filter::HasKeyword(kw) => derived.get(card).has_keyword(*kw),
