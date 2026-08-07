@@ -36,6 +36,9 @@ pub struct PermanentEffect {
 pub struct AutoEffect {
     pub timing: Timing,
     pub conditions: Vec<Condition>,
+    /// 8-1-3-1-2: an auto effect may carry an activation cost, e.g.
+    /// "[On Play] You may trash 1 card from your hand: …".
+    pub cost: ActivationCost,
     pub ops: Vec<EffectOp>,
     /// Distinguishes this effect from others on the same card for the purpose
     /// of `[Once Per Turn]` bookkeeping.

@@ -58,9 +58,24 @@ fn st02() -> DeckList {
     ])
 }
 
+/// ST-06 Absolute Justice.
+///
+/// A legal 50-card build, not the printed decklist — the ingest carries card
+/// data but not product contents, so the copy counts here are chosen rather
+/// than transcribed. Deck construction (5-1-2) is enforced either way.
+fn st06() -> DeckList {
+    deck("ST06-001", &[
+        ("ST06-002", 4), ("ST06-003", 4), ("ST06-004", 2), ("ST06-005", 2),
+        ("ST06-006", 4), ("ST06-007", 4), ("ST06-008", 4), ("ST06-009", 4),
+        ("ST06-010", 4), ("ST06-011", 2), ("ST06-012", 2), ("ST06-013", 4),
+        ("ST06-014", 4), ("ST06-015", 2), ("ST06-016", 2), ("ST06-017", 2),
+    ])
+}
+
 fn deck_by_name(name: &str) -> DeckList {
     match name {
         "ST02" => st02(),
+        "ST06" => st06(),
         _ => st01(),
     }
 }

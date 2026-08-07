@@ -14,7 +14,7 @@
 
 use crate::card::{CardDb, Category, Keyword};
 use crate::effect::{Condition, ModKind};
-use crate::ids::CardInstanceId;
+use crate::ids::{CardInstanceId, PlayerId};
 use crate::script::{Scope, ScriptSource};
 use crate::state::GameState;
 use crate::zone::Zone;
@@ -28,7 +28,10 @@ const FIXPOINT_LIMIT: usize = 8;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Characteristics {
     pub power: i32,
+    /// Current cost, after any modification. Never negative.
     pub cost: u8,
+    /// Effects cannot K.O. this card; battle still can (10-2-1-1).
+    pub cannot_be_koed_by_effect: bool,
     pub keywords: Vec<Keyword>,
     pub cannot_be_blocked: bool,
     /// The opponent may not block with a `[Blocker]` whose power is at or above
@@ -68,6 +71,7 @@ pub fn derive_all(state: &GameState, db: &CardDb, scripts: &dyn ScriptSource) ->
             Characteristics {
                 power: def.power.unwrap_or(0),
                 cost: def.cost,
+                cannot_be_koed_by_effect: false,
                 keywords: def.keywords.clone(),
                 cannot_be_blocked: false,
                 blocker_power_ceiling: None,
@@ -132,6 +136,10 @@ pub fn derive_all(state: &GameState, db: &CardDb, scripts: &dyn ScriptSource) ->
 fn apply(ch: &mut Characteristics, kind: ModKind) {
     match kind {
         ModKind::Power(delta) => ch.power += delta,
+        ModKind::Cost(delta) => {
+            ch.cost = (ch.cost as i32 + delta).max(0) as u8;
+        }
+        ModKind::CannotBeKoedByEffect => ch.cannot_be_koed_by_effect = true,
         ModKind::GrantKeyword(kw) => {
             if !ch.keywords.contains(&kw) {
                 ch.keywords.push(kw);
@@ -189,6 +197,19 @@ pub fn conditions_hold(
             state.player(card.controller).characters.len() >= *n as usize
         }
         Condition::SelfRested => card.rested,
+        Condition::LeaderHasType(ty) => state
+            .player(card.controller)
+            .leader
+            .is_some_and(|l| db.get(state.card(l).def).has_type(ty)),
+        // "If there is a Character with a cost of N" is not restricted to your
+        // own side.
+        Condition::AnyCharacterWithCost(n) => [PlayerId::P0, PlayerId::P1].iter().any(|p| {
+            state
+                .player(*p)
+                .characters
+                .iter()
+                .any(|&c| db.get(state.card(c).def).cost == *n)
+        }),
     }) && {
         let _ = db;
         true
@@ -208,7 +229,9 @@ pub fn matches_filters(
     use crate::effect::Filter;
     let def = db.get(state.card(card).def);
     filters.iter().all(|f| match f {
-        Filter::CostAtMost(n) => def.cost <= *n,
+        // Derived, not printed: ST-06 is built on lowering a Character's cost
+        // so that a "cost N or less" removal effect can reach it.
+        Filter::CostAtMost(n) => derived.get(card).cost <= *n,
         Filter::PowerAtMost(p) => derived.power(card) <= *p,
         Filter::HasAnyType(types) => types.iter().any(|t| def.has_type(t)),
         Filter::HasKeyword(kw) => derived.get(card).has_keyword(*kw),

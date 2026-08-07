@@ -11,11 +11,12 @@ pub fn by_name(name: &str) -> Option<DeckList> {
     match name.to_ascii_uppercase().as_str() {
         "ST01" | "ST-01" | "STRAWHAT" => Some(st01()),
         "ST02" | "ST-02" | "WORSTGEN" => Some(st02()),
+        "ST06" | "ST-06" | "NAVY" => Some(st06()),
         _ => None,
     }
 }
 
-pub const BUILTIN: &[&str] = &["ST01", "ST02"];
+pub const BUILTIN: &[&str] = &["ST01", "ST02", "ST06"];
 
 /// ST-01 Straw Hat Crew.
 pub fn st01() -> DeckList {
@@ -41,6 +42,20 @@ pub fn st02() -> DeckList {
             ("ST02-014", 2), ("ST02-015", 4), ("ST02-016", 2), ("ST02-017", 2),
         ],
     )
+}
+
+/// ST-06 Absolute Justice.
+///
+/// A legal 50-card build, not the printed decklist — the ingest carries card
+/// data but not product contents, so the copy counts here are chosen rather
+/// than transcribed. Deck construction (5-1-2) is enforced either way.
+pub fn st06() -> DeckList {
+    build("ST06-001", &[
+        ("ST06-002", 4), ("ST06-003", 4), ("ST06-004", 2), ("ST06-005", 2),
+        ("ST06-006", 4), ("ST06-007", 4), ("ST06-008", 4), ("ST06-009", 4),
+        ("ST06-010", 4), ("ST06-011", 2), ("ST06-012", 2), ("ST06-013", 4),
+        ("ST06-014", 4), ("ST06-015", 2), ("ST06-016", 2), ("ST06-017", 2),
+    ])
 }
 
 fn build(leader: &str, spec: &[(&str, usize)]) -> DeckList {

@@ -30,6 +30,12 @@ pub enum Duration {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ModKind {
     Power(i32),
+    /// Cost modification, e.g. "give -4 cost during this turn". Clamped at 0
+    /// when derived; a card's cost never goes negative.
+    Cost(i32),
+    /// "This Character cannot be K.O.'d by effects." Losing a battle still
+    /// K.O.s it (10-2-1-1) — only effect-driven K.O. is prevented.
+    CannotBeKoedByEffect,
     GrantKeyword(Keyword),
     /// The opponent cannot activate `[Blocker]` against this card's attack
     /// (ST01-012, ST01-016).
@@ -167,6 +173,10 @@ pub enum Condition {
     CharacterCountAtLeast(u8),
     /// "If this Character is rested".
     SelfRested,
+    /// "If your Leader has the {Type} type".
+    LeaderHasType(String),
+    /// "If there is a Character with a cost of N" — either player's.
+    AnyCharacterWithCost(u8),
 }
 
 /// A suspended effect in mid-resolution.

@@ -123,6 +123,19 @@ pub fn choose(key: &str, select: Selector) -> EffectOp {
     }
 }
 
+/// A modifier of any kind on the cards bound under `key`.
+pub fn modify(key: &str, kind: ModKind, duration: Duration) -> EffectOp {
+    EffectOp::Modify {
+        key: key.to_string(),
+        kind,
+        duration,
+    }
+}
+
+pub fn require_if(cond: Condition) -> EffectOp {
+    EffectOp::RequireIf { cond }
+}
+
 pub fn power_up(key: &str, amount: i32, duration: Duration) -> EffectOp {
     EffectOp::Modify {
         key: key.to_string(),
@@ -219,6 +232,14 @@ pub fn self_rested() -> Condition {
     Condition::SelfRested
 }
 
+pub fn leader_has_type(ty: &str) -> Condition {
+    Condition::LeaderHasType(ty.to_string())
+}
+
+pub fn any_character_costing(n: u8) -> Condition {
+    Condition::AnyCharacterWithCost(n)
+}
+
 // ---- effect builders -------------------------------------------------------
 
 /// A permanent effect on the card itself.
@@ -246,6 +267,25 @@ pub fn auto(timing: Timing, conditions: Vec<Condition>, ops: Vec<EffectOp>) -> A
     AutoEffect {
         timing,
         conditions,
+        cost: ActivationCost::default(),
+        ops,
+        slot: 0,
+        once_per_turn: false,
+    }
+}
+
+/// An auto effect with an activation cost (8-1-3-1-2), e.g.
+/// "[On Play] You may trash 1 card from your hand: …".
+pub fn auto_paying(
+    timing: Timing,
+    cost: ActivationCost,
+    conditions: Vec<Condition>,
+    ops: Vec<EffectOp>,
+) -> AutoEffect {
+    AutoEffect {
+        timing,
+        conditions,
+        cost,
         ops,
         slot: 0,
         once_per_turn: false,
@@ -256,6 +296,7 @@ pub fn auto_once(timing: Timing, conditions: Vec<Condition>, ops: Vec<EffectOp>)
     AutoEffect {
         timing,
         conditions,
+        cost: ActivationCost::default(),
         ops,
         slot: 0,
         once_per_turn: true,

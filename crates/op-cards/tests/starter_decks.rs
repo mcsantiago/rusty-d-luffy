@@ -42,6 +42,19 @@ fn st02() -> DeckList {
     }
 }
 
+/// ST-06 Absolute Justice. A legal 50-card build, not the printed list.
+fn st06() -> DeckList {
+    DeckList {
+        leader: "ST06-001".into(),
+        cards: counts(&[
+            ("ST06-002", 4), ("ST06-003", 4), ("ST06-004", 2), ("ST06-005", 2),
+            ("ST06-006", 4), ("ST06-007", 4), ("ST06-008", 4), ("ST06-009", 4),
+            ("ST06-010", 4), ("ST06-011", 2), ("ST06-012", 2), ("ST06-013", 4),
+            ("ST06-014", 4), ("ST06-015", 2), ("ST06-016", 2), ("ST06-017", 2),
+        ]),
+    }
+}
+
 fn counts(spec: &[(&str, usize)]) -> Vec<String> {
     let mut out = Vec::new();
     for (number, n) in spec {
@@ -52,14 +65,16 @@ fn counts(spec: &[(&str, usize)]) -> Vec<String> {
     out
 }
 
-fn load() -> Option<(Arc<CardDb>, Arc<Cards>)> {
+type Scripts = Arc<dyn ScriptSource + Send + Sync>;
+
+fn load() -> Option<(Arc<CardDb>, Scripts)> {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/cards");
     let db = CardDb::load_dir(dir).ok()?;
-    let cards = Cards::new(&db);
-    Some((Arc::new(db), Arc::new(cards)))
+    let cards: Scripts = Arc::new(Cards::new(&db));
+    Some((Arc::new(db), cards))
 }
 
-fn new_game(db: Arc<CardDb>, cards: Arc<Cards>, seed: u64) -> Game {
+fn new_game(db: Arc<CardDb>, cards: Scripts, seed: u64) -> Game {
     let config = GameConfig {
         seed,
         first_player: PlayerId::P0,
@@ -80,6 +95,44 @@ fn official_starter_decklists_pass_deck_construction_rules() {
     assert_eq!(st01().cards.len(), 50);
     assert_eq!(st02().cards.len(), 50);
     let _ = new_game(db, cards, 1);
+}
+
+/// Every scripted deck must be able to play a full game against every other.
+/// A deck that only works against one opponent is not really implemented.
+#[test]
+fn every_deck_pairing_plays_to_completion() {
+    let Some((db, cards)) = load() else {
+        eprintln!("skipping: run tools/ingest/fetch_cards.py");
+        return;
+    };
+    let decks: [(&str, fn() -> DeckList); 3] =
+        [("ST-01", st01), ("ST-02", st02), ("ST-06", st06)];
+
+    for (a_name, a) in decks {
+        for (b_name, b) in decks {
+            let config = GameConfig {
+                seed: 11,
+                first_player: PlayerId::P0,
+                decks: [a(), b()],
+                allow_illegal_decks: false,
+            };
+            let (mut game, _) = Game::new(config, Arc::clone(&db), Arc::clone(&cards))
+                .unwrap_or_else(|e| panic!("{a_name} vs {b_name}: {e}"));
+
+            let mut policy = StdRng::seed_from_u64(3);
+            let mut steps = 0;
+            while !game.is_over() {
+                let legal = legal_actions(&game);
+                assert!(!legal.is_empty(), "{a_name} vs {b_name} stalled");
+                let action = legal[policy.gen_range(0..legal.len())].clone();
+                game.step(action.clone()).unwrap_or_else(|e| {
+                    panic!("{a_name} vs {b_name}: {action:?} rejected: {e}")
+                });
+                steps += 1;
+                assert!(steps < 8000, "{a_name} vs {b_name} did not terminate");
+            }
+        }
+    }
 }
 
 #[test]
@@ -127,7 +180,7 @@ fn full_games_play_to_completion_with_scripts_live() {
 
 // ---- individual card behaviour ---------------------------------------------
 
-fn game_at_main(db: Arc<CardDb>, cards: Arc<Cards>, seed: u64, turns: usize) -> Game {
+fn game_at_main(db: Arc<CardDb>, cards: Scripts, seed: u64, turns: usize) -> Game {
     let mut game = new_game(db, cards, seed);
     for _ in 0..2 {
         game.step(Action::Mulligan(false)).unwrap();
@@ -144,6 +197,58 @@ fn put_in_play(game: &mut Game, player: PlayerId, number: &str) -> op_core::Card
     game.state
         .move_card(card, player, Zone::Character, Placement::Bottom);
     card
+}
+
+/// ST-06's whole plan is shrinking a Character so that a "cost N or less"
+/// removal effect can reach it. That only works if the filter reads *derived*
+/// cost; against printed cost the deck does nothing.
+#[test]
+fn st06_cost_reduction_brings_a_character_into_ko_range() {
+    let Some((db, cards)) = load() else { return };
+    let mut game = game_at_main(db, cards, 5, 1);
+
+    // ST06-012 Garp is a cost-5 Character; ST06-012's own effect reaches
+    // cost 4 or less, so unmodified it cannot touch him.
+    let target = put_in_play(&mut game, PlayerId::P0, "ST06-012");
+    assert_eq!(game.derived().get(target).cost, 5);
+
+    // Two applications of -2 cost put him at 1.
+    for _ in 0..2 {
+        game.state.modifiers.push(op_core::effect::Modifier {
+            target,
+            kind: op_core::effect::ModKind::Cost(-2),
+            duration: op_core::effect::Duration::ThisTurn,
+            source: target,
+            controller: PlayerId::P1,
+        });
+    }
+    assert_eq!(game.derived().get(target).cost, 1);
+
+    // Cost never goes negative, however much is stacked on.
+    for _ in 0..5 {
+        game.state.modifiers.push(op_core::effect::Modifier {
+            target,
+            kind: op_core::effect::ModKind::Cost(-4),
+            duration: op_core::effect::Duration::ThisTurn,
+            source: target,
+            controller: PlayerId::P1,
+        });
+    }
+    assert_eq!(game.derived().get(target).cost, 0, "cost is clamped at 0");
+}
+
+/// ST06-004 Smoker cannot be K.O.'d by effects, but a lost battle still
+/// K.O.s him (10-2-1-1).
+#[test]
+fn st06_004_resists_effect_ko_but_not_battle() {
+    let Some((db, cards)) = load() else { return };
+    let mut game = game_at_main(db, cards, 5, 1);
+    let smoker = put_in_play(&mut game, PlayerId::P1, "ST06-004");
+    assert!(game.derived().get(smoker).cannot_be_koed_by_effect);
+
+    // A vanilla Character has no such protection.
+    let plain = put_in_play(&mut game, PlayerId::P1, "ST06-009");
+    assert!(!game.derived().get(plain).cannot_be_koed_by_effect);
 }
 
 #[test]

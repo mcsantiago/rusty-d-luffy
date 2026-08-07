@@ -1454,11 +1454,19 @@ impl Game {
             }
 
             Op::Ko { key } => {
+                let derived = self.derived();
                 for &target in frame.bound(&key) {
                     // 8-1-3-1-3: a card that already left its area is skipped.
-                    if self.state.card(target).zone == Zone::Character {
-                        self.knock_out(target, events);
+                    if self.state.card(target).zone != Zone::Character {
+                        continue;
                     }
+                    // "Cannot be K.O.'d by effects" stops this but not a lost
+                    // battle (10-2-1-1), which is why the check lives here and
+                    // not in `knock_out`.
+                    if derived.get(target).cannot_be_koed_by_effect {
+                        continue;
+                    }
+                    self.knock_out(target, events);
                 }
                 OpOutcome::Advance
             }
@@ -1730,6 +1738,13 @@ impl Game {
             }
             if !derive::conditions_hold(&self.state, &self.db, &[], card, &effect.conditions) {
                 continue;
+            }
+            // 8-3-1-3: a cost that cannot be paid in full cannot be paid at all.
+            if !effect.cost.is_free() {
+                if !self.can_pay(controller, card, &effect.cost) {
+                    continue;
+                }
+                self.pay(controller, card, &effect.cost, events);
             }
             if effect.once_per_turn {
                 self.state.card_mut(card).used_once_per_turn.push(effect.slot);
