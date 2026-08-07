@@ -11,14 +11,11 @@ test suite is named for the clauses it pins down.
 ## Quick start
 
 ```bash
-# 1. Fetch card data (not vendored — it is Bandai's copyright)
-python3 tools/ingest/fetch_cards.py
-
-# 2. Play — desktop app (card art, clickable actions)
-python3 tools/ingest/fetch_cards.py --images   # cache art for the fetched packs
+# Desktop app — fetches card data on first run, no setup needed
 cargo run -p op-desktop --release
 
-# ...or in the terminal
+# Terminal client — needs the data fetched first
+python3 tools/ingest/fetch_cards.py --packs ST-01 ST-02 --images
 cargo run -p op-cli --release -- --help
 cargo run -p op-cli --release            # you (ST-01) vs AI (ST-02)
 cargo run -p op-cli --release -- --hard --second
@@ -82,9 +79,21 @@ The UI is a **renderer**. It is handed a `PlayerView`, a log of already-projecte
 That is the same boundary the multiplayer server will use, so this front end
 should survive the transport becoming a socket.
 
-Card art is cached under `data/images/` by `fetch_cards.py --images` and served
-as data URIs. Without it the UI falls back to drawing text cards, so the app
-still runs.
+**First run fetches its own data.** `data/` is empty on a fresh clone — the card
+text and art are Bandai's copyright and are not vendored — so the window opens
+first and the app shells out to `tools/ingest/fetch_cards.py` on a worker
+thread, streaming progress into the setup panel. Only *Start game* is gated
+while that runs; the window stays live. Shelling out rather than reimplementing
+the fetch keeps one copy of the fiddly parts (pack aliasing, alternate-printing
+filtering, retries), at the cost of needing `python3` on PATH — which is
+reported plainly if missing.
+
+Only the two starter decks are fetched, with their art: a few dozen small
+requests rather than the full pool's ~2,700 files and several hundred MB. Use
+`fetch_cards.py --all` for the rest.
+
+Card art is served as data URIs. Without it the UI falls back to drawing text
+cards, so the app still runs.
 
 > `client/` is embedded into the binary at compile time, so **editing the front
 > end requires `cargo build -p op-desktop`** — a browser refresh will not pick

@@ -44,6 +44,19 @@
 
         <button id="start" class="primary">Start game</button>
         <p id="setup-error" class="error"></p>
+
+        <div id="ingest" hidden>
+          <div class="ingest-head">
+            <span class="spinner"></span>
+            <span id="ingest-title">Fetching card data…</span>
+          </div>
+          <p class="ingest-note">
+            Card data is not bundled — it is fetched from the official card
+            list on first run. This takes a few seconds.
+          </p>
+          <pre id="ingest-log"></pre>
+          <button id="ingest-retry" class="ghost" hidden>Retry</button>
+        </div>
       </div>
     </div>
 

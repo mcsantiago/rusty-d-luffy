@@ -4,14 +4,19 @@
 //! this binary and a UI click calls `Game::step` directly, with no sidecar
 //! process and no hand-written IPC protocol. The front end is plain ES modules
 //! under `client/`, so there is no JavaScript build step either.
+//!
+//! The window opens before card data is loaded. On a fresh checkout `data/` is
+//! empty — it is Bandai's copyright and not vendored — so startup fetches it
+//! behind a progress modal rather than refusing to launch.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod ingest;
 mod render;
 mod session;
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use base64::Engine;
 use op_cards::Cards;
@@ -60,13 +65,121 @@ fn deck_by_name(name: &str) -> DeckList {
     }
 }
 
-struct AppState {
+/// Card data, once it has been fetched and loaded.
+struct Loaded {
     db: Arc<CardDb>,
     scripts: Arc<dyn ScriptSource + Send + Sync>,
+}
+
+struct AppState {
+    repo_root: std::path::PathBuf,
+    data_dir: std::path::PathBuf,
+    /// `None` until card data has been fetched and parsed.
+    cards: RwLock<Option<Loaded>>,
+    /// Set while an ingest is in flight, so a second bootstrap call from a
+    /// reloaded window does not start a duplicate download.
+    ingesting: Mutex<bool>,
     session: Mutex<Option<Session>>,
     /// Card art, base64-encoded on first request and kept for the process.
     art: Mutex<HashMap<String, Option<String>>>,
-    data_dir: std::path::PathBuf,
+}
+
+impl AppState {
+    fn cards_dir(&self) -> std::path::PathBuf {
+        self.data_dir.join("cards")
+    }
+
+    /// Parses `data/cards` into the shared database.
+    fn load_cards(&self) -> Result<usize, String> {
+        let db = CardDb::load_dir(self.cards_dir()).map_err(|e| e.to_string())?;
+        let count = db.len();
+        let scripts: Arc<dyn ScriptSource + Send + Sync> = Arc::new(Cards::new(&db));
+        *self.cards.write().unwrap() = Some(Loaded {
+            db: Arc::new(db),
+            scripts,
+        });
+        Ok(count)
+    }
+}
+
+#[derive(Serialize)]
+struct BootstrapStatus {
+    /// Card data is loaded and a game can be started.
+    ready: bool,
+    /// A fetch is running; the UI should watch `ingest://progress`.
+    fetching: bool,
+    message: String,
+}
+
+/// Called by the UI as soon as the window is up.
+///
+/// Loads card data if it is already on disk, and otherwise kicks off a fetch on
+/// a worker thread so the window stays responsive.
+#[tauri::command]
+fn bootstrap(app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> BootstrapStatus {
+    if state.cards.read().unwrap().is_some() {
+        return BootstrapStatus {
+            ready: true,
+            fetching: false,
+            message: "Card data ready".into(),
+        };
+    }
+
+    if ingest::is_populated(&state.cards_dir()) {
+        return match state.load_cards() {
+            Ok(count) => BootstrapStatus {
+                ready: true,
+                fetching: false,
+                message: format!("{count} cards loaded"),
+            },
+            Err(message) => BootstrapStatus {
+                ready: false,
+                fetching: false,
+                message,
+            },
+        };
+    }
+
+    // Guard against a reloaded window starting a second download.
+    {
+        let mut ingesting = state.ingesting.lock().unwrap();
+        if *ingesting {
+            return BootstrapStatus {
+                ready: false,
+                fetching: true,
+                message: "Fetching card data…".into(),
+            };
+        }
+        *ingesting = true;
+    }
+
+    let repo_root = state.repo_root.clone();
+    std::thread::spawn(move || {
+        let result = ingest::run(&app, &repo_root);
+        let state = tauri::Manager::state::<AppState>(&app);
+        if result.is_ok() {
+            // Parsing happens here so the UI's "ready" signal means genuinely
+            // ready, not merely downloaded.
+            if let Err(err) = state.load_cards() {
+                let _ = tauri::Emitter::emit(
+                    &app,
+                    ingest::PROGRESS_EVENT,
+                    ingest::Progress {
+                        line: format!("card data downloaded but failed to load: {err}"),
+                        done: true,
+                        ok: false,
+                    },
+                );
+            }
+        }
+        *state.ingesting.lock().unwrap() = false;
+    });
+
+    BootstrapStatus {
+        ready: false,
+        fetching: true,
+        message: "Fetching card data…".into(),
+    }
 }
 
 #[derive(Serialize)]
@@ -84,6 +197,9 @@ fn new_game(
     difficulty: String,
     you_first: bool,
 ) -> Result<StartResult, String> {
+    let guard = state.cards.read().unwrap();
+    let loaded = guard.as_ref().ok_or("card data is not loaded yet")?;
+
     let seed = seed.unwrap_or_else(|| {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -95,8 +211,8 @@ fn new_game(
     let ai = deck_by_name(&ai_deck);
 
     let session = Session::new(
-        Arc::clone(&state.db),
-        Arc::clone(&state.scripts),
+        Arc::clone(&loaded.db),
+        Arc::clone(&loaded.scripts),
         seed,
         human.clone(),
         ai.clone(),
@@ -146,38 +262,27 @@ fn card_art(state: tauri::State<'_, AppState>, number: String) -> Option<String>
             base64::engine::general_purpose::STANDARD.encode(bytes)
         )
     });
-    state
-        .art
-        .lock()
-        .unwrap()
-        .insert(number, encoded.clone());
+    state.art.lock().unwrap().insert(number, encoded.clone());
     encoded
 }
 
 fn main() {
-    // The repo's data/ directory, resolved relative to this crate so the app
-    // runs from a checkout without an install step.
-    let data_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+    let repo_root = ingest::repo_root();
+    let data_dir = repo_root.join("data");
 
-    let db = match CardDb::load_dir(data_dir.join("cards")) {
-        Ok(db) => db,
-        Err(err) => {
-            eprintln!("{err}");
-            std::process::exit(1);
-        }
-    };
-    let scripts: Arc<dyn ScriptSource + Send + Sync> = Arc::new(Cards::new(&db));
-
+    // Card data is deliberately *not* loaded here. It may not exist yet, and a
+    // window that opens and explains itself beats a process that exits.
     tauri::Builder::default()
         .manage(AppState {
-            db: Arc::new(db),
-            scripts,
+            repo_root,
+            data_dir,
+            cards: RwLock::new(None),
+            ingesting: Mutex::new(false),
             session: Mutex::new(None),
             art: Mutex::new(HashMap::new()),
-            data_dir,
         })
         .invoke_handler(tauri::generate_handler![
-            new_game, choose, snapshot, card_art
+            bootstrap, new_game, choose, snapshot, card_art
         ])
         .run(tauri::generate_context!())
         .expect("failed to start the desktop app");

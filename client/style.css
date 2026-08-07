@@ -411,3 +411,76 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
   background: rgba(240, 180, 41, 0.07);
   border: 1px dashed #6c5a2a;
 }
+
+/* ---- first-run ingest ----
+
+   Sits inside the setup panel rather than over it: the window stays live and
+   the controls remain usable while data downloads. Only Start is gated. */
+
+#ingest {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.ingest-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.spinner {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+  border: 2px solid var(--line);
+  border-top-color: var(--accent-2);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* A finished-with-errors state has nothing left to spin about. */
+#ingest.failed .spinner {
+  animation: none;
+  border-color: var(--accent);
+  border-top-color: var(--accent);
+}
+
+.ingest-note {
+  margin: 8px 0 10px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+#ingest-log {
+  margin: 0;
+  max-height: 130px;
+  overflow: auto;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: #9fb3c8;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+#ingest.failed #ingest-log { color: #e8a0a2; }
+
+#ingest-retry { margin-top: 10px; }
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+  background: var(--felt);
+  border-color: var(--line);
+}
+button:disabled:hover { background: var(--felt); border-color: var(--line); }

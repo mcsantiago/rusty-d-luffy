@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Permissions the desktop client needs. Custom #[tauri::command]s are not ACL-gated, but core plugin commands are — the ingest progress stream uses event.listen, which is one of them.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:event:default"
+  ]
+}

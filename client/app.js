@@ -23,6 +23,7 @@ if (!window.__TAURI__ || !window.__TAURI__.core) {
 }
 
 const { invoke } = window.__TAURI__.core;
+const { listen } = window.__TAURI__.event;
 
 /** Printed card details, keyed by card number, sent once per game. */
 let catalogue = new Map();
@@ -292,6 +293,76 @@ async function start() {
     $("setup-error").textContent = String(err);
   }
 }
+
+// ---- startup ----------------------------------------------------------------
+//
+// The window opens before card data exists. On a fresh checkout `data/` is
+// empty, so the backend fetches it on a worker thread and streams progress
+// here. The setup panel stays on screen and interactive throughout; only
+// starting a game is gated, since that is the one thing that genuinely needs
+// the data.
+
+function setIngestVisible(visible) {
+  $("ingest").hidden = !visible;
+  $("start").disabled = visible;
+  $("start").textContent = visible ? "Waiting for card data…" : "Start game";
+}
+
+function appendIngestLine(line) {
+  const log = $("ingest-log");
+  log.textContent += (log.textContent ? "\n" : "") + line;
+  log.scrollTop = log.scrollHeight;
+}
+
+async function bootstrap() {
+  $("ingest-retry").hidden = true;
+  let status;
+  try {
+    status = await invoke("bootstrap");
+  } catch (err) {
+    setIngestVisible(true);
+    $("ingest-title").textContent = "Could not start";
+    appendIngestLine(String(err));
+    $("ingest-retry").hidden = false;
+    return;
+  }
+
+  if (status.ready) {
+    setIngestVisible(false);
+    return;
+  }
+  setIngestVisible(true);
+  $("ingest-title").textContent = status.message;
+  if (!status.fetching) {
+    appendIngestLine(status.message);
+    $("ingest-retry").hidden = false;
+  }
+}
+
+listen("ingest://progress", (event) => {
+  const { line, done, ok } = event.payload;
+  appendIngestLine(line);
+  if (!done) return;
+
+  $("ingest").classList.toggle("failed", !ok);
+  $("ingest-title").textContent = ok ? "Card data ready" : "Fetch failed";
+  if (ok) {
+    // The backend only reports done-ok once the data is parsed, so this is a
+    // genuine ready signal rather than merely "downloaded".
+    setTimeout(bootstrap, 400);
+  } else {
+    $("ingest-retry").hidden = false;
+    $("start").disabled = true;
+  }
+});
+
+$("ingest-retry").addEventListener("click", () => {
+  $("ingest-log").textContent = "";
+  $("ingest").classList.remove("failed");
+  bootstrap();
+});
+
+bootstrap();
 
 $("start").addEventListener("click", start);
 $("new-game").addEventListener("click", () => {
