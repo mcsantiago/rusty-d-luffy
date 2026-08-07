@@ -214,10 +214,14 @@ function render(snap) {
   }
   for (const c of view.you.hand) hand.appendChild(cardSlot(c));
 
-  $("question").textContent = snap.question ?? "Waiting for opponent…";
+  $("question").textContent =
+    snap.question ?? (snap.thinking ? "Opponent is thinking…" : "Waiting…");
 
   const options = $("options");
   options.innerHTML = "";
+  if (snap.thinking) {
+    options.innerHTML = `<div class="thinking">Opponent is thinking…</div>`;
+  }
   for (const opt of snap.options) {
     const b = document.createElement("button");
     b.className = `opt ${opt.kind}`;
@@ -265,12 +269,21 @@ let lastSnapshot = null;
 async function choose(index) {
   $("options").innerHTML = `<div class="thinking">Opponent is thinking…</div>`;
   try {
+    // Returns as soon as your own move is applied. If the AI owes a reply it
+    // is computed on a worker and arrives later via game://update, so the
+    // board shows your move immediately rather than freezing until the search
+    // finishes.
     lastSnapshot = await invoke("choose", { index });
     render(lastSnapshot);
   } catch (err) {
     $("question").textContent = String(err);
   }
 }
+
+listen("game://update", (event) => {
+  lastSnapshot = event.payload;
+  render(lastSnapshot);
+});
 
 async function start() {
   $("setup-error").textContent = "";

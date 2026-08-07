@@ -57,6 +57,8 @@ pub struct Snapshot {
     pub over: Option<String>,
     /// Whose turn it is, as a label.
     pub turn_label: String,
+    /// The AI owes a decision; the UI should expect a `game://update` shortly.
+    pub thinking: bool,
 }
 
 pub struct Session {
@@ -132,13 +134,21 @@ impl Session {
             db,
         };
         session.absorb(&opening.events);
-        session.run_ai();
+        // The AI is deliberately *not* run here. If it moves first, that is a
+        // full search, and doing it inline would block whoever called us — the
+        // caller drives it on a worker instead, same as any other AI turn.
         Ok(session)
     }
 
-    /// Applies the human's chosen option, then lets the AI play until it is the
-    /// human's turn again.
-    pub fn choose(&mut self, index: usize) -> Result<(), String> {
+    /// Applies one of the human's offered options.
+    ///
+    /// Stops there: the AI's reply is a separate step so the caller can put it
+    /// on a worker thread and let the board show the human's own move first.
+    pub fn apply_human(&mut self, index: usize) -> Result<(), String> {
+        let pending = self.game.pending().ok_or("no decision is pending")?;
+        if pending.player() != self.human {
+            return Err("it is not your decision".into());
+        }
         let legal = legal_actions(&self.game);
         let action = legal
             .get(index)
@@ -146,12 +156,22 @@ impl Session {
             .ok_or_else(|| format!("option {index} is out of range"))?;
         let outcome = self.game.step(action).map_err(|e| e.to_string())?;
         self.absorb(&outcome.events);
-        self.run_ai();
         Ok(())
     }
 
+    /// Whether the pending decision belongs to the AI.
+    pub fn ai_to_act(&self) -> bool {
+        !self.game.is_over()
+            && self
+                .game
+                .pending()
+                .is_some_and(|p| p.player() != self.human)
+    }
+
     /// Steps the AI while the pending decision belongs to it.
-    fn run_ai(&mut self) {
+    ///
+    /// Expensive — a search per decision. Call it off the UI thread.
+    pub fn run_ai(&mut self) {
         for _ in 0..10_000 {
             if self.game.is_over() {
                 return;
@@ -234,6 +254,7 @@ impl Session {
             question,
             over,
             turn_label,
+            thinking: self.ai_to_act(),
         }
     }
 
@@ -311,6 +332,12 @@ mod tests {
             Difficulty::Easy,
         )
         .ok()
+        .map(|mut session| {
+            // Construction no longer runs the AI, so tests that expect a
+            // human decision waiting must drive it once.
+            session.run_ai();
+            session
+        })
     }
 
     /// Drives a whole game through the same path the UI uses, always taking the
@@ -334,7 +361,8 @@ mod tests {
                 "step {step}: no options while the game is live ({:?})",
                 snap.question
             );
-            session.choose(0).expect("first option must be legal");
+            session.apply_human(0).expect("first option must be legal");
+            session.run_ai();
         }
         panic!("game did not finish");
     }
@@ -357,8 +385,40 @@ mod tests {
             if snap.over.is_some() || snap.options.is_empty() {
                 break;
             }
-            session.choose(0).unwrap();
+            session.apply_human(0).unwrap();
+            session.run_ai();
         }
+    }
+
+    /// Human input and the AI's reply now run on different threads, so the
+    /// session has to refuse a human action aimed at a decision that is not
+    /// theirs — otherwise a click landing while the worker is mid-turn would
+    /// play the AI's move for it.
+    #[test]
+    fn a_human_action_is_refused_when_the_decision_is_the_ais() {
+        let Some(mut session) = fixture() else { return };
+
+        // Drive to a point where the AI owes a decision.
+        let mut guard = 0;
+        while !session.ai_to_act() && session.snapshot().over.is_none() {
+            session.apply_human(0).unwrap();
+            guard += 1;
+            assert!(guard < 500, "never reached an AI decision");
+        }
+        if session.snapshot().over.is_some() {
+            return; // game ended first; nothing to assert
+        }
+
+        assert!(session.ai_to_act());
+        assert!(
+            session.apply_human(0).is_err(),
+            "the human must not be able to act on the AI's decision"
+        );
+        // And the snapshot tells the UI to expect an update rather than
+        // offering buttons.
+        let snap = session.snapshot();
+        assert!(snap.thinking);
+        assert!(snap.options.is_empty());
     }
 
     #[test]

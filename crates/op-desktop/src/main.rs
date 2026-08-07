@@ -79,6 +79,9 @@ struct AppState {
     /// Set while an ingest is in flight, so a second bootstrap call from a
     /// reloaded window does not start a duplicate download.
     ingesting: Mutex<bool>,
+    /// Set while the AI is computing a turn, so overlapping requests do not
+    /// stack up workers all contending for the session lock.
+    ai_thinking: Mutex<bool>,
     /// Set once an ingest has run to completion this session.
     ///
     /// Needed because a handful of cards may have no art upstream at all. Left
@@ -227,6 +230,7 @@ struct StartResult {
 
 #[tauri::command]
 fn new_game(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     seed: Option<u64>,
     your_deck: String,
@@ -262,18 +266,78 @@ fn new_game(
     let snapshot = session.snapshot();
     *state.session.lock().unwrap() = Some(session);
 
+    // With the human going second the AI opens, which is a full search.
+    if snapshot.thinking {
+        spawn_ai_turn(app);
+    }
+
     Ok(StartResult {
         snapshot,
         catalogue,
     })
 }
 
+/// Event carrying a fresh snapshot once the AI has finished thinking.
+pub const GAME_UPDATE_EVENT: &str = "game://update";
+
+/// Applies the human's choice and returns immediately.
+///
+/// The AI's reply is a full search per decision — inline it would freeze the
+/// window, which is what a Tauri command does when it blocks. So the board
+/// updates twice: once with the human's own move, then again from
+/// `game://update` when the worker is done.
 #[tauri::command]
-fn choose(state: tauri::State<'_, AppState>, index: usize) -> Result<Snapshot, String> {
-    let mut guard = state.session.lock().unwrap();
-    let session = guard.as_mut().ok_or("no game in progress")?;
-    session.choose(index)?;
-    Ok(session.snapshot())
+fn choose(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    index: usize,
+) -> Result<Snapshot, String> {
+    let snapshot = {
+        let mut guard = state.session.lock().unwrap();
+        let session = guard.as_mut().ok_or("no game in progress")?;
+        session.apply_human(index)?;
+        session.snapshot()
+    };
+
+    if snapshot.thinking {
+        spawn_ai_turn(app);
+    }
+    Ok(snapshot)
+}
+
+/// Runs the AI's decisions on a worker, then pushes the result to the UI.
+///
+/// The session lock is taken only inside the worker, so the command that
+/// spawned it has already returned and the window stays live throughout.
+fn spawn_ai_turn(app: tauri::AppHandle) {
+    {
+        let state = tauri::Manager::state::<AppState>(&app);
+        let mut thinking = state.ai_thinking.lock().unwrap();
+        if *thinking {
+            return; // a turn is already being computed
+        }
+        *thinking = true;
+    }
+
+    std::thread::spawn(move || {
+        let state = tauri::Manager::state::<AppState>(&app);
+        let snapshot = {
+            let mut guard = state.session.lock().unwrap();
+            match guard.as_mut() {
+                Some(session) => {
+                    session.run_ai();
+                    Some(session.snapshot())
+                }
+                None => None,
+            }
+        };
+        *state.ai_thinking.lock().unwrap() = false;
+
+        if let Some(snapshot) = snapshot {
+            // A window that has gone away is not an error worth surfacing.
+            let _ = tauri::Emitter::emit(&app, GAME_UPDATE_EVENT, snapshot);
+        }
+    });
 }
 
 #[tauri::command]
@@ -315,6 +379,7 @@ fn main() {
             data_dir,
             cards: RwLock::new(None),
             ingesting: Mutex::new(false),
+            ai_thinking: Mutex::new(false),
             install_complete: Mutex::new(false),
             session: Mutex::new(None),
             art: Mutex::new(HashMap::new()),
