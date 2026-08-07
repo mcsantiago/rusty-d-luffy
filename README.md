@@ -88,9 +88,12 @@ the fetch keeps one copy of the fiddly parts (pack aliasing, alternate-printing
 filtering, retries), at the cost of needing `python3` on PATH — which is
 reported plainly if missing.
 
-Only the two starter decks are fetched, with their art: a few dozen small
-requests rather than the full pool's ~2,700 files and several hundred MB. Use
-`fetch_cards.py --all` for the rest.
+The ingest runs in two passes, because card data and card art differ wildly in
+cost. **Every set's card data** is taken — 59 requests, under 2 MB — so the whole
+pool is available to the coverage report and to any deck added later. **Art is
+cached only for the starter decks**, since the same pool of images is ~2,700
+files and roughly 736 MB. First run lands at about 8 MB in a few seconds; run
+`fetch_cards.py --all --images` if you want the rest.
 
 Card art is served as data URIs. Without it the UI falls back to drawing text
 cards, so the app still runs.

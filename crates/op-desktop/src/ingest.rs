@@ -58,12 +58,26 @@ pub fn is_populated(cards_dir: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// Runs the ingest script, emitting each line of output as it arrives.
+/// The ingest is two passes, because card data and card art are wildly
+/// different in cost.
 ///
-/// Blocking — call it on a worker thread. Only the starter decks are fetched,
-/// with their art: that is what the app can actually play, and it keeps first
-/// run to a few dozen small requests rather than the full pool's ~2,700 files
-/// and several hundred megabytes of images.
+/// Every set's card data is 59 requests and under 2 MB — worth taking in full,
+/// since it makes the whole pool available to the coverage report and to any
+/// deck added later. Art for the same pool is ~2,700 images and roughly 736 MB,
+/// which is not something to inflict on a first launch, so only the decks the
+/// app can actually play are cached. `fetch_cards.py --all --images` pulls the
+/// rest when it is wanted.
+const STEPS: &[(&str, &[&str])] = &[
+    ("Fetching card data for every set…", &["--all"]),
+    (
+        "Caching art for the starter decks…",
+        &["--packs", "ST-01", "ST-02", "--images"],
+    ),
+];
+
+/// Runs the ingest, emitting each line of output as it arrives.
+///
+/// Blocking — call it on a worker thread.
 pub fn run(app: &AppHandle, repo_root: &Path) -> Result<(), String> {
     let script = repo_root.join("tools/ingest/fetch_cards.py");
     if !script.exists() {
@@ -72,11 +86,24 @@ pub fn run(app: &AppHandle, repo_root: &Path) -> Result<(), String> {
         return Err(message);
     }
 
-    emit(app, Progress::line("Fetching card data…"));
+    for (label, args) in STEPS {
+        emit(app, Progress::line(*label));
+        run_step(app, repo_root, &script, args)?;
+    }
 
+    emit(app, Progress::finished(true, "Card data ready"));
+    Ok(())
+}
+
+fn run_step(
+    app: &AppHandle,
+    repo_root: &Path,
+    script: &Path,
+    args: &[&str],
+) -> Result<(), String> {
     let mut child = match Command::new("python3")
-        .arg(&script)
-        .args(["--packs", "ST-01", "ST-02", "--images"])
+        .arg(script)
+        .args(args)
         .current_dir(repo_root)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -107,7 +134,6 @@ pub fn run(app: &AppHandle, repo_root: &Path) -> Result<(), String> {
 
     let status = child.wait().map_err(|e| e.to_string())?;
     if status.success() {
-        emit(app, Progress::finished(true, "Card data ready"));
         Ok(())
     } else {
         // stderr is drained only on failure; on success it is just retry noise.
