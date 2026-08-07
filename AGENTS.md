@@ -102,6 +102,8 @@ trusting it.
 4. Extend the DSL in `op-cards/src/dsl.rs` (and the ops in
    `op-core/src/effect.rs`) where existing pieces do not fit
 5. Repeat until the set reports `OK`
+6. Bump the card-sets badge and the `Status` line at the top of `README.md` —
+   `cargo run -p op-cards --bin coverage` prints the `N/59` to put in both
 
 Keep each card's printed text in a comment above its script. Where the script
 diverges from the text, say why and cite the rule.
