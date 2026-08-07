@@ -173,6 +173,45 @@ function renderDon(side, prefix, deckCount) {
   row.appendChild(remaining);
 }
 
+/// The trash is an open area (3-5-2) — either player may look through either
+/// one — so this is a pile you can open, not a hidden zone.
+function renderTrash(side, prefix, label) {
+  const slot = $(`${prefix}-trash`);
+  slot.innerHTML = "";
+
+  const pile = document.createElement("div");
+  pile.className = "trash-pile" + (side.trash.length === 0 ? " empty" : "");
+  pile.title = `${label} trash — ${side.trash.length} card(s)`;
+
+  if (side.trash.length > 0) {
+    // Index 0 is the most recent card in (3-5-2), so it is the face-up top.
+    pile.appendChild(cardEl(side.trash[0], { small: true }));
+    pile.addEventListener("click", () => openTrash(side, label));
+  } else {
+    pile.innerHTML = `<div class="trash-empty">trash</div>`;
+  }
+
+  const count = document.createElement("div");
+  count.className = "trash-count";
+  count.textContent = side.trash.length;
+  pile.appendChild(count);
+  slot.appendChild(pile);
+}
+
+function openTrash(side, label) {
+  $("trash-title").textContent = `${label} trash`;
+  $("trash-sub").textContent =
+    `${side.trash.length} card(s), most recent first`;
+  const grid = $("trash-grid");
+  grid.innerHTML = "";
+  for (const card of side.trash) grid.appendChild(cardEl(card));
+  $("trash-modal").hidden = false;
+}
+
+$("trash-close").addEventListener("click", () => {
+  $("trash-modal").hidden = true;
+});
+
 function renderSide(view, side, prefix) {
   const leader = $(`${prefix}-leader`);
   leader.innerHTML = "";
@@ -283,6 +322,8 @@ function render(snap) {
 
   renderSide(view, view.opponent, "opp");
   renderSide(view, view.you, "you");
+  renderTrash(view.opponent, "opp", "Opponent");
+  renderTrash(view.you, "you", "Your");
   renderDon(view.opponent, "opp", view.opponent.don_deck);
   renderDon(view.you, "you", view.you.don_deck);
 

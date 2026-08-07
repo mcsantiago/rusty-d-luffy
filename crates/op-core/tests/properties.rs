@@ -301,6 +301,57 @@ fn a_defender_can_see_the_battle_they_are_answering() {
     assert!(checked > 0, "no block or counter decision was exercised");
 }
 
+/// The trash is an open area (3-5-2): either player may look through either
+/// one, so every card in it must be identifiable in both players' views. The
+/// UI renders it as a browsable pile from exactly this.
+#[test]
+fn both_trashes_are_fully_visible_to_both_players() {
+    let cards = TestCards::new();
+    let (mut game, _) = game_with(
+        &cards,
+        TestScripts::default(),
+        21,
+        ("LDR-001", deck_of("CHR-5K", 40)),
+        ("LDR-002", deck_of("CHR-BLOCK", 40)),
+    );
+
+    let mut policy = StdRng::seed_from_u64(12);
+    let mut saw_cards = 0;
+
+    for _ in 0..400 {
+        if game.is_over() {
+            break;
+        }
+        let derived = game.derived();
+        for viewer in [PlayerId::P0, PlayerId::P1] {
+            let view = PlayerView::project(&game.state, game.db(), &derived, viewer);
+            for (side, owner) in [(&view.you, viewer), (&view.opponent, viewer.opponent())] {
+                assert_eq!(
+                    side.trash.len(),
+                    game.state.player(owner).trash.len(),
+                    "the trash is public, so its size must match"
+                );
+                for card in &side.trash {
+                    assert!(
+                        card.number.is_some(),
+                        "a trashed card is face up and must be identifiable"
+                    );
+                    saw_cards += 1;
+                }
+            }
+        }
+
+        let legal = legal_actions(&game);
+        if legal.is_empty() {
+            break;
+        }
+        game.step(legal[policy.gen_range(0..legal.len())].clone())
+            .unwrap();
+    }
+
+    assert!(saw_cards > 0, "no cards ever reached a trash");
+}
+
 #[test]
 fn player_views_never_leak_hidden_information() {
     let cards = TestCards::new();

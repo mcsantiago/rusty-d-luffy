@@ -664,3 +664,65 @@ button:disabled:hover { background: var(--felt); border-color: var(--line); }
   max-height: 34vh;
   overflow: auto;
 }
+
+/* ---- trash ----
+
+   An open area (3-5-2): either player may look through either trash, so this
+   is a pile you can open rather than a hidden zone. Shown as the top card with
+   a count, since a trash can reach fifty cards and would swamp the board. */
+
+.trash-slot { flex: 0 0 auto; }
+
+.trash-pile {
+  position: relative;
+  cursor: pointer;
+  border-radius: 7px;
+  transition: transform 0.1s, filter 0.1s;
+}
+.trash-pile:hover { transform: translateY(-3px); filter: brightness(1.12); }
+
+.trash-pile.empty { cursor: default; }
+.trash-pile.empty:hover { transform: none; filter: none; }
+
+.trash-empty {
+  width: 72px;
+  height: 100px;
+  display: grid;
+  place-items: center;
+  border: 1px dashed #3c4f66;
+  border-radius: 7px;
+  font-size: 10px;
+  color: #4a5f78;
+}
+
+.trash-count {
+  position: absolute;
+  right: -5px;
+  bottom: -5px;
+  min-width: 19px;
+  height: 19px;
+  padding: 0 4px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--ink);
+  background: #33455c;
+  border: 1px solid var(--line);
+}
+
+.panel.wide { width: min(860px, 88vw); }
+
+.trash-head { display: flex; align-items: center; gap: 12px; }
+.trash-head h1 { margin: 0; }
+.trash-head button { margin-left: auto; }
+
+.trash-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 4px 2px;
+}

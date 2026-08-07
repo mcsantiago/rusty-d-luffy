@@ -85,6 +85,7 @@
             <div class="leader-slot" id="opp-leader"></div>
             <div class="characters" id="opp-characters"></div>
             <div class="stage-slot" id="opp-stage"></div>
+            <div class="trash-slot" id="opp-trash"></div>
           </div>
           <div class="don-row" id="opp-don-row"></div>
         </div>
@@ -97,6 +98,7 @@
             <div class="leader-slot" id="you-leader"></div>
             <div class="characters" id="you-characters"></div>
             <div class="stage-slot" id="you-stage"></div>
+            <div class="trash-slot" id="you-trash"></div>
           </div>
           <div class="side-meta">
             <span class="who">You</span>
@@ -123,6 +125,17 @@
           <div id="log"></div>
         </div>
       </aside>
+
+      <div id="trash-modal" class="overlay" hidden>
+        <div class="panel wide">
+          <div class="trash-head">
+            <h1 id="trash-title">Trash</h1>
+            <button id="trash-close" class="ghost">Close</button>
+          </div>
+          <p class="sub" id="trash-sub"></p>
+          <div class="trash-grid" id="trash-grid"></div>
+        </div>
+      </div>
 
       <div id="battle-modal" class="overlay" hidden>
         <div class="battle-panel">
