@@ -66,27 +66,76 @@ fn card_ref(state: &GameState, viewer: PlayerId, card: CardInstanceId) -> CardRe
 /// What the engine emits. Omniscient — never send this to a client.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GameEvent {
-    GameStarted { first_player: PlayerId },
-    Mulliganed { player: PlayerId, took: bool },
-    LifeSet { player: PlayerId, count: u8 },
+    GameStarted {
+        first_player: PlayerId,
+    },
+    Mulliganed {
+        player: PlayerId,
+        took: bool,
+    },
+    LifeSet {
+        player: PlayerId,
+        count: u8,
+    },
 
-    TurnStarted { turn: u32, player: PlayerId },
-    PhaseStarted { phase: Phase, player: PlayerId },
+    TurnStarted {
+        turn: u32,
+        player: PlayerId,
+    },
+    PhaseStarted {
+        phase: Phase,
+        player: PlayerId,
+    },
 
-    Drew { player: PlayerId, card: CardInstanceId },
-    DonPlaced { player: PlayerId, count: u8 },
-    DonGiven { player: PlayerId, don: CardInstanceId, to: CardInstanceId },
-    DonReturned { player: PlayerId, count: u8 },
+    Drew {
+        player: PlayerId,
+        card: CardInstanceId,
+    },
+    DonPlaced {
+        player: PlayerId,
+        count: u8,
+    },
+    DonGiven {
+        player: PlayerId,
+        don: CardInstanceId,
+        to: CardInstanceId,
+    },
+    DonReturned {
+        player: PlayerId,
+        count: u8,
+    },
 
-    CardPlayed { player: PlayerId, card: CardInstanceId, cost_paid: u8 },
-    CardMoved { card: CardInstanceId, from: Zone, to: Zone },
-    Rested { card: CardInstanceId },
-    SetActive { card: CardInstanceId },
-    KnockedOut { card: CardInstanceId },
+    CardPlayed {
+        player: PlayerId,
+        card: CardInstanceId,
+        cost_paid: u8,
+    },
+    CardMoved {
+        card: CardInstanceId,
+        from: Zone,
+        to: Zone,
+    },
+    Rested {
+        card: CardInstanceId,
+    },
+    SetActive {
+        card: CardInstanceId,
+    },
+    KnockedOut {
+        card: CardInstanceId,
+    },
 
-    AttackDeclared { attacker: CardInstanceId, target: CardInstanceId },
-    BattleStepStarted { step: BattleStep },
-    Blocked { blocker: CardInstanceId, replacing: CardInstanceId },
+    AttackDeclared {
+        attacker: CardInstanceId,
+        target: CardInstanceId,
+    },
+    BattleStepStarted {
+        step: BattleStep,
+    },
+    Blocked {
+        blocker: CardInstanceId,
+        replacing: CardInstanceId,
+    },
     Countered {
         player: PlayerId,
         card: CardInstanceId,
@@ -101,48 +150,111 @@ pub enum GameEvent {
         target_power: i32,
         attacker_won: bool,
     },
-    DamageDealt { player: PlayerId, amount: u8 },
+    DamageDealt {
+        player: PlayerId,
+        amount: u8,
+    },
     LifeTaken {
         player: PlayerId,
         card: CardInstanceId,
         /// True when [Banish] sent it to the trash instead of hand (10-1-3).
         banished: bool,
     },
-    TriggerActivated { player: PlayerId, card: CardInstanceId },
+    TriggerActivated {
+        player: PlayerId,
+        card: CardInstanceId,
+    },
     BattleEnded,
 
-    EffectActivated { source: CardInstanceId, controller: PlayerId },
+    EffectActivated {
+        source: CardInstanceId,
+        controller: PlayerId,
+    },
     /// An effect asked for a target and there were none. The cost has already
     /// been paid at this point (8-4-1-3), so the player is owed an explanation
     /// for why nothing happened.
-    NoLegalTargets { source: CardInstanceId, controller: PlayerId },
-    GameEnded { result: GameOver },
+    NoLegalTargets {
+        source: CardInstanceId,
+        controller: PlayerId,
+    },
+    GameEnded {
+        result: GameOver,
+    },
 }
 
 /// What a client receives. Safe to send to `viewer` by construction.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PlayerEvent {
-    GameStarted { first_player: PlayerId },
-    Mulliganed { player: PlayerId, took: bool },
-    LifeSet { player: PlayerId, count: u8 },
+    GameStarted {
+        first_player: PlayerId,
+    },
+    Mulliganed {
+        player: PlayerId,
+        took: bool,
+    },
+    LifeSet {
+        player: PlayerId,
+        count: u8,
+    },
 
-    TurnStarted { turn: u32, player: PlayerId },
-    PhaseStarted { phase: Phase, player: PlayerId },
+    TurnStarted {
+        turn: u32,
+        player: PlayerId,
+    },
+    PhaseStarted {
+        phase: Phase,
+        player: PlayerId,
+    },
 
-    Drew { player: PlayerId, card: CardRef },
-    DonPlaced { player: PlayerId, count: u8 },
-    DonGiven { player: PlayerId, don: CardRef, to: CardRef },
-    DonReturned { player: PlayerId, count: u8 },
+    Drew {
+        player: PlayerId,
+        card: CardRef,
+    },
+    DonPlaced {
+        player: PlayerId,
+        count: u8,
+    },
+    DonGiven {
+        player: PlayerId,
+        don: CardRef,
+        to: CardRef,
+    },
+    DonReturned {
+        player: PlayerId,
+        count: u8,
+    },
 
-    CardPlayed { player: PlayerId, card: CardRef, cost_paid: u8 },
-    CardMoved { card: CardRef, from: Zone, to: Zone },
-    Rested { card: CardRef },
-    SetActive { card: CardRef },
-    KnockedOut { card: CardRef },
+    CardPlayed {
+        player: PlayerId,
+        card: CardRef,
+        cost_paid: u8,
+    },
+    CardMoved {
+        card: CardRef,
+        from: Zone,
+        to: Zone,
+    },
+    Rested {
+        card: CardRef,
+    },
+    SetActive {
+        card: CardRef,
+    },
+    KnockedOut {
+        card: CardRef,
+    },
 
-    AttackDeclared { attacker: CardRef, target: CardRef },
-    BattleStepStarted { step: BattleStep },
-    Blocked { blocker: CardRef, replacing: CardRef },
+    AttackDeclared {
+        attacker: CardRef,
+        target: CardRef,
+    },
+    BattleStepStarted {
+        step: BattleStep,
+    },
+    Blocked {
+        blocker: CardRef,
+        replacing: CardRef,
+    },
     Countered {
         player: PlayerId,
         card: CardRef,
@@ -156,14 +268,32 @@ pub enum PlayerEvent {
         target_power: i32,
         attacker_won: bool,
     },
-    DamageDealt { player: PlayerId, amount: u8 },
-    LifeTaken { player: PlayerId, card: CardRef, banished: bool },
-    TriggerActivated { player: PlayerId, card: CardRef },
+    DamageDealt {
+        player: PlayerId,
+        amount: u8,
+    },
+    LifeTaken {
+        player: PlayerId,
+        card: CardRef,
+        banished: bool,
+    },
+    TriggerActivated {
+        player: PlayerId,
+        card: CardRef,
+    },
     BattleEnded,
 
-    EffectActivated { source: CardRef, controller: PlayerId },
-    NoLegalTargets { source: CardRef, controller: PlayerId },
-    GameEnded { result: GameOver },
+    EffectActivated {
+        source: CardRef,
+        controller: PlayerId,
+    },
+    NoLegalTargets {
+        source: CardRef,
+        controller: PlayerId,
+    },
+    GameEnded {
+        result: GameOver,
+    },
 }
 
 impl GameEvent {
@@ -176,17 +306,13 @@ impl GameEvent {
         let vis = |card: CardInstanceId| card_ref(state, viewer, card);
 
         match *self {
-            GameEvent::GameStarted { first_player } => {
-                PlayerEvent::GameStarted { first_player }
-            }
+            GameEvent::GameStarted { first_player } => PlayerEvent::GameStarted { first_player },
             GameEvent::Mulliganed { player, took } => {
                 // 5-2-1-6 is performed openly; only the cards are secret.
                 PlayerEvent::Mulliganed { player, took }
             }
             GameEvent::LifeSet { player, count } => PlayerEvent::LifeSet { player, count },
-            GameEvent::TurnStarted { turn, player } => {
-                PlayerEvent::TurnStarted { turn, player }
-            }
+            GameEvent::TurnStarted { turn, player } => PlayerEvent::TurnStarted { turn, player },
             GameEvent::PhaseStarted { phase, player } => {
                 PlayerEvent::PhaseStarted { phase, player }
             }
@@ -202,18 +328,14 @@ impl GameEvent {
                 },
             },
 
-            GameEvent::DonPlaced { player, count } => {
-                PlayerEvent::DonPlaced { player, count }
-            }
+            GameEvent::DonPlaced { player, count } => PlayerEvent::DonPlaced { player, count },
             // The cost area and the cards DON!! is given to are open (3-1-5).
             GameEvent::DonGiven { player, don, to } => PlayerEvent::DonGiven {
                 player,
                 don: vis(don),
                 to: vis(to),
             },
-            GameEvent::DonReturned { player, count } => {
-                PlayerEvent::DonReturned { player, count }
-            }
+            GameEvent::DonReturned { player, count } => PlayerEvent::DonReturned { player, count },
 
             // A played card lands in an open area, or is an Event card trashed
             // on activation (8-4-2) — public either way.
@@ -294,12 +416,10 @@ impl GameEvent {
             GameEvent::BattleEnded => PlayerEvent::BattleEnded,
 
             // 8-4-1-2: activating an effect from hand reveals that card.
-            GameEvent::EffectActivated { source, controller } => {
-                PlayerEvent::EffectActivated {
-                    source: CardRef::Visible(source),
-                    controller,
-                }
-            }
+            GameEvent::EffectActivated { source, controller } => PlayerEvent::EffectActivated {
+                source: CardRef::Visible(source),
+                controller,
+            },
             // The source is revealed by activating it, so naming it is safe.
             GameEvent::NoLegalTargets { source, controller } => PlayerEvent::NoLegalTargets {
                 source: CardRef::Visible(source),

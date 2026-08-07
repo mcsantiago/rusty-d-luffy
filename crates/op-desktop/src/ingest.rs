@@ -131,15 +131,16 @@ pub fn run(app: &AppHandle, data_dir: &Path) -> Result<(), String> {
         Ok(summary) if summary.failed.is_empty() => {
             let _ = app.emit(
                 PROGRESS_EVENT,
-                Progress::finished(
-                    true,
-                    format!("{} cards ready", summary.cards),
-                ),
+                Progress::finished(true, format!("{} cards ready", summary.cards)),
             );
             Ok(())
         }
         Ok(summary) => {
-            let message = format!("{} product(s) failed: {}", summary.failed.len(), summary.failed.join(", "));
+            let message = format!(
+                "{} product(s) failed: {}",
+                summary.failed.len(),
+                summary.failed.join(", ")
+            );
             let _ = app.emit(PROGRESS_EVENT, Progress::finished(false, &message));
             Err(message)
         }

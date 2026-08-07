@@ -52,7 +52,10 @@ fn identical_seeds_and_actions_produce_identical_states() {
     for seed in 0..8u64 {
         let (a_actions, a_hashes) = random_playout(seed, seed + 100);
         let (b_actions, b_hashes) = random_playout(seed, seed + 100);
-        assert_eq!(a_actions, b_actions, "action sequences diverged (seed {seed})");
+        assert_eq!(
+            a_actions, b_actions,
+            "action sequences diverged (seed {seed})"
+        );
         assert_eq!(a_hashes, b_hashes, "state hashes diverged (seed {seed})");
     }
 }
@@ -108,8 +111,7 @@ fn serializing_and_restoring_mid_game_preserves_the_position() {
     }
 
     let json = serde_json::to_string(&game.state).expect("state must serialize");
-    let restored: op_core::GameState =
-        serde_json::from_str(&json).expect("state must round-trip");
+    let restored: op_core::GameState = serde_json::from_str(&json).expect("state must round-trip");
 
     assert_eq!(restored.state_hash(), game.state.state_hash());
     assert_eq!(restored, game.state);
@@ -144,8 +146,8 @@ fn the_event_stream_never_names_a_card_the_viewer_cannot_identify() {
             for event in &projected.events {
                 for id in event.exposed_ids() {
                     let card = game.state.card(id);
-                    let legitimate =
-                        card.zone.is_open() || (card.zone == Zone::Hand && card.controller == viewer);
+                    let legitimate = card.zone.is_open()
+                        || (card.zone == Zone::Hand && card.controller == viewer);
                     assert!(
                         legitimate,
                         "{viewer:?} was told about card {id:?} in {:?} (controller {:?}) \
@@ -256,8 +258,10 @@ fn a_defender_can_see_the_battle_they_are_answering() {
             break;
         }
         if let Some(pending) = game.pending() {
-            if matches!(pending, op_core::Pending::Block { .. } | op_core::Pending::Counter { .. })
-            {
+            if matches!(
+                pending,
+                op_core::Pending::Block { .. } | op_core::Pending::Counter { .. }
+            ) {
                 let viewer = pending.player();
                 let derived = game.derived();
                 let view = PlayerView::project(&game.state, game.db(), &derived, viewer);
@@ -435,7 +439,10 @@ fn random_games_terminate_without_panicking_or_stalling() {
             game.step(legal[policy.gen_range(0..legal.len())].clone())
                 .unwrap();
             steps += 1;
-            assert!(steps < 5000, "game {seed} did not terminate in 5000 actions");
+            assert!(
+                steps < 5000,
+                "game {seed} did not terminate in 5000 actions"
+            );
         }
         assert!(game.result().is_some());
         finished += 1;

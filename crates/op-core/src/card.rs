@@ -344,10 +344,7 @@ fn convert(raw: RawCard) -> Result<CardDef, CardDbError> {
     };
 
     let effect = text(raw.effect);
-    let keywords = effect
-        .as_deref()
-        .map(scan_keywords)
-        .unwrap_or_default();
+    let keywords = effect.as_deref().map(scan_keywords).unwrap_or_default();
 
     Ok(CardDef {
         number: raw.id,
@@ -443,7 +440,9 @@ mod tests {
         assert_eq!(text(None), None);
         // A real effect that merely contains a dash must survive.
         assert_eq!(
-            text(Some("Give up to 1 of your opponent's Characters −2000 power.".into())),
+            text(Some(
+                "Give up to 1 of your opponent's Characters −2000 power.".into()
+            )),
             Some("Give up to 1 of your opponent's Characters −2000 power.".into())
         );
     }

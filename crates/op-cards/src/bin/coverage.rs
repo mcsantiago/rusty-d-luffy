@@ -121,8 +121,14 @@ fn main() -> ExitCode {
         cards.scripted_count(),
     );
     if todo_total > 0 {
-        println!("run with a set name for detail, e.g. `-- {}`",
-            by_set.iter().find(|(_, s)| !s.todo.is_empty()).map(|(k, _)| k.as_str()).unwrap_or("OP01"));
+        println!(
+            "run with a set name for detail, e.g. `-- {}`",
+            by_set
+                .iter()
+                .find(|(_, s)| !s.todo.is_empty())
+                .map(|(k, _)| k.as_str())
+                .unwrap_or("OP01")
+        );
     }
 
     if todo_total > 0 {

@@ -21,10 +21,22 @@ fn st01() -> DeckList {
     DeckList {
         leader: "ST01-001".into(),
         cards: counts(&[
-            ("ST01-002", 4), ("ST01-003", 4), ("ST01-004", 4), ("ST01-005", 2),
-            ("ST01-006", 4), ("ST01-007", 4), ("ST01-008", 2), ("ST01-009", 4),
-            ("ST01-010", 2), ("ST01-011", 4), ("ST01-012", 2), ("ST01-013", 4),
-            ("ST01-014", 4), ("ST01-015", 2), ("ST01-016", 2), ("ST01-017", 2),
+            ("ST01-002", 4),
+            ("ST01-003", 4),
+            ("ST01-004", 4),
+            ("ST01-005", 2),
+            ("ST01-006", 4),
+            ("ST01-007", 4),
+            ("ST01-008", 2),
+            ("ST01-009", 4),
+            ("ST01-010", 2),
+            ("ST01-011", 4),
+            ("ST01-012", 2),
+            ("ST01-013", 4),
+            ("ST01-014", 4),
+            ("ST01-015", 2),
+            ("ST01-016", 2),
+            ("ST01-017", 2),
         ]),
     }
 }
@@ -34,10 +46,22 @@ fn st02() -> DeckList {
     DeckList {
         leader: "ST02-001".into(),
         cards: counts(&[
-            ("ST02-002", 4), ("ST02-003", 4), ("ST02-004", 4), ("ST02-005", 4),
-            ("ST02-006", 2), ("ST02-007", 4), ("ST02-008", 4), ("ST02-009", 2),
-            ("ST02-010", 2), ("ST02-011", 4), ("ST02-012", 4), ("ST02-013", 2),
-            ("ST02-014", 2), ("ST02-015", 4), ("ST02-016", 2), ("ST02-017", 2),
+            ("ST02-002", 4),
+            ("ST02-003", 4),
+            ("ST02-004", 4),
+            ("ST02-005", 4),
+            ("ST02-006", 2),
+            ("ST02-007", 4),
+            ("ST02-008", 4),
+            ("ST02-009", 2),
+            ("ST02-010", 2),
+            ("ST02-011", 4),
+            ("ST02-012", 4),
+            ("ST02-013", 2),
+            ("ST02-014", 2),
+            ("ST02-015", 4),
+            ("ST02-016", 2),
+            ("ST02-017", 2),
         ]),
     }
 }
@@ -47,10 +71,22 @@ fn st06() -> DeckList {
     DeckList {
         leader: "ST06-001".into(),
         cards: counts(&[
-            ("ST06-002", 4), ("ST06-003", 4), ("ST06-004", 2), ("ST06-005", 2),
-            ("ST06-006", 4), ("ST06-007", 4), ("ST06-008", 4), ("ST06-009", 4),
-            ("ST06-010", 4), ("ST06-011", 2), ("ST06-012", 2), ("ST06-013", 4),
-            ("ST06-014", 4), ("ST06-015", 2), ("ST06-016", 2), ("ST06-017", 2),
+            ("ST06-002", 4),
+            ("ST06-003", 4),
+            ("ST06-004", 2),
+            ("ST06-005", 2),
+            ("ST06-006", 4),
+            ("ST06-007", 4),
+            ("ST06-008", 4),
+            ("ST06-009", 4),
+            ("ST06-010", 4),
+            ("ST06-011", 2),
+            ("ST06-012", 2),
+            ("ST06-013", 4),
+            ("ST06-014", 4),
+            ("ST06-015", 2),
+            ("ST06-016", 2),
+            ("ST06-017", 2),
         ]),
     }
 }
@@ -81,7 +117,9 @@ fn new_game(db: Arc<CardDb>, cards: Scripts, seed: u64) -> Game {
         decks: [st01(), st02()],
         allow_illegal_decks: false,
     };
-    Game::new(config, db, cards).expect("starter decks must be legal").0
+    Game::new(config, db, cards)
+        .expect("starter decks must be legal")
+        .0
 }
 
 #[test]
@@ -105,8 +143,8 @@ fn every_deck_pairing_plays_to_completion() {
         eprintln!("skipping: run tools/ingest/fetch_cards.py");
         return;
     };
-    let decks: [(&str, fn() -> DeckList); 3] =
-        [("ST-01", st01), ("ST-02", st02), ("ST-06", st06)];
+    type Build = fn() -> DeckList;
+    let decks: [(&str, Build); 3] = [("ST-01", st01), ("ST-02", st02), ("ST-06", st06)];
 
     for (a_name, a) in decks {
         for (b_name, b) in decks {
@@ -125,9 +163,8 @@ fn every_deck_pairing_plays_to_completion() {
                 let legal = legal_actions(&game);
                 assert!(!legal.is_empty(), "{a_name} vs {b_name} stalled");
                 let action = legal[policy.gen_range(0..legal.len())].clone();
-                game.step(action.clone()).unwrap_or_else(|e| {
-                    panic!("{a_name} vs {b_name}: {action:?} rejected: {e}")
-                });
+                game.step(action.clone())
+                    .unwrap_or_else(|e| panic!("{a_name} vs {b_name}: {action:?} rejected: {e}"));
                 steps += 1;
                 assert!(steps < 8000, "{a_name} vs {b_name} did not terminate");
             }
@@ -156,9 +193,8 @@ fn full_games_play_to_completion_with_scripts_live() {
                 game.pending()
             );
             let action = legal[policy.gen_range(0..legal.len())].clone();
-            game.step(action.clone()).unwrap_or_else(|e| {
-                panic!("seed {seed}: legal action {action:?} rejected: {e}")
-            });
+            game.step(action.clone())
+                .unwrap_or_else(|e| panic!("seed {seed}: legal action {action:?} rejected: {e}"));
             steps += 1;
             assert!(steps < 8000, "seed {seed} did not terminate");
         }
@@ -234,7 +270,11 @@ fn st06_cost_reduction_brings_a_character_into_ko_range() {
             controller: PlayerId::P1,
         });
     }
-    assert_eq!(game.derived().get(target).effective_cost(), 0, "cost is clamped at 0");
+    assert_eq!(
+        game.derived().get(target).effective_cost(),
+        0,
+        "cost is clamped at 0"
+    );
 }
 
 /// ST06-004 Smoker cannot be K.O.'d by effects, but a lost battle still
@@ -249,7 +289,10 @@ fn st06_001_reports_when_it_has_no_legal_target() {
     let mut game = game_at_main(db, cards, 5, 1);
 
     let leader = game.state.player(PlayerId::P0).leader.unwrap();
-    assert_eq!(game.db().get(game.state.card(leader).def).number, "ST01-001");
+    assert_eq!(
+        game.db().get(game.state.card(leader).def).number,
+        "ST01-001"
+    );
 
     // A cost-1 Character is not a legal target for a "cost of 0" effect.
     let victim = put_in_play(&mut game, PlayerId::P1, "ST06-003");
@@ -432,7 +475,11 @@ fn st01_013_zoro_gains_power_only_with_a_don_attached() {
     // Printed 5000; [DON!! x1] grants +1000.
     assert_eq!(game.derived().power(zoro), 5000);
     game.step(Action::GiveDon { to: zoro }).unwrap();
-    assert_eq!(game.derived().power(zoro), 7000, "1000 from the DON!! itself (6-5-5-2) plus 1000 from the card's own effect");
+    assert_eq!(
+        game.derived().power(zoro),
+        7000,
+        "1000 from the DON!! itself (6-5-5-2) plus 1000 from the card's own effect"
+    );
 }
 
 #[test]

@@ -91,7 +91,11 @@ fn ingested_starter_decks_load_and_parse() {
     let db = CardDb::load_dir(dir).expect("ingested card data should load");
 
     // ST-01 and ST-02 are 17 cards each, plus the synthetic DON!!.
-    assert!(db.len() >= 34, "expected at least 34 cards, got {}", db.len());
+    assert!(
+        db.len() >= 34,
+        "expected at least 34 cards, got {}",
+        db.len()
+    );
 
     // ST01-001 Monkey.D.Luffy: a Leader with 5 Life and 5000 power. Upstream
     // stores Life in the cost field, so this pins that mapping against real
@@ -133,7 +137,11 @@ fn ingested_starter_decks_load_and_parse() {
             }
         }
         if def.category == Category::Leader {
-            assert!(def.life.is_some(), "{} is a Leader with no Life", def.number);
+            assert!(
+                def.life.is_some(),
+                "{} is a Leader with no Life",
+                def.number
+            );
         }
     }
 }

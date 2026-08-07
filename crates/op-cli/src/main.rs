@@ -107,7 +107,9 @@ fn main() -> Result<()> {
 
     let human = PlayerId::P0;
     let mut ai = options.difficulty.agent(options.seed ^ 0x5EED);
-    let mut human_ai = options.autoplay.then(|| options.difficulty.agent(options.seed));
+    let mut human_ai = options
+        .autoplay
+        .then(|| options.difficulty.agent(options.seed));
 
     let mut events = opening.events;
     let stdin = std::io::stdin();
@@ -137,8 +139,7 @@ fn main() -> Result<()> {
             match &mut human_ai {
                 Some(agent) => agent.choose(&game, human),
                 None => {
-                    let view =
-                        PlayerView::project(&game.state, game.db(), &game.derived(), human);
+                    let view = PlayerView::project(&game.state, game.db(), &game.derived(), human);
                     println!("\n{}", render::board(&view, game.db()));
                     match prompt(&mut input, &game, &pending)? {
                         Some(action) => action,
@@ -202,7 +203,10 @@ fn prompt(
         }
         match line.parse::<usize>() {
             Ok(i) if i < legal.len() => return Ok(Some(legal[i].clone())),
-            _ => println!("  enter a number from 0 to {}, or q to quit", legal.len() - 1),
+            _ => println!(
+                "  enter a number from 0 to {}, or q to quit",
+                legal.len() - 1
+            ),
         }
     }
 }

@@ -25,11 +25,21 @@
   },
   "bundle": {
     "active": true,
-    "targets": [
-      "app"
-    ],
+    "targets": "all",
     "icon": [
       "icons/icon.png"
-    ]
+    ],
+    "category": "Game",
+    "shortDescription": "One Piece Card Game simulator",
+    "longDescription": "A rules-accurate One Piece Card Game simulator with a local AI opponent. Card data is fetched from the official card list on first run and is not bundled.",
+    "copyright": "Not affiliated with, endorsed by, or sponsored by Bandai. One Piece and the One Piece Card Game are trademarks of their respective owners.",
+    "linux": {
+      "deb": {
+        "depends": [
+          "libwebkit2gtk-4.1-0",
+          "libgtk-3-0"
+        ]
+      }
+    }
   }
 }

@@ -1,0 +1,99 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  # Fail the build on warnings; the tree is currently warning-free and it is
+  # much cheaper to keep it that way than to clean it up later.
+  RUSTFLAGS: -D warnings
+
+jobs:
+  # Cheap checks, once. No need to lint the same code on three OSes.
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
+            librsvg2-dev libayatana-appindicator3-dev libxdo-dev \
+            build-essential curl file patchelf
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux build dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
+            librsvg2-dev libayatana-appindicator3-dev libxdo-dev \
+            build-essential curl file patchelf
+
+      # The card-level tests skip themselves without data/, so fetching is what
+      # makes them meaningful. Card data only — the art is ~750 MB and no test
+      # reads a single image.
+      - name: Fetch card data
+        run: cargo run --release -p op-ingest --bin op-fetch -- --data-dir data --packs ST-01 ST-02 ST-06
+
+      # Release, not debug: the ISMCTS strength matches are ~200s optimised and
+      # do not finish in a reasonable time unoptimised.
+      - name: Test
+        run: cargo test --workspace --release
+
+  # Proves the desktop app actually bundles on every target, which is the thing
+  # a release depends on and the thing most likely to break silently.
+  bundle:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux build dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
+            librsvg2-dev libayatana-appindicator3-dev libxdo-dev \
+            build-essential curl file patchelf
+
+      - name: Build desktop bundles
+        uses: tauri-apps/tauri-action@v0
+        with:
+          projectPath: crates/op-desktop
+          # Build only; releasing is the release workflow's job.
+          args: ${{ matrix.os == 'macos-latest' && '--target universal-apple-darwin' || '' }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bundles-${{ matrix.os }}
+          path: |
+            target/release/bundle/**
+            target/universal-apple-darwin/release/bundle/**
+          if-no-files-found: warn
+          retention-days: 7

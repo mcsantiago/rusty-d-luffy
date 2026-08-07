@@ -27,7 +27,7 @@ pub fn scripts() -> Vec<(&'static str, CardScript)> {
             Script::new()
                 .activated(activated_once(
                     cost(3, false, 1),
-                    vec![ko_opponent_costing(0)].concat(),
+                    [ko_opponent_costing(0)].concat(),
                 ))
                 .build(),
         ),
@@ -106,10 +106,7 @@ pub fn scripts() -> Vec<(&'static str, CardScript)> {
                     power_up(TARGET, 4000, ThisBattle),
                     choose(
                         "k",
-                        filtered(
-                            opponent_characters(1),
-                            vec![cost_at_most(3), rested(false)],
-                        ),
+                        filtered(opponent_characters(1), vec![cost_at_most(3), rested(false)]),
                     ),
                     ko("k"),
                 ])
@@ -120,10 +117,7 @@ pub fn scripts() -> Vec<(&'static str, CardScript)> {
         (
             "ST06-015",
             Script::new()
-                .activated(activated(
-                    free(),
-                    [vec![draw(1)], cost_down(2)].concat(),
-                ))
+                .activated(activated(free(), [vec![draw(1)], cost_down(2)].concat()))
                 .build(),
         ),
         // [Counter] Up to 1 of your Leader or Character cards gains +2000 power
@@ -143,11 +137,7 @@ pub fn scripts() -> Vec<(&'static str, CardScript)> {
                 .auto(auto(Timing::OnPlay, vec![], cost_down(1)))
                 .activated(activated(
                     cost(0, true, 0),
-                    [
-                        vec![require_if(leader_has_type("Navy"))],
-                        cost_down(1),
-                    ]
-                    .concat(),
+                    [vec![require_if(leader_has_type("Navy"))], cost_down(1)].concat(),
                 ))
                 .build(),
         ),
@@ -167,7 +157,10 @@ fn cost_down(amount: i32) -> Vec<op_core::effect::EffectOp> {
 /// Reads derived cost, so it reaches Characters this deck has just shrunk.
 fn ko_opponent_costing(max: u8) -> Vec<op_core::effect::EffectOp> {
     vec![
-        choose("k", filtered(opponent_characters(1), vec![cost_at_most(max)])),
+        choose(
+            "k",
+            filtered(opponent_characters(1), vec![cost_at_most(max)]),
+        ),
         ko("k"),
     ]
 }

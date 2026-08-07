@@ -67,7 +67,11 @@ pub fn legal_actions(game: &Game) -> Vec<Action> {
             }
 
             // Activate an effect on a card in play (6-5-4-1).
-            for card in state.player(player).zone(Zone::Character).to_vec().into_iter()
+            for card in state
+                .player(player)
+                .zone(Zone::Character)
+                .to_vec()
+                .into_iter()
                 .chain(state.player(player).leader)
                 .chain(state.player(player).stage)
             {
@@ -144,12 +148,10 @@ pub fn legal_actions(game: &Game) -> Vec<Action> {
 
         Pending::Trigger { .. } => vec![Action::UseTrigger(false), Action::UseTrigger(true)],
 
-        Pending::Choose { options, up_to, .. } => {
-            subsets(options, *up_to as usize)
-                .into_iter()
-                .map(|cards| Action::Choose { cards })
-                .collect()
-        }
+        Pending::Choose { options, up_to, .. } => subsets(options, *up_to as usize)
+            .into_iter()
+            .map(|cards| Action::Choose { cards })
+            .collect(),
     }
 }
 

@@ -53,7 +53,11 @@ pub fn line(event: &PlayerEvent, game: &Game, viewer: PlayerId) -> Option<String
         E::DamageDealt { player, amount } => {
             format!("{} took {amount} damage", who(*player))
         }
-        E::LifeTaken { player, card, banished } => {
+        E::LifeTaken {
+            player,
+            card,
+            banished,
+        } => {
             let what = if *banished { "banished" } else { "took" };
             match card.id() {
                 Some(_) => format!("{} {what} {}", who(*player), name(*card)),

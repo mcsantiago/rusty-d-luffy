@@ -277,12 +277,7 @@ impl GameState {
     }
 
     /// Creates a card instance in the given area.
-    pub fn spawn(
-        &mut self,
-        def: CardDefId,
-        owner: PlayerId,
-        zone: Zone,
-    ) -> CardInstanceId {
+    pub fn spawn(&mut self, def: CardDefId, owner: PlayerId, zone: Zone) -> CardInstanceId {
         let id = CardInstanceId(self.cards.len() as u32);
         self.cards.push(CardInstance {
             id,
@@ -400,7 +395,11 @@ impl GameState {
     /// attack or be given DON!!.
     pub fn battlers(&self, p: PlayerId) -> Vec<CardInstanceId> {
         let ps = self.player(p);
-        ps.leader.iter().chain(ps.characters.iter()).copied().collect()
+        ps.leader
+            .iter()
+            .chain(ps.characters.iter())
+            .copied()
+            .collect()
     }
 
     /// Every card in play for either player, turn player first (the order most

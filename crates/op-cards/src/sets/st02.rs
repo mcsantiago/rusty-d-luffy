@@ -40,10 +40,7 @@ pub fn scripts() -> Vec<(&'static str, CardScript)> {
                     vec![
                         choose(
                             "t",
-                            filtered(
-                                opponent_characters(1),
-                                vec![rested(true), cost_at_most(3)],
-                            ),
+                            filtered(opponent_characters(1), vec![rested(true), cost_at_most(3)]),
                         ),
                         ko("t"),
                     ],
@@ -191,11 +188,7 @@ pub fn scripts() -> Vec<(&'static str, CardScript)> {
                         "t",
                         filtered(
                             your_hand(1),
-                            vec![
-                                of_type(&["Supernovas"]),
-                                cost_at_most(2),
-                                is_character(),
-                            ],
+                            vec![of_type(&["Supernovas"]), cost_at_most(2), is_character()],
                         ),
                     ),
                     play_bound("t"),

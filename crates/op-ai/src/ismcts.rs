@@ -214,10 +214,8 @@ impl IsmctsAgent {
     ///
     /// Returns a value in roughly [-1, 1] from `player`'s seat.
     fn rollout(&mut self, sim: &mut Game, player: PlayerId) -> f64 {
-        let mut policy = HeuristicAgent::with_exploration(
-            StdRng::seed_from_u64(self.rng.gen()),
-            0.25,
-        );
+        let mut policy =
+            HeuristicAgent::with_exploration(StdRng::seed_from_u64(self.rng.gen()), 0.25);
 
         for _ in 0..self.config.rollout_depth {
             if sim.is_over() {

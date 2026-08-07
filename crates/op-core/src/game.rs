@@ -11,9 +11,7 @@ use crate::effect::{Duration, EffectFrame, ModKind, Modifier, Timing};
 use crate::event::{GameEvent, PlayerEvent};
 use crate::ids::{CardInstanceId, PlayerId};
 use crate::script::ScriptSource;
-use crate::state::{
-    BattleState, BattleStep, DamageState, GameOver, GameState, Phase, Placement,
-};
+use crate::state::{BattleState, BattleStep, DamageState, GameOver, GameState, Phase, Placement};
 use crate::zone::Zone;
 
 /// A deck as card numbers, e.g. leader `"ST01-001"` plus 50 others.
@@ -339,19 +337,14 @@ impl Game {
                         "DON!! can only be given to your own Leader or Characters".into(),
                     ));
                 }
-                let don = self
-                    .active_don(player)
-                    .first()
-                    .copied()
-                    .ok_or_else(|| IllegalAction::Illegal("no active DON!! available".into()))?;
+                let don =
+                    self.active_don(player).first().copied().ok_or_else(|| {
+                        IllegalAction::Illegal("no active DON!! available".into())
+                    })?;
                 self.state.lift(don);
                 self.state.card_mut(don).zone = Zone::Cost;
                 self.state.card_mut(to).attached_don.push(don);
-                events.push(GameEvent::DonGiven {
-                    player,
-                    don,
-                    to,
-                });
+                events.push(GameEvent::DonGiven { player, don, to });
                 self.state.pending = None;
                 Ok(())
             }
@@ -782,7 +775,11 @@ impl Game {
             .filter(|&c| {
                 let def = self.db.get(self.state.card(c).def);
                 def.category == Category::Event
-                    && !self.scripts.script(self.state.card(c).def).counter.is_empty()
+                    && !self
+                        .scripts
+                        .script(self.state.card(c).def)
+                        .counter
+                        .is_empty()
                     && def.cost as usize <= affordable
             })
             .collect()
@@ -813,7 +810,11 @@ impl Game {
             self.state.card_mut(don).rested = true;
         }
 
-        let ops = self.scripts.script(self.state.card(card).def).counter.clone();
+        let ops = self
+            .scripts
+            .script(self.state.card(card).def)
+            .counter
+            .clone();
         // 8-4-2: the Event is trashed, then its effect is carried out.
         self.state
             .move_card(card, player, Zone::Trash, Placement::Top);
@@ -970,9 +971,13 @@ impl Game {
             let mut frame = EffectFrame::new(card, player, ops);
             frame.bind(crate::script::TARGET_BINDING, vec![card]);
             self.state.stack.push(frame);
-            self.state.stack.frames.last_mut().unwrap().ops.push(
-                crate::effect::EffectOp::TrashIfInLimbo,
-            );
+            self.state
+                .stack
+                .frames
+                .last_mut()
+                .unwrap()
+                .ops
+                .push(crate::effect::EffectOp::TrashIfInLimbo);
         } else {
             self.take_life_card(player, card, false, events);
         }
@@ -983,7 +988,8 @@ impl Game {
 
     fn knock_out(&mut self, card: CardInstanceId, events: &mut Vec<GameEvent>) {
         let owner = self.state.card(card).owner;
-        self.state.move_card(card, owner, Zone::Trash, Placement::Top);
+        self.state
+            .move_card(card, owner, Zone::Trash, Placement::Top);
         events.push(GameEvent::KnockedOut { card });
     }
 
@@ -1232,11 +1238,10 @@ impl Game {
         if self.state.turn == 1 && player == self.state.first_player {
             return;
         }
-        match draw_one(&mut self.state, player) {
-            Some(card) => events.push(GameEvent::Drew { player, card }),
-            // 9-2-1-2 is checked by rule processing; drawing from an empty deck
-            // simply does nothing here.
-            None => {}
+        // 9-2-1-2 is checked by rule processing; drawing from an empty deck
+        // simply does nothing here.
+        if let Some(card) = draw_one(&mut self.state, player) {
+            events.push(GameEvent::Drew { player, card });
         }
     }
 
@@ -1808,7 +1813,11 @@ impl Game {
 
         for effect in effects {
             if effect.once_per_turn
-                && self.state.card(card).used_once_per_turn.contains(&effect.slot)
+                && self
+                    .state
+                    .card(card)
+                    .used_once_per_turn
+                    .contains(&effect.slot)
             {
                 continue;
             }
@@ -1823,7 +1832,10 @@ impl Game {
                 self.pay(controller, card, &effect.cost, events);
             }
             if effect.once_per_turn {
-                self.state.card_mut(card).used_once_per_turn.push(effect.slot);
+                self.state
+                    .card_mut(card)
+                    .used_once_per_turn
+                    .push(effect.slot);
             }
             events.push(GameEvent::EffectActivated {
                 source: card,
@@ -1834,8 +1846,6 @@ impl Game {
                 .push(EffectFrame::new(card, controller, effect.ops.clone()));
         }
     }
-
-
 
     // ---- helpers -----------------------------------------------------------
 

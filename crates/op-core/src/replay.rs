@@ -209,7 +209,10 @@ impl SessionLog {
         };
         // Flushed every step: a log that loses its tail is worthless for
         // diagnosing a crash, which is the case it exists for.
-        if writeln!(writer, "{line}").and_then(|_| writer.flush()).is_err() {
+        if writeln!(writer, "{line}")
+            .and_then(|_| writer.flush())
+            .is_err()
+        {
             self.writer = None;
         }
     }
@@ -242,7 +245,9 @@ fn event_ids(event: &GameEvent) -> Vec<crate::ids::CardInstanceId> {
         E::AttackDeclared { attacker, target } => vec![*attacker, *target],
         E::Blocked { blocker, replacing } => vec![*blocker, *replacing],
         E::Countered { card, target, .. } => vec![*card, *target],
-        E::BattleResolved { attacker, target, .. } => vec![*attacker, *target],
+        E::BattleResolved {
+            attacker, target, ..
+        } => vec![*attacker, *target],
         E::EffectActivated { source, .. } | E::NoLegalTargets { source, .. } => vec![*source],
         _ => Vec::new(),
     }

@@ -204,11 +204,19 @@ pub fn event(event: &PlayerEvent, game: &Game, viewer: PlayerId) -> Option<Strin
             ..
         } => format!(
             "battle: {attacker_power} vs {target_power} — {}",
-            if *attacker_won { "attacker wins" } else { "attack repelled" }
+            if *attacker_won {
+                "attacker wins"
+            } else {
+                "attack repelled"
+            }
         ),
         E::KnockedOut { card } => format!("{} is K.O.'d", name(*card)),
         E::DamageDealt { player, amount } => {
-            format!("{} take{} {amount} damage", who(*player), if *player == viewer { "" } else { "s" })
+            format!(
+                "{} take{} {amount} damage",
+                who(*player),
+                if *player == viewer { "" } else { "s" }
+            )
         }
         E::EffectActivated { source, controller } => {
             format!("{} used {}", who(*controller), name(*source))

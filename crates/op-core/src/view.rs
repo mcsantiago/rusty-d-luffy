@@ -87,10 +87,7 @@ impl PlayerView {
             phase: state.phase,
             battle: state.battle.clone(),
             game_over: state.game_over,
-            pending: state
-                .pending
-                .clone()
-                .filter(|p| p.player() == viewer),
+            pending: state.pending.clone().filter(|p| p.player() == viewer),
             you: side(state, db, derived, viewer, true),
             opponent: side(state, db, derived, viewer.opponent(), false),
         }
@@ -156,26 +153,5 @@ fn visible_card(
         power: revealed
             .then(|| db.get(card.def).power.map(|_| derived.power(id)))
             .flatten(),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Every card identity in a view must be one the viewer is entitled to.
-    /// This is the property the whole hidden-information design rests on.
-    pub fn assert_no_leaks(view: &PlayerView, state: &GameState, db: &CardDb) {
-        for card in &view.opponent.hand {
-            assert!(
-                card.number.is_none(),
-                "opponent hand leaked card identity: {card:?}"
-            );
-        }
-        // The Life area is not projected as cards at all, only as a count.
-        let opp = view.viewer.opponent();
-        assert_eq!(view.opponent.life_count, state.player(opp).life.len());
-        assert_eq!(view.opponent.deck_count, state.player(opp).deck.len());
-        let _ = db;
     }
 }

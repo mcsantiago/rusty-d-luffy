@@ -253,12 +253,7 @@ pub fn matches_filters(
 }
 
 /// Whether `id` may currently declare an attack (7-1, 10-1-1).
-pub fn can_attack(
-    state: &GameState,
-    db: &CardDb,
-    derived: &Derived,
-    id: CardInstanceId,
-) -> bool {
+pub fn can_attack(state: &GameState, db: &CardDb, derived: &Derived, id: CardInstanceId) -> bool {
     let card = state.card(id);
     if card.rested || card.controller != state.turn_player {
         return false;
@@ -284,10 +279,7 @@ pub fn can_attack(
 
 /// Legal targets for an attack by `attacker`: the opponent's Leader, or any of
 /// their **rested** Characters (7-1-1-2).
-pub fn attack_targets(
-    state: &GameState,
-    id: CardInstanceId,
-) -> Vec<CardInstanceId> {
+pub fn attack_targets(state: &GameState, id: CardInstanceId) -> Vec<CardInstanceId> {
     let defender = state.card(id).controller.opponent();
     let ps = state.player(defender);
     let mut out: Vec<CardInstanceId> = ps.leader.iter().copied().collect();

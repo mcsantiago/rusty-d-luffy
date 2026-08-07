@@ -8,7 +8,7 @@ mod common;
 use common::{deck_of, game_with, TestCards, TestScripts};
 use op_core::state::Placement;
 use op_core::zone::Zone;
-use op_core::{Action, BattleStep, GameEvent, Game, GameOver, Pending, PlayerId};
+use op_core::{Action, BattleStep, Game, GameEvent, GameOver, Pending, PlayerId};
 
 /// Drives the game to the turn player's Main Phase, taking the default answer
 /// to any setup decision along the way.
@@ -691,7 +691,10 @@ fn rule_10_1_3_banish_trashes_the_life_card_instead_of_handing_it_over() {
         .iter()
         .any(|e| matches!(e, GameEvent::LifeTaken { banished: true, .. })));
     assert_eq!(game.state.player(PlayerId::P1).hand.len(), hand_before);
-    assert_eq!(game.state.player(PlayerId::P1).trash.len(), trash_before + 1);
+    assert_eq!(
+        game.state.player(PlayerId::P1).trash.len(),
+        trash_before + 1
+    );
 }
 
 #[test]

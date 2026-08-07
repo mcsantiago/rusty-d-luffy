@@ -143,18 +143,24 @@ impl Session {
         let (game, opening) = Game::new(config, Arc::clone(&db), scripts)?;
 
         // Best-effort: a session that cannot write a debug log still plays.
-        let debug = debug_dir()
-            .and_then(|dir| {
-                op_core::SessionLog::create(
-                    dir,
-                    seed,
-                    if human_first { PlayerId::P0 } else { PlayerId::P1 },
-                    &decks,
-                    vec![format!("difficulty={difficulty:?}"), "client=desktop".into()],
-                )
-                .map_err(|e| eprintln!("debug log disabled: {e}"))
-                .ok()
-            });
+        let debug = debug_dir().and_then(|dir| {
+            op_core::SessionLog::create(
+                dir,
+                seed,
+                if human_first {
+                    PlayerId::P0
+                } else {
+                    PlayerId::P1
+                },
+                &decks,
+                vec![
+                    format!("difficulty={difficulty:?}"),
+                    "client=desktop".into(),
+                ],
+            )
+            .map_err(|e| eprintln!("debug log disabled: {e}"))
+            .ok()
+        });
 
         let mut session = Session {
             game,
@@ -168,7 +174,12 @@ impl Session {
             eprintln!("session log: {}", path.display());
         }
         if let Some(debug) = session.debug.as_mut() {
-            debug.record(None, &opening.events, &session.game.state, session.db.as_ref());
+            debug.record(
+                None,
+                &opening.events,
+                &session.game.state,
+                session.db.as_ref(),
+            );
         }
         session.absorb(&opening.events);
         // The AI is deliberately *not* run here. If it moves first, that is a
@@ -363,6 +374,19 @@ fn action_cards(action: &Action) -> Vec<CardInstanceId> {
     }
 }
 
+fn action_kind(action: &Action) -> &'static str {
+    match action {
+        Action::Attack { .. } => "attack",
+        Action::PlayCard { .. } => "play",
+        Action::GiveDon { .. } => "don",
+        Action::ActivateEffect { .. } => "effect",
+        Action::Block { .. } => "block",
+        Action::Counter { .. } | Action::CounterEvent { .. } => "counter",
+        Action::EndMainPhase | Action::DoneCountering => "end",
+        _ => "other",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -543,18 +567,5 @@ mod tests {
         }
         // 17 cards per starter deck, leaders included, no duplicates.
         assert_eq!(catalogue.len(), 34);
-    }
-}
-
-fn action_kind(action: &Action) -> &'static str {
-    match action {
-        Action::Attack { .. } => "attack",
-        Action::PlayCard { .. } => "play",
-        Action::GiveDon { .. } => "don",
-        Action::ActivateEffect { .. } => "effect",
-        Action::Block { .. } => "block",
-        Action::Counter { .. } | Action::CounterEvent { .. } => "counter",
-        Action::EndMainPhase | Action::DoneCountering => "end",
-        _ => "other",
     }
 }

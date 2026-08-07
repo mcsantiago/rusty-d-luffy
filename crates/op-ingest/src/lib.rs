@@ -27,8 +27,7 @@ use serde::Deserialize;
 
 /// Upstream root. Pinned to a commit rather than a branch would be safer for a
 /// release; see the release checklist.
-pub const SOURCE: &str =
-    "https://raw.githubusercontent.com/buhbbl/punk-records/main/english";
+pub const SOURCE: &str = "https://raw.githubusercontent.com/buhbbl/punk-records/main/english";
 
 const RETRIES: u32 = 4;
 const TIMEOUT: Duration = Duration::from_secs(30);
@@ -173,7 +172,10 @@ fn pack_aliases(meta: &PackMeta) -> Vec<String> {
         // bare "ST"/"01" halves of an ordinary label, already covered above.
         let is_code = !part.is_empty()
             && part.chars().take_while(|c| c.is_ascii_alphabetic()).count() > 0
-            && part.chars().skip_while(|c| c.is_ascii_alphabetic()).all(|c| c.is_ascii_digit())
+            && part
+                .chars()
+                .skip_while(|c| c.is_ascii_alphabetic())
+                .all(|c| c.is_ascii_digit())
             && part.chars().any(|c| c.is_ascii_digit());
         if is_code {
             let n = normalize(part);
@@ -332,10 +334,8 @@ pub fn run(
                         })?;
                     let kept: Vec<RawCard> =
                         all.into_iter().filter(|c| !is_art_variant(&c.id)).collect();
-                    let json = serde_json::to_vec_pretty(&kept).map_err(|source| Error::Json {
-                        url,
-                        source,
-                    })?;
+                    let json = serde_json::to_vec_pretty(&kept)
+                        .map_err(|source| Error::Json { url, source })?;
                     write(&dest, &json)?;
                     kept
                 }
@@ -383,8 +383,7 @@ fn fetch_images(
 
     let mut wanted: Vec<(String, String)> = Vec::new();
     for pack_id in pack_ids {
-        let Some(cards) = read_pack(&data_dir.join("cards").join(format!("{pack_id}.json")))
-        else {
+        let Some(cards) = read_pack(&data_dir.join("cards").join(format!("{pack_id}.json"))) else {
             continue;
         };
         for card in cards {
@@ -461,8 +460,8 @@ pub fn is_populated(cards_dir: &Path) -> bool {
 /// and a shipped binary has no repository to write into.
 pub fn default_data_dir(app_id: &str) -> PathBuf {
     #[cfg(target_os = "macos")]
-    let base = std::env::var_os("HOME")
-        .map(|h| PathBuf::from(h).join("Library/Application Support"));
+    let base =
+        std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library/Application Support"));
     #[cfg(target_os = "windows")]
     let base = std::env::var_os("APPDATA").map(PathBuf::from);
     #[cfg(all(unix, not(target_os = "macos")))]

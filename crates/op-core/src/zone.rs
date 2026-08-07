@@ -39,7 +39,10 @@ impl Zone {
     /// The four areas collectively called "the field" (3-1-2). Cards here can
     /// be rested, given DON!!, and targeted by most effects.
     pub fn is_field(self) -> bool {
-        matches!(self, Zone::Leader | Zone::Character | Zone::Stage | Zone::Cost)
+        matches!(
+            self,
+            Zone::Leader | Zone::Character | Zone::Stage | Zone::Cost
+        )
     }
 
     /// Whether card order within the area is meaningful and must be preserved.

@@ -18,10 +18,7 @@ pub fn scripts() -> Vec<(&'static str, CardScript)> {
             Script::new()
                 .activated(activated_once(
                     free(),
-                    vec![
-                        choose("t", your_battlers(1)),
-                        give_don("t", 1, true),
-                    ],
+                    vec![choose("t", your_battlers(1)), give_don("t", 1, true)],
                 ))
                 .build(),
         ),

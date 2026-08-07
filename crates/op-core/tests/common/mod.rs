@@ -1,5 +1,11 @@
 //! Test fixtures.
 //!
+//! Each integration test binary compiles this module separately and uses a
+//! different subset of it, so anything used by only one of them looks dead to
+//! the others.
+#![allow(dead_code)]
+//!
+//!
 //! Kernel tests build their own tiny card pool rather than loading `data/`, so
 //! the suite runs without the ingest step and each test states exactly the
 //! characteristics it depends on.
@@ -153,5 +159,5 @@ fn decklist((leader, cards): (&str, Vec<&str>)) -> DeckList {
 
 /// A deck of `n` copies of `number`.
 pub fn deck_of(number: &str, n: usize) -> Vec<&str> {
-    std::iter::repeat(number).take(n).collect()
+    std::iter::repeat_n(number, n).collect()
 }

@@ -104,7 +104,7 @@ mod tests {
     /// A state with cards in every zone that matters, built without card data
     /// so this runs on a bare clone.
     fn scratch_state() -> (op_core::card::CardDb, GameState) {
-        use op_core::card::{CardDef, Category, CardDb};
+        use op_core::card::{CardDb, CardDef, Category};
 
         let mut db = CardDb::empty();
         for i in 0..6 {
@@ -130,10 +130,16 @@ mod tests {
             // Distinct identities spread across hidden and open zones, so a
             // shuffle that reached the wrong zone would be visible.
             for (i, zone) in [
-                Zone::Hand, Zone::Hand, Zone::Hand,
-                Zone::Deck, Zone::Deck, Zone::Deck,
-                Zone::Life, Zone::Life,
-                Zone::Character, Zone::Trash,
+                Zone::Hand,
+                Zone::Hand,
+                Zone::Hand,
+                Zone::Deck,
+                Zone::Deck,
+                Zone::Deck,
+                Zone::Life,
+                Zone::Life,
+                Zone::Character,
+                Zone::Trash,
             ]
             .into_iter()
             .enumerate()
