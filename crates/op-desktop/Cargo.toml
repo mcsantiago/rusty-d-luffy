@@ -3,6 +3,8 @@ name = "op-desktop"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
 description = "Desktop client for the One Piece Card Game simulator"
 
 [build-dependencies]

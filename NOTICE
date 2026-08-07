@@ -1,0 +1,55 @@
+OnePieceSim
+===========
+
+This project is an unofficial fan project and is not affiliated with or
+endorsed by Bandai, Toei Animation, Shueisha, or Eiichiro Oda.
+
+The software source code is licensed under AGPL-3.0. Third-party names,
+trademarks, card data, artwork, and other copyrighted materials remain the
+property of their respective owners and are not licensed under the AGPL.
+
+
+Scope of the licence
+--------------------
+
+LICENSE (AGPL-3.0) applies to the source code in this repository and nothing
+else. It grants no rights whatsoever to any third party's intellectual
+property.
+
+That distinction is easy to miss here, because the application downloads
+copyrighted material at runtime. It is worth stating plainly:
+
+  * No card text, card images, or other Bandai material is contained in this
+    repository, in any release artefact, or in any compiled binary.
+
+  * On first run the application fetches card data and images from the
+    official One Piece Card Game card list, by way of a community-maintained
+    mirror. That material is downloaded by the user, to the user's own
+    machine, for personal use. It is never redistributed by this project.
+
+  * "One Piece", "ONE PIECE CARD GAME", and associated names, logos and
+    character likenesses are trademarks and/or copyrights of their respective
+    owners.
+
+No fee is charged for this software, and no advertising or other revenue is
+derived from it.
+
+
+Third-party sources
+-------------------
+
+Card data is fetched from:
+
+  buhbbl/punk-records      https://github.com/buhbbl/punk-records
+    Static, versioned JSON generated from the official card list. Pinned to a
+    specific commit; see `op_ingest::SOURCE_REF`.
+
+  Coko7/vegapull           https://github.com/Coko7/vegapull
+    The scraper that produces the above, reading en.onepiece-cardgame.com.
+
+Rules are implemented against the publicly published ONE PIECE CARD GAME
+Comprehensive Rules. Rule numbers are cited throughout the source as
+references; no rules text is reproduced wholesale.
+
+Rust dependencies retain their own licences; see `cargo tree` or the
+`Cargo.lock` for the full set.

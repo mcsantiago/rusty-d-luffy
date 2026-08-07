@@ -13,6 +13,11 @@ members = [
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.88"
+license = "AGPL-3.0-only"
+repository = "https://github.com/mcsantiago/rusty-d-luffy"
+# The licence covers this source only. Card data and artwork belong to their
+# respective owners and are neither vendored nor redistributed; see NOTICE.
+
 
 [workspace.dependencies]
 op-core = { path = "crates/op-core" }

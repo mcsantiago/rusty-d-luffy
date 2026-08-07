@@ -32,7 +32,7 @@
     "category": "Game",
     "shortDescription": "One Piece Card Game simulator",
     "longDescription": "A rules-accurate One Piece Card Game simulator with a local AI opponent. Card data is fetched from the official card list on first run and is not bundled.",
-    "copyright": "Not affiliated with, endorsed by, or sponsored by Bandai. One Piece and the One Piece Card Game are trademarks of their respective owners.",
+    "copyright": "Unofficial fan project, not affiliated with or endorsed by Bandai, Toei Animation, Shueisha, or Eiichiro Oda. Source code licensed under AGPL-3.0; third-party trademarks, card data and artwork remain the property of their owners.",
     "linux": {
       "deb": {
         "depends": [

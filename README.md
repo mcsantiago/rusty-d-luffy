@@ -1,5 +1,12 @@
 # OnePieceSim
 
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
+
+> Unofficial fan project. Not affiliated with or endorsed by Bandai, Toei
+> Animation, Shueisha, or Eiichiro Oda. Source code is AGPL-3.0; third-party
+> names, trademarks, card data and artwork remain the property of their
+> respective owners and are **not** licensed under the AGPL. See [NOTICE](NOTICE).
+
 A deterministic, event-driven rules engine for the **One Piece Card Game**
 (Bandai OPTCG), built to serve three consumers off one kernel: local play against
 an AI, a reinforcement-learning sandbox, and online multiplayer.
@@ -232,3 +239,14 @@ These are deliberate and localised; each is commented at its site.
   prompting. Only ST02-001 uses this, for a single card.
 - An unscripted `[Trigger]` is treated as absent rather than offering a choice
   that would do nothing.
+
+## Licence
+
+Source code is licensed under [AGPL-3.0](LICENSE). AGPL rather than a
+permissive licence because of the multiplayer plan: it is the one copyleft that
+reaches *network* use, so a hosted server running a modified build has to
+publish those modifications. Hosting is not distribution, and GPL would not
+cover it.
+
+The licence covers this source and nothing else — see [NOTICE](NOTICE) for what
+that excludes and why it matters here.
