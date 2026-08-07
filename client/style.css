@@ -512,3 +512,58 @@ button:disabled:hover { background: var(--felt); border-color: var(--line); }
   margin-bottom: 8px;
   min-height: 14px;
 }
+
+/* ---- battle ----
+
+   Which two cards are fighting is the single most important thing on screen
+   during the Block and Counter steps, and the log scrolls away. */
+
+.card.attacking {
+  outline-color: var(--accent);
+  box-shadow: 0 0 0 4px rgba(217, 72, 75, 0.28), 0 6px 18px rgba(0, 0, 0, 0.5);
+}
+
+.card.defending {
+  outline-color: #4a86c4;
+  box-shadow: 0 0 0 4px rgba(74, 134, 196, 0.28), 0 6px 18px rgba(0, 0, 0, 0.5);
+}
+
+/* Corner marks, so the pairing survives being colour-blind or on a dim panel. */
+.card.attacking::after,
+.card.defending::after {
+  position: absolute;
+  top: 2px;
+  left: 3px;
+  z-index: 2;
+  font-size: 11px;
+  line-height: 1;
+  text-shadow: 0 1px 3px #000;
+}
+.card.attacking::after { content: "⚔"; color: #ffb3b4; }
+.card.defending::after { content: "🛡"; color: #b3d1ef; }
+
+#battle-bar {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+  padding: 7px 9px;
+  border-radius: 7px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  font-size: 12px;
+}
+
+#battle-bar .atk { color: #ffb3b4; }
+#battle-bar .def { color: #b3d1ef; }
+#battle-bar b { font-variant-numeric: tabular-nums; }
+#battle-bar .arrow { color: var(--muted); }
+
+#battle-bar .step {
+  margin-left: auto;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}

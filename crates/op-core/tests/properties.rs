@@ -233,6 +233,74 @@ fn draws_are_visible_only_to_the_drawing_player() {
     assert!(seen_own && seen_opponent, "no draws were exercised");
 }
 
+/// While a player is deciding whether to block or counter, their view must
+/// carry the battle, and both participants must be identifiable — a defender
+/// cannot judge a counter against cards they cannot see. The desktop client
+/// highlights them from exactly this.
+#[test]
+fn a_defender_can_see_the_battle_they_are_answering() {
+    let cards = TestCards::new();
+    let (mut game, _) = game_with(
+        &cards,
+        TestScripts::default(),
+        13,
+        ("LDR-001", deck_of("CHR-5K", 40)),
+        ("LDR-002", deck_of("CHR-BLOCK", 40)),
+    );
+
+    let mut policy = StdRng::seed_from_u64(6);
+    let mut checked = 0;
+
+    for _ in 0..600 {
+        if game.is_over() {
+            break;
+        }
+        if let Some(pending) = game.pending() {
+            if matches!(pending, op_core::Pending::Block { .. } | op_core::Pending::Counter { .. })
+            {
+                let viewer = pending.player();
+                let derived = game.derived();
+                let view = PlayerView::project(&game.state, game.db(), &derived, viewer);
+
+                let battle = view
+                    .battle
+                    .as_ref()
+                    .expect("a block or counter decision implies a battle in progress");
+
+                // Both participants are on the field, so both are public.
+                let on_board: Vec<_> = [&view.you, &view.opponent]
+                    .iter()
+                    .flat_map(|s| {
+                        s.leader
+                            .iter()
+                            .chain(s.characters.iter())
+                            .map(|c| c.id)
+                            .collect::<Vec<_>>()
+                    })
+                    .collect();
+                assert!(
+                    on_board.contains(&battle.attacker),
+                    "the attacker must be visible to the defender"
+                );
+                assert!(
+                    on_board.contains(&battle.target),
+                    "the card under attack must be visible to the defender"
+                );
+                checked += 1;
+            }
+        }
+
+        let legal = legal_actions(&game);
+        if legal.is_empty() {
+            break;
+        }
+        game.step(legal[policy.gen_range(0..legal.len())].clone())
+            .unwrap();
+    }
+
+    assert!(checked > 0, "no block or counter decision was exercised");
+}
+
 #[test]
 fn player_views_never_leak_hidden_information() {
     let cards = TestCards::new();

@@ -31,6 +31,9 @@ let catalogue = new Map();
 const artCache = new Map();
 /** Instance ids the hovered action refers to, for highlighting. */
 let highlighted = new Set();
+/** The cards in the battle currently being resolved, if any. */
+let battleAttacker = null;
+let battleDefender = null;
 
 const $ = (id) => document.getElementById(id);
 
@@ -53,6 +56,10 @@ function cardEl(card, { small = false } = {}) {
   el.dataset.id = String(card.id);
   if (card.rested) el.classList.add("rested");
   if (highlighted.has(card.id)) el.classList.add("highlight");
+  // A battle is easy to lose track of once the log has scrolled, and the
+  // Counter step asks you to judge a matchup you cannot otherwise see.
+  if (card.id === battleAttacker) el.classList.add("attacking");
+  if (card.id === battleDefender) el.classList.add("defending");
 
   if (!card.number) {
     // A card the viewer may not identify: the engine sent no number at all.
@@ -187,8 +194,45 @@ function lifePips(n) {
   return `<span class="pips">${"●".repeat(n)}${"○".repeat(Math.max(0, 5 - n))}</span> ${n}`;
 }
 
+/** Every card on the board, by instance id, for looking up live power. */
+function boardIndex(view) {
+  const index = new Map();
+  for (const side of [view.you, view.opponent]) {
+    for (const c of [side.leader, side.stage, ...side.characters]) {
+      if (c) index.set(c.id, c);
+    }
+  }
+  return index;
+}
+
+function renderBattle(view) {
+  const bar = $("battle-bar");
+  if (!view.battle) {
+    bar.hidden = true;
+    return;
+  }
+  const index = boardIndex(view);
+  const attacker = index.get(view.battle.attacker);
+  const defender = index.get(view.battle.target);
+  const label = (c) => {
+    if (!c) return "?";
+    const info = c.number ? catalogue.get(c.number) : null;
+    const nm = info ? info.name : (c.number ?? "?");
+    return c.power != null ? `${nm} <b>${c.power}</b>` : nm;
+  };
+  bar.hidden = false;
+  bar.innerHTML = `
+    <span class="atk">${label(attacker)}</span>
+    <span class="arrow">&#8594;</span>
+    <span class="def">${label(defender)}</span>
+    <span class="step">${view.battle.step}</span>
+  `;
+}
+
 function render(snap) {
   const view = snap.view;
+  battleAttacker = view.battle ? view.battle.attacker : null;
+  battleDefender = view.battle ? view.battle.target : null;
 
   $("turn-label").textContent = snap.turn_label;
   $("phase-label").textContent = `${view.phase} phase · turn ${view.turn}`;
@@ -213,6 +257,8 @@ function render(snap) {
     hand.innerHTML = `<div class="empty">hand empty</div>`;
   }
   for (const c of view.you.hand) hand.appendChild(cardSlot(c));
+
+  renderBattle(view);
 
   $("question").textContent =
     snap.question ?? (snap.thinking ? "Opponent is thinking…" : "Waiting…");
