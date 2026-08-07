@@ -61,12 +61,27 @@ pub struct Snapshot {
     pub thinking: bool,
 }
 
+/// Where session logs go, or `None` when disabled.
+///
+/// `OPSIM_DEBUG_DIR=` (empty) turns logging off; anything else overrides the
+/// default of `<repo>/debug`.
+fn debug_dir() -> Option<std::path::PathBuf> {
+    match std::env::var("OPSIM_DEBUG_DIR") {
+        Ok(dir) if dir.is_empty() => None,
+        Ok(dir) => Some(std::path::PathBuf::from(dir)),
+        Err(_) => Some(crate::ingest::repo_root().join("debug")),
+    }
+}
+
 pub struct Session {
     game: Game,
     ai: Box<dyn Agent + Send>,
     human: PlayerId,
     log: Vec<String>,
     db: Arc<CardDb>,
+    /// Omniscient debug log for this session. Never shown to the player — it
+    /// records `GameEvent`, so it contains both hands.
+    debug: Option<op_core::SessionLog>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,7 +139,22 @@ impl Session {
             decks: [human_deck, ai_deck],
             allow_illegal_decks: false,
         };
+        let decks = config.decks.clone();
         let (game, opening) = Game::new(config, Arc::clone(&db), scripts)?;
+
+        // Best-effort: a session that cannot write a debug log still plays.
+        let debug = debug_dir()
+            .and_then(|dir| {
+                op_core::SessionLog::create(
+                    dir,
+                    seed,
+                    if human_first { PlayerId::P0 } else { PlayerId::P1 },
+                    &decks,
+                    vec![format!("difficulty={difficulty:?}"), "client=desktop".into()],
+                )
+                .map_err(|e| eprintln!("debug log disabled: {e}"))
+                .ok()
+            });
 
         let mut session = Session {
             game,
@@ -132,7 +162,11 @@ impl Session {
             human: PlayerId::P0,
             log: Vec::new(),
             db,
+            debug,
         };
+        if let Some(debug) = session.debug.as_mut() {
+            debug.record(None, &opening.events, &session.game.state);
+        }
         session.absorb(&opening.events);
         // The AI is deliberately *not* run here. If it moves first, that is a
         // full search, and doing it inline would block whoever called us — the
@@ -154,7 +188,8 @@ impl Session {
             .get(index)
             .cloned()
             .ok_or_else(|| format!("option {index} is out of range"))?;
-        let outcome = self.game.step(action).map_err(|e| e.to_string())?;
+        let outcome = self.game.step(action.clone()).map_err(|e| e.to_string())?;
+        self.record(Some(&action), &outcome.events);
         self.absorb(&outcome.events);
         Ok(())
     }
@@ -184,11 +219,23 @@ impl Session {
             }
             let seat = pending.player();
             let action = self.ai.choose(&self.game, seat);
-            let Ok(outcome) = self.game.step(action) else {
+            let Ok(outcome) = self.game.step(action.clone()) else {
                 return;
             };
+            self.record(Some(&action), &outcome.events);
             self.absorb(&outcome.events);
         }
+    }
+
+    fn record(&mut self, action: Option<&op_core::Action>, events: &[op_core::GameEvent]) {
+        if let Some(debug) = self.debug.as_mut() {
+            debug.record(action, events, &self.game.state);
+        }
+    }
+
+    /// Path of this session's debug log, if one is being written.
+    pub fn debug_log_path(&self) -> Option<&std::path::Path> {
+        self.debug.as_ref().map(|d| d.path())
     }
 
     /// Renders events from the human's projection into the visible log.
@@ -419,6 +466,62 @@ mod tests {
         let snap = session.snapshot();
         assert!(snap.thinking);
         assert!(snap.options.is_empty());
+    }
+
+    /// The debug log must be a reproducer, not just a trace: the header
+    /// carries the seed and both decklists, and every step carries the action
+    /// and the resulting state hash. Replaying the recorded actions into a
+    /// fresh game from the same seed must reproduce those hashes exactly.
+    #[test]
+    fn the_debug_log_replays_the_session_it_recorded() {
+        let dir = std::env::temp_dir().join(format!("opsim-log-{}", std::process::id()));
+        std::env::set_var("OPSIM_DEBUG_DIR", &dir);
+
+        let Some(mut session) = fixture() else {
+            std::env::remove_var("OPSIM_DEBUG_DIR");
+            return;
+        };
+        let path = session
+            .debug_log_path()
+            .expect("a log should be written")
+            .to_path_buf();
+
+        for _ in 0..40 {
+            if session.snapshot().over.is_some() || session.snapshot().options.is_empty() {
+                break;
+            }
+            session.apply_human(0).unwrap();
+            session.run_ai();
+        }
+        let final_hash = session.game.state.state_hash();
+
+        let text = std::fs::read_to_string(&path).expect("log should exist");
+        let mut lines = text.lines();
+
+        let header: serde_json::Value =
+            serde_json::from_str(lines.next().expect("header line")).unwrap();
+        assert_eq!(header["kind"], "header");
+        assert_eq!(header["seed"], 7);
+        assert_eq!(header["decks"][0]["cards"], 50);
+
+        // Every step is well-formed and the last hash matches the live game.
+        let mut last = None;
+        let mut count = 0;
+        for line in lines {
+            let step: serde_json::Value = serde_json::from_str(line).unwrap();
+            assert_eq!(step["kind"], "step");
+            last = step["state_hash"].as_u64();
+            count += 1;
+        }
+        assert!(count > 1, "expected several steps, got {count}");
+        assert_eq!(
+            last,
+            Some(final_hash),
+            "the last logged hash must match the live game"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+        std::env::remove_var("OPSIM_DEBUG_DIR");
     }
 
     #[test]

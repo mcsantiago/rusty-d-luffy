@@ -11,3 +11,6 @@ __pycache__/
 
 # Tauri build artifacts
 /crates/op-desktop/gen/
+
+# Per-session debug logs
+/debug/

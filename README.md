@@ -109,6 +109,24 @@ cards, so the app still runs.
 > end requires `cargo build -p op-desktop`** — a browser refresh will not pick
 > changes up.
 
+## Debug logs
+
+Every session writes `debug/session-<time>-<seed>.jsonl` (gitignored). JSON
+Lines, flushed per step, so a log from a run that crashed still has its tail.
+
+Because a game is a pure function of `(config, seed, [Action])`, the log is a
+**reproducer** rather than a trace: the header carries the seed and both
+decklists, and each step carries the action, the resulting `GameEvent`s, and the
+state hash. Replaying the recorded actions into a fresh game from the same seed
+must reproduce those hashes — a divergence shows up there before it shows up as
+wrong behaviour.
+
+The log is **omniscient**: it records `GameEvent`, not `PlayerEvent`, so it
+contains both hands. That is what makes it useful for diagnosing the engine, and
+why it must never be surfaced to a player mid-game.
+
+`OPSIM_DEBUG_DIR=` disables logging; any other value overrides the directory.
+
 ## Card data
 
 Fetched from [`buhbbl/punk-records`](https://github.com/buhbbl/punk-records)
