@@ -1,6 +1,7 @@
 # OnePieceSim
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
+[![Card coverage: 3/59 sets scripted](https://img.shields.io/badge/card_sets-3%2F59_scripted-orange)](#coverage-of-the-source)
 
 > Unofficial fan project. Not affiliated with or endorsed by Bandai, Toei
 > Animation, Shueisha, or Eiichiro Oda. Source code is AGPL-3.0; third-party
@@ -215,11 +216,13 @@ cargo run -p op-cards --bin coverage -- EB01  # what EB01 still needs, with text
    `all_scripts()`, until the set reports `OK`
 4. Extend the DSL vocabulary in `op-cards/src/dsl.rs` (and the ops in
    `op-core/src/effect.rs`) where existing pieces do not fit
+5. Bump the card-sets badge and the `Status` line at the top of this README —
+   `cargo run -p op-cards --bin coverage` prints the `N/59` to put in both
 
 ## Status
 
-Implemented: the rules kernel, ST-01 and ST-02 at full script coverage, the
-legal-action generator, heuristic and ISMCTS agents, and the terminal client.
+Implemented: the rules kernel, ST-01, ST-02 and ST-06 at full script coverage,
+the legal-action generator, heuristic and ISMCTS agents, and the terminal client.
 
 Not yet built: PyO3 bindings and the Gymnasium environment, and the authoritative
 multiplayer server and web client. Both sit on top of the existing kernel — the
