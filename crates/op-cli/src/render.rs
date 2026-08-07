@@ -118,16 +118,23 @@ pub fn action(action: &Action, game: &Game) -> String {
         Action::Mulligan(true) => "mulligan (shuffle back and redraw 5)".into(),
         Action::Mulligan(false) => "keep this hand".into(),
         Action::EndMainPhase => "end turn".into(),
-        Action::PlayCard { card } => format!(
-            "play {} (cost {})",
-            name(*card),
-            db.get(game.state.card(*card).def).cost
-        ),
+        Action::PlayCard { card } => {
+            let suffix = if game.play_finds_targets(*card) {
+                ""
+            } else {
+                " (no target)"
+            };
+            format!(
+                "play {} (cost {}){suffix}",
+                name(*card),
+                db.get(game.state.card(*card).def).cost
+            )
+        }
         Action::ActivateEffect { card, slot } => {
             let suffix = if game.activation_finds_targets(*card, *slot) {
                 ""
             } else {
-                " (no legal target)"
+                " (no target)"
             };
             format!("activate {}'s effect #{slot}{suffix}", name(*card))
         }

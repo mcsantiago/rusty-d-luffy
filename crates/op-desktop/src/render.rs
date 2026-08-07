@@ -101,11 +101,18 @@ pub fn action_label(action: &Action, game: &Game) -> String {
         Action::Mulligan(true) => "Mulligan".into(),
         Action::Mulligan(false) => "Keep".into(),
         Action::EndMainPhase => "End turn".into(),
-        Action::PlayCard { card } => format!(
-            "Play {} ({})",
-            name(*card),
-            db.get(game.state.card(*card).def).cost
-        ),
+        Action::PlayCard { card } => {
+            let suffix = if game.play_finds_targets(*card) {
+                ""
+            } else {
+                " — no target"
+            };
+            format!(
+                "Play {} ({}){suffix}",
+                name(*card),
+                db.get(game.state.card(*card).def).cost
+            )
+        }
         Action::ActivateEffect { card, slot } => {
             // Flagged rather than hidden: activating with no target is legal
             // and still costs, so the player should see the trade rather than
@@ -113,7 +120,7 @@ pub fn action_label(action: &Action, game: &Game) -> String {
             let suffix = if game.activation_finds_targets(*card, *slot) {
                 ""
             } else {
-                " — no legal target"
+                " — no target"
             };
             format!("Activate {}{suffix}", name(*card))
         }

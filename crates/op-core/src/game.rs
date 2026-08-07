@@ -1726,6 +1726,44 @@ impl Game {
         !asked
     }
 
+    /// Whether playing `card` from hand would find a target for its text.
+    ///
+    /// Covers Events, whose `[Main]` effect resolves on play, and the `[On Play]`
+    /// effects of Characters and Stages. Same caveat as
+    /// [`Game::activation_finds_targets`]: advice for the UI and for agents,
+    /// never a legality check.
+    pub fn play_finds_targets(&self, card: CardInstanceId) -> bool {
+        let def = self.state.card(card).def;
+        let script = self.scripts.script(def);
+        let controller = self.state.card(card).controller;
+        let frame = EffectFrame::new(card, controller, Vec::new());
+
+        // An Event's [Main] effect is its first activated entry (10-2-3).
+        let event_ops = if self.db.get(def).category == Category::Event {
+            script.activated.first().map(|a| a.ops.as_slice())
+        } else {
+            None
+        };
+        let on_play_ops = script
+            .auto
+            .iter()
+            .filter(|a| a.timing == Timing::OnPlay)
+            .map(|a| a.ops.as_slice());
+
+        let mut asked = false;
+        for ops in event_ops.into_iter().chain(on_play_ops) {
+            for op in ops {
+                if let crate::effect::EffectOp::Choose { select, .. } = op {
+                    asked = true;
+                    if !self.selector_options(&frame, select).is_empty() {
+                        return true;
+                    }
+                }
+            }
+        }
+        !asked
+    }
+
     /// Cards currently satisfying a selector.
     fn selector_options(
         &self,

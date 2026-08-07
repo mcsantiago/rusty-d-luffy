@@ -374,6 +374,43 @@ fn negative_cost_survives_the_calculation_and_clamps_only_on_read() {
     );
 }
 
+/// ST06-015 Great Eruption draws a card and then targets. Playing it with an
+/// empty opposing board still draws, but the targeting clause has nowhere to
+/// go — and it is played, not activated, so the warning has to reach Events
+/// and not only [Activate: Main] effects.
+#[test]
+fn st06_015_warns_when_its_targeting_clause_has_nowhere_to_go() {
+    let Some((db, cards)) = load() else { return };
+    let mut game = game_at_main(db, cards, 5, 1);
+
+    let def = game.db().by_number("ST06-015").unwrap();
+    let card = game.state.spawn(def, PlayerId::P0, Zone::Hand);
+
+    // Nothing on the opposing board: the -2 cost clause has no target.
+    assert!(game.state.player(PlayerId::P1).characters.is_empty());
+    assert!(!game.play_finds_targets(card));
+
+    // Give the opponent something and the same card becomes fully live.
+    put_in_play(&mut game, PlayerId::P1, "ST06-013");
+    assert!(game.play_finds_targets(card));
+}
+
+/// A card with no targeting text at all must never be flagged.
+#[test]
+fn a_card_that_targets_nothing_is_never_reported_as_targetless() {
+    let Some((db, cards)) = load() else { return };
+    let mut game = game_at_main(db, cards, 5, 1);
+
+    for number in ["ST06-003", "ST06-009", "ST06-016"] {
+        let def = game.db().by_number(number).unwrap();
+        let card = game.state.spawn(def, PlayerId::P0, Zone::Hand);
+        assert!(
+            game.play_finds_targets(card),
+            "{number} asks for no target, so it must not be flagged"
+        );
+    }
+}
+
 #[test]
 fn st06_004_resists_effect_ko_but_not_battle() {
     let Some((db, cards)) = load() else { return };
