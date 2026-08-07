@@ -79,6 +79,12 @@ struct AppState {
     /// Set while an ingest is in flight, so a second bootstrap call from a
     /// reloaded window does not start a duplicate download.
     ingesting: Mutex<bool>,
+    /// Set once an ingest has run to completion this session.
+    ///
+    /// Needed because a handful of cards may have no art upstream at all. Left
+    /// purely to a missing-art count, those would gate the UI forever; one
+    /// successful full pass means the install is as complete as it can be.
+    install_complete: Mutex<bool>,
     session: Mutex<Option<Session>>,
     /// Card art, base64-encoded on first request and kept for the process.
     art: Mutex<HashMap<String, Option<String>>>,
@@ -150,13 +156,18 @@ fn bootstrap(app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> Bootst
         usize::MAX
     };
 
-    if ready && outstanding == 0 {
+    // "Ready" means the whole install is done, not merely that cards parsed.
+    // Starting a game with art still arriving would show text placeholders,
+    // because images download across all 59 sets in no particular order.
+    let complete = *state.install_complete.lock().unwrap();
+    if ready && (outstanding == 0 || complete) {
         return BootstrapStatus {
             ready: true,
             fetching: false,
             message,
         };
     }
+    ready = false;
 
     // Guard against a reloaded window starting a second download.
     {
@@ -176,6 +187,7 @@ fn bootstrap(app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> Bootst
         let result = ingest::run(&app, &repo_root);
         let state = tauri::Manager::state::<AppState>(&app);
         if result.is_ok() {
+            *state.install_complete.lock().unwrap() = true;
             // Parsing happens here so the UI's "ready" signal means genuinely
             // ready, not merely downloaded.
             if let Err(err) = state.load_cards() {
@@ -197,13 +209,12 @@ fn bootstrap(app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> Bootst
     });
 
     BootstrapStatus {
-        ready,
+        ready: false,
         fetching: true,
-        message: if ready {
-            // Playable already; the rest of the art tops up in the background.
-            format!("{outstanding} card images still to download")
-        } else {
+        message: if outstanding == usize::MAX {
             "Downloading card data…".into()
+        } else {
+            format!("{outstanding} card images still to download")
         },
     }
 }
@@ -304,6 +315,7 @@ fn main() {
             data_dir,
             cards: RwLock::new(None),
             ingesting: Mutex::new(false),
+            install_complete: Mutex::new(false),
             session: Mutex::new(None),
             art: Mutex::new(HashMap::new()),
         })

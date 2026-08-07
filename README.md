@@ -95,9 +95,12 @@ minutes once, and afterwards the app is entirely offline.
 Two things make that survivable. The fetch **skips what is already on disk**, so
 an interrupted run resumes instead of restarting. And startup checks for missing
 *art*, not just missing card data — an interrupted run leaves cards complete and
-art partial, and checking only for card JSON would call that finished. Once card
-data is loaded the game is playable immediately, with any outstanding art
-continuing to download behind a progress bar.
+art partial, and checking only for card JSON would call that finished.
+
+*Start game* stays disabled until the download completes. Art arrives across all
+59 sets in no particular order, so a game started early would render text
+placeholders rather than the cards in your own deck. A complete install skips
+the fetch entirely and opens offline.
 
 Card art is served as data URIs. Without it the UI falls back to drawing text
 cards, so the app still runs.

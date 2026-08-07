@@ -302,13 +302,13 @@ async function start() {
 // starting a game is gated, since that is the one thing that genuinely needs
 // the data.
 
-/// `gated` is separate from `visible`: once card data is loaded the game is
-/// playable, and remaining art can keep downloading behind a visible panel
-/// without blocking Start.
-function setIngestVisible(visible, gated = visible) {
+function setIngestVisible(visible) {
   $("ingest").hidden = !visible;
-  $("start").disabled = gated;
-  $("start").textContent = gated ? "Waiting for card data…" : "Start game";
+  // Gated for the whole download, not just until card data parses. Art
+  // arrives across all 59 sets in no particular order, so starting early can
+  // show text placeholders instead of the cards in your own deck.
+  $("start").disabled = visible;
+  $("start").textContent = visible ? "Downloading…" : "Start game";
 }
 
 function appendIngestLine(line) {
@@ -330,12 +330,11 @@ async function bootstrap() {
     return;
   }
 
-  if (status.ready && !status.fetching) {
+  if (status.ready) {
     setIngestVisible(false);
     return;
   }
-  // Playable but still downloading art: show progress, leave Start enabled.
-  setIngestVisible(true, !status.ready);
+  setIngestVisible(true);
   $("ingest-title").textContent = status.message;
   if (!status.fetching) {
     appendIngestLine(status.message);
