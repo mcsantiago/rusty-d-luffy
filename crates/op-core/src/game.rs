@@ -1178,6 +1178,7 @@ impl Game {
         } else {
             self.state.turn_player = self.state.first_player;
         }
+        self.state.turns_taken[self.state.turn_player.index()] += 1;
         self.state.phase = Phase::Refresh;
         events.push(GameEvent::TurnStarted {
             turn: self.state.turn,

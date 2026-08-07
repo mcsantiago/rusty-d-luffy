@@ -188,6 +188,10 @@ pub struct GameState {
 
     pub turn: u32,
     pub turn_player: PlayerId,
+    /// Turns each player has begun. Tracked per player rather than inferred
+    /// from `turn`'s parity so that "their first turn" (6-5-6-1) stays correct
+    /// if an effect ever grants an extra turn.
+    pub turns_taken: [u32; 2],
     pub phase: Phase,
     /// The player who went first, who skips their first draw (6-3-1) and places
     /// only one DON!! on their first turn (6-4-1).
@@ -227,6 +231,7 @@ impl GameState {
             players: [PlayerState::default(), PlayerState::default()],
             turn: 0,
             turn_player: first_player,
+            turns_taken: [0, 0],
             phase: Phase::Refresh,
             first_player,
             battle: None,
@@ -261,6 +266,14 @@ impl GameState {
 
     pub fn is_turn_player(&self, p: PlayerId) -> bool {
         self.turn_player == p
+    }
+
+    /// Whether the turn in progress is `p`'s own first turn.
+    ///
+    /// 6-5-6-1 forbids battling on it, and it is per player: the player going
+    /// first is barred on turn 1, the player going second on turn 2.
+    pub fn is_first_turn_for(&self, p: PlayerId) -> bool {
+        self.turns_taken[p.index()] <= 1
     }
 
     /// Creates a card instance in the given area.
@@ -440,6 +453,7 @@ impl GameState {
         }
         self.turn.hash(&mut h);
         self.turn_player.hash(&mut h);
+        self.turns_taken.hash(&mut h);
         self.phase.hash(&mut h);
         self.battle.hash(&mut h);
         self.damage.hash(&mut h);

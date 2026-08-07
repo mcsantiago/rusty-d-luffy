@@ -232,8 +232,10 @@ pub fn can_attack(
     if !matches!(card.zone, Zone::Leader | Zone::Character) {
         return false;
     }
-    // Neither player may battle on their first turn (6-5-6-1).
-    if state.turn <= 1 {
+    // 6-5-6-1: "Neither player can battle on their first turn." The restriction
+    // is per player, not a global turn-1 rule — the player going second is
+    // barred on turn 2, which is *their* first turn.
+    if state.is_first_turn_for(state.turn_player) {
         return false;
     }
     if db.get(card.def).category == Category::Character {

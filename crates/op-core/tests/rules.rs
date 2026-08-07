@@ -98,18 +98,82 @@ fn rule_6_4_1_first_player_places_one_don_on_turn_one_then_two() {
     assert_eq!(game.state.player(PlayerId::P0).cost_area.len(), 3);
 }
 
+/// 6-5-6-1: "Neither player can battle on their first turn."
+///
+/// The restriction is per player, so it covers turn 1 *and* turn 2 — turn 2
+/// being the second player's own first turn. Both seats are exercised here
+/// because checking only the first player leaves the more easily broken half
+/// of the rule untested.
 #[test]
-fn rule_6_5_6_1_no_battles_on_the_first_turn() {
+fn rule_6_5_6_1_neither_player_can_battle_on_their_own_first_turn() {
     let (_cards, mut game) = fixture();
     to_main(&mut game);
-    let leader = game.state.player(PlayerId::P0).leader.unwrap();
-    let target = game.state.player(PlayerId::P1).leader.unwrap();
-    assert!(game
-        .step(Action::Attack {
-            attacker: leader,
-            target
+
+    // Turn 1 — the first player's first turn.
+    assert_eq!(game.state.turn, 1);
+    assert_eq!(game.state.turn_player, PlayerId::P0);
+    let p0_leader = game.state.player(PlayerId::P0).leader.unwrap();
+    let p1_leader = game.state.player(PlayerId::P1).leader.unwrap();
+    assert!(
+        game.step(Action::Attack {
+            attacker: p0_leader,
+            target: p1_leader
         })
-        .is_err());
+        .is_err(),
+        "the first player must not battle on turn 1"
+    );
+
+    // Turn 2 — the second player's first turn.
+    end_turn(&mut game);
+    assert_eq!(game.state.turn, 2);
+    assert_eq!(game.state.turn_player, PlayerId::P1);
+    assert!(
+        game.step(Action::Attack {
+            attacker: p1_leader,
+            target: p0_leader
+        })
+        .is_err(),
+        "the second player must not battle on turn 2, which is their first turn"
+    );
+
+    // Turn 3 — the first player's second turn, so battles are legal.
+    end_turn(&mut game);
+    assert_eq!(game.state.turn, 3);
+    assert!(
+        game.step(Action::Attack {
+            attacker: p0_leader,
+            target: p1_leader
+        })
+        .is_ok(),
+        "battles must be legal from turn 3"
+    );
+}
+
+/// The legal-action generator must agree with the restriction, or a search
+/// agent would consider attacks that the engine then rejects.
+#[test]
+fn rule_6_5_6_1_first_turns_offer_no_attack_actions() {
+    let (_cards, mut game) = fixture();
+    to_main(&mut game);
+
+    for expected_turn in [1u32, 2] {
+        assert_eq!(game.state.turn, expected_turn);
+        assert!(
+            !op_core::legal_actions(&game)
+                .iter()
+                .any(|a| matches!(a, Action::Attack { .. })),
+            "turn {expected_turn} offered an attack"
+        );
+        end_turn(&mut game);
+    }
+
+    assert_eq!(game.state.turn, 3);
+    assert!(
+        op_core::legal_actions(&game)
+            .iter()
+            .any(|a| matches!(a, Action::Attack { .. })),
+        "turn 3 should offer attacks"
+    );
 }
 
 // ---- DON!! -----------------------------------------------------------------
