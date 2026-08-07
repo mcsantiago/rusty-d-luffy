@@ -25,9 +25,24 @@ use std::time::Duration;
 
 use serde::Deserialize;
 
-/// Upstream root. Pinned to a commit rather than a branch would be safer for a
-/// release; see the release checklist.
-pub const SOURCE: &str = "https://raw.githubusercontent.com/buhbbl/punk-records/main/english";
+/// The upstream revision this build fetches from.
+///
+/// Pinned to a commit, not a branch. A released binary that tracked `main`
+/// would change behaviour whenever a third party edited their repository, and
+/// break outright if it were renamed or restructured — with no recourse for
+/// anyone who had already installed. Pinning trades automatic new sets for a
+/// build that keeps working.
+///
+/// Bumping it is deliberate: pick a commit, update this, re-run the tests.
+/// `OPSIM_SOURCE_REF` overrides it for trying a newer revision without a
+/// rebuild.
+pub const SOURCE_REF: &str = "2a48b092cf4c77acbe22367b8334bbc75102c702";
+
+/// Upstream root for the pinned revision.
+pub fn source_root() -> String {
+    let git_ref = std::env::var("OPSIM_SOURCE_REF").unwrap_or_else(|_| SOURCE_REF.to_string());
+    format!("https://raw.githubusercontent.com/buhbbl/punk-records/{git_ref}/english")
+}
 
 const RETRIES: u32 = 4;
 const TIMEOUT: Duration = Duration::from_secs(30);
@@ -263,7 +278,8 @@ pub fn run(
     let cards_dir = data_dir.join("cards");
 
     progress(Progress::Message("Fetching pack index…".into()));
-    let index_url = format!("{SOURCE}/packs.json");
+    let root = source_root();
+    let index_url = format!("{root}/packs.json");
     let raw = client.get(&index_url)?;
     write(&data_dir.join("packs.json"), &raw)?;
     let packs: BTreeMap<String, PackMeta> =
@@ -324,7 +340,7 @@ pub fn run(
         let cards = if dest.exists() && !plan.refresh {
             read_pack(&dest).unwrap_or_default()
         } else {
-            let url = format!("{SOURCE}/data/{pack_id}.json");
+            let url = format!("{root}/data/{pack_id}.json");
             match client.get(&url) {
                 Ok(bytes) => {
                     let all: Vec<RawCard> =
@@ -526,6 +542,25 @@ mod tests {
         assert!(is_art_variant("EB01-006_r1"));
         assert!(!is_art_variant("OP01-016"));
         assert!(!is_art_variant("P-001"));
+    }
+
+    /// A pinned ref is only useful if it is a commit. A branch name here would
+    /// silently reintroduce the drift the pin exists to prevent.
+    #[test]
+    fn the_source_is_pinned_to_a_commit_not_a_branch() {
+        assert_eq!(SOURCE_REF.len(), 40, "expected a full commit sha");
+        assert!(
+            SOURCE_REF.chars().all(|c| c.is_ascii_hexdigit()),
+            "expected hex, got {SOURCE_REF}"
+        );
+        assert!(source_root().contains(SOURCE_REF));
+    }
+
+    #[test]
+    fn the_source_ref_can_be_overridden_without_a_rebuild() {
+        std::env::set_var("OPSIM_SOURCE_REF", "main");
+        assert!(source_root().ends_with("/main/english"));
+        std::env::remove_var("OPSIM_SOURCE_REF");
     }
 
     #[test]
