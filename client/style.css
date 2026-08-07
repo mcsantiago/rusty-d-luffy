@@ -212,8 +212,33 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
 
 .card:hover { transform: translateY(-4px); box-shadow: 0 8px 20px rgba(0,0,0,0.45); z-index: 5; }
 .card.small { width: 72px; height: 100px; }
-.card.rested { transform: rotate(6deg); filter: brightness(0.7); }
-.card.rested:hover { transform: rotate(6deg) translateY(-4px); }
+
+/* A card and the DON!! given to it. The rotation sits here so both turn
+   together, the way they do on the table. */
+.slot {
+  position: relative;
+  flex: 0 0 auto;
+  padding-bottom: 13px;
+  transform-origin: 50% 90%;
+  transition: transform 0.1s, filter 0.1s;
+}
+.slot.rested { transform: rotate(6deg); filter: brightness(0.7); }
+
+/* Given DON!! sit underneath the card and stay visible (6-5-5-1).
+   z-index here creates a stacking context, so the per-DON!! z-indexes used to
+   fan them stay scoped and cannot paint over the card itself. */
+.attached { position: absolute; left: 6px; bottom: 0; height: 26px; z-index: 0; }
+.slot > .card { z-index: 1; }
+.adon {
+  position: absolute;
+  bottom: 0;
+  width: 22px;
+  height: 26px;
+  border-radius: 4px 4px 3px 3px;
+  background: linear-gradient(160deg, #f5d477 0%, var(--accent-2) 60%, #c98f10 100%);
+  border: 1px solid #a97a12;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.4);
+}
 .card.highlight { outline-color: var(--accent-2); box-shadow: 0 0 0 4px rgba(240,180,41,0.2); }
 
 .card .art {

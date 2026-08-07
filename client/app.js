@@ -74,9 +74,6 @@ function cardEl(card, { small = false } = {}) {
   if (card.power !== null && card.power !== undefined) {
     badges.insertAdjacentHTML("beforeend", `<span class="pw">${card.power}</span>`);
   }
-  if (card.attached_don > 0) {
-    badges.insertAdjacentHTML("beforeend", `<span class="don">+${card.attached_don}</span>`);
-  }
 
   art(card.number).then((uri) => {
     if (!uri) return;
@@ -112,6 +109,34 @@ function hidePreview() {
   $("preview").hidden = true;
 }
 
+/** A card plus any DON!! given to it.
+ *
+ * DON!! given to a card are placed underneath it and stay visible (6-5-5-1),
+ * and they rest and rotate along with it — so the rotation lives on this
+ * wrapper rather than on the card itself.
+ */
+function cardSlot(card, opts = {}) {
+  const slot = document.createElement("div");
+  slot.className = "slot" + (card.rested ? " rested" : "");
+
+  if (card.attached_don > 0) {
+    const stack = document.createElement("div");
+    stack.className = "attached";
+    for (let i = 0; i < card.attached_don; i++) {
+      const d = document.createElement("div");
+      d.className = "adon";
+      // Fan sideways so each given DON!! is individually countable.
+      d.style.left = `${i * 13}px`;
+      d.style.zIndex = String(i);
+      stack.appendChild(d);
+    }
+    slot.appendChild(stack);
+  }
+
+  slot.appendChild(cardEl(card, opts));
+  return slot;
+}
+
 /** A single DON!! card. Fungible and art-less, so drawn rather than imaged. */
 function donEl(card) {
   const el = document.createElement("div");
@@ -143,18 +168,18 @@ function renderDon(side, prefix, deckCount) {
 function renderSide(view, side, prefix) {
   const leader = $(`${prefix}-leader`);
   leader.innerHTML = "";
-  if (side.leader) leader.appendChild(cardEl(side.leader));
+  if (side.leader) leader.appendChild(cardSlot(side.leader));
 
   const chars = $(`${prefix}-characters`);
   chars.innerHTML = "";
   if (side.characters.length === 0) {
     chars.innerHTML = `<div class="empty">no characters</div>`;
   }
-  for (const c of side.characters) chars.appendChild(cardEl(c));
+  for (const c of side.characters) chars.appendChild(cardSlot(c));
 
   const stage = $(`${prefix}-stage`);
   stage.innerHTML = "";
-  if (side.stage) stage.appendChild(cardEl(side.stage, { small: true }));
+  if (side.stage) stage.appendChild(cardSlot(side.stage, { small: true }));
 }
 
 function lifePips(n) {
@@ -186,7 +211,7 @@ function render(snap) {
   if (view.you.hand.length === 0) {
     hand.innerHTML = `<div class="empty">hand empty</div>`;
   }
-  for (const c of view.you.hand) hand.appendChild(cardEl(c));
+  for (const c of view.you.hand) hand.appendChild(cardSlot(c));
 
   $("question").textContent = snap.question ?? "Waiting for opponent…";
 
