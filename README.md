@@ -240,6 +240,12 @@ These are deliberate and localised; each is commented at its site.
 - An unscripted `[Trigger]` is treated as absent rather than offering a choice
   that would do nothing.
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the policy — including that AI
+assistance is welcome and needn't be declared — and [AGENTS.md](AGENTS.md) for
+how the codebase is organised and which invariants are easy to break.
+
 ## Licence
 
 Source code is licensed under [AGPL-3.0](LICENSE). AGPL rather than a
