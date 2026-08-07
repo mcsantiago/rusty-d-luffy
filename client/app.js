@@ -208,6 +208,36 @@ function openTrash(side, label) {
   $("trash-modal").hidden = false;
 }
 
+$("show-debug").addEventListener("click", async () => {
+  let info;
+  try {
+    info = await invoke("debug_info");
+  } catch (err) {
+    info = { path: null, withheld: String(err), entries: [], summary: [] };
+  }
+
+  $("debug-path").textContent = info.path
+    ? `log: ${info.path}`
+    : "no log for this session";
+
+  $("debug-summary").innerHTML = (info.summary ?? [])
+    .map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`)
+    .join("");
+
+  const withheld = $("debug-withheld");
+  withheld.hidden = !info.withheld;
+  withheld.textContent = info.withheld ?? "";
+
+  // Tail only: a long session runs to hundreds of records and the end is the
+  // part anyone reads.
+  $("debug-entries").textContent = (info.entries ?? []).slice(-60).join("\n");
+  $("debug-modal").hidden = false;
+});
+
+$("debug-close").addEventListener("click", () => {
+  $("debug-modal").hidden = true;
+});
+
 $("trash-close").addEventListener("click", () => {
   $("trash-modal").hidden = true;
 });

@@ -69,6 +69,7 @@
       <header id="topbar">
         <span id="turn-label"></span>
         <span id="phase-label" class="muted"></span>
+        <button id="show-debug" class="ghost">Debug</button>
         <button id="new-game" class="ghost">New game</button>
       </header>
 
@@ -125,6 +126,19 @@
           <div id="log"></div>
         </div>
       </aside>
+
+      <div id="debug-modal" class="overlay" hidden>
+        <div class="panel wide">
+          <div class="trash-head">
+            <h1>Session diagnostics</h1>
+            <button id="debug-close" class="ghost">Close</button>
+          </div>
+          <p class="sub" id="debug-path"></p>
+          <div id="debug-summary" class="debug-summary"></div>
+          <p class="ingest-note" id="debug-withheld" hidden></p>
+          <pre id="debug-entries"></pre>
+        </div>
+      </div>
 
       <div id="trash-modal" class="overlay" hidden>
         <div class="panel wide">

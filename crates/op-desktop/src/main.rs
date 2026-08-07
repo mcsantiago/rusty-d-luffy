@@ -406,6 +406,77 @@ fn snapshot(state: tauri::State<'_, AppState>) -> Result<Snapshot, String> {
     Ok(session.snapshot())
 }
 
+#[derive(Serialize)]
+struct DebugInfo {
+    path: Option<String>,
+    /// A game is still in progress.
+    live: bool,
+    /// Why the raw log is withheld, if it is.
+    withheld: Option<String>,
+    /// Raw log lines, only when it is safe to show them.
+    entries: Vec<String>,
+    summary: Vec<(String, String)>,
+}
+
+/// Session diagnostics.
+///
+/// The raw log is **omniscient** — it records `GameEvent`, so it contains the
+/// opponent's hand and every card drawn. Rendering it during a live game would
+/// be a cheat button, so it is withheld until the game ends. `OPSIM_DEBUG_UI=1`
+/// overrides that for engine work, where seeing both sides is the point.
+#[tauri::command]
+fn debug_info(state: tauri::State<'_, AppState>) -> DebugInfo {
+    let guard = state.session.lock().unwrap();
+    let Some(session) = guard.as_ref() else {
+        return DebugInfo {
+            path: None,
+            live: false,
+            withheld: Some("no game in progress".into()),
+            entries: Vec::new(),
+            summary: Vec::new(),
+        };
+    };
+
+    let snapshot = session.snapshot();
+    let live = snapshot.over.is_none();
+    let path = session.debug_log_path().map(|p| p.display().to_string());
+
+    let unlocked = !live || std::env::var("OPSIM_DEBUG_UI").is_ok_and(|v| v == "1");
+    let entries = match (&path, unlocked) {
+        (Some(path), true) => std::fs::read_to_string(path)
+            .map(|t| t.lines().map(str::to_string).collect())
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    };
+
+    DebugInfo {
+        path,
+        live,
+        withheld: (!unlocked).then(|| {
+            "The raw log records both hands, so it stays hidden until the game \
+             ends. Set OPSIM_DEBUG_UI=1 to override."
+                .into()
+        }),
+        entries,
+        summary: vec![
+            ("turn".into(), snapshot.view.turn.to_string()),
+            ("phase".into(), format!("{:?}", snapshot.view.phase)),
+            ("your life".into(), snapshot.view.you.life_count.to_string()),
+            (
+                "opponent life".into(),
+                snapshot.view.opponent.life_count.to_string(),
+            ),
+            (
+                "result".into(),
+                snapshot
+                    .over
+                    .clone()
+                    .unwrap_or_else(|| "in progress".into()),
+            ),
+        ],
+    }
+}
+
 /// Card art as a data URI, or `None` when it has not been cached.
 ///
 /// Served through a command rather than the asset protocol so the app degrades
@@ -442,7 +513,7 @@ fn main() {
             art: Mutex::new(HashMap::new()),
         })
         .invoke_handler(tauri::generate_handler![
-            bootstrap, new_game, choose, snapshot, card_art
+            bootstrap, new_game, choose, snapshot, card_art, debug_info
         ])
         .run(tauri::generate_context!())
         .expect("failed to start the desktop app");

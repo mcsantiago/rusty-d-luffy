@@ -726,3 +726,30 @@ button:disabled:hover { background: var(--felt); border-color: var(--line); }
   overflow-y: auto;
   padding: 4px 2px;
 }
+
+/* ---- debug panel ---- */
+.debug-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin-bottom: 12px;
+  font-size: 12px;
+}
+.debug-summary div { display: flex; gap: 6px; }
+.debug-summary span { color: var(--muted); }
+.debug-summary b { font-variant-numeric: tabular-nums; }
+
+#debug-entries {
+  margin: 0;
+  max-height: 52vh;
+  overflow: auto;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  line-height: 1.45;
+  color: #9fb3c8;
+  white-space: pre;
+}
