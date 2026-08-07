@@ -14,6 +14,14 @@ op-ingest = { workspace = true }
 anyhow = { workspace = true }
 rand = { workspace = true }
 
+[lib]
+name = "op_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "onepiece"
 path = "src/main.rs"
+
+[[bin]]
+name = "op-replay"
+path = "src/bin/replay.rs"

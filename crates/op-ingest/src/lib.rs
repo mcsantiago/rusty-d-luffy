@@ -38,10 +38,21 @@ use serde::Deserialize;
 /// rebuild.
 pub const SOURCE_REF: &str = "2a48b092cf4c77acbe22367b8334bbc75102c702";
 
+/// The revision actually in effect, [`SOURCE_REF`] unless overridden.
+///
+/// Worth recording alongside anything derived from card data: a session log
+/// replayed against a different revision can diverge for reasons that are not
+/// the engine's fault.
+pub fn source_ref() -> String {
+    std::env::var("OPSIM_SOURCE_REF").unwrap_or_else(|_| SOURCE_REF.to_string())
+}
+
 /// Upstream root for the pinned revision.
 pub fn source_root() -> String {
-    let git_ref = std::env::var("OPSIM_SOURCE_REF").unwrap_or_else(|_| SOURCE_REF.to_string());
-    format!("https://raw.githubusercontent.com/buhbbl/punk-records/{git_ref}/english")
+    format!(
+        "https://raw.githubusercontent.com/buhbbl/punk-records/{}/english",
+        source_ref()
+    )
 }
 
 const RETRIES: u32 = 4;

@@ -127,17 +127,27 @@ Every session writes `debug/session-<time>-<seed>.jsonl` (gitignored). JSON
 Lines, flushed per step, so a log from a run that crashed still has its tail.
 
 Because a game is a pure function of `(config, seed, [Action])`, the log is a
-**reproducer** rather than a trace: the header carries the seed and both
-decklists, and each step carries the action, the resulting `GameEvent`s, and the
-state hash. Replaying the recorded actions into a fresh game from the same seed
-must reproduce those hashes — a divergence shows up there before it shows up as
-wrong behaviour.
+**reproducer** rather than a trace: the header carries the config and both
+decklists in order, and each step carries the action, the resulting `GameEvent`s,
+and the state hash. Replay it:
+
+```bash
+cargo run -p op-cli --bin op-replay -- debug/session-*.jsonl
+```
+
+That rebuilds the game from the header alone, steps the recorded actions back
+through the engine, and checks the events and the state hash at each one. It
+reports the *first* step that differs, with the action and the cards it names,
+and exits non-zero — so a log kept from an earlier build is a regression test,
+and a rules change that moves a position tells you which step it moved.
 
 The log is **omniscient**: it records `GameEvent`, not `PlayerEvent`, so it
 contains both hands. That is what makes it useful for diagnosing the engine, and
-why it must never be surfaced to a player mid-game.
+why it must never be surfaced to a player mid-game — the replay tool is local,
+and belongs nowhere near a client.
 
 `OPSIM_DEBUG_DIR=` disables logging; any other value overrides the directory.
+`--log <DIR>` does the same for one terminal session.
 
 ## Card data
 
