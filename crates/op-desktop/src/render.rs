@@ -60,6 +60,13 @@ pub fn line(event: &PlayerEvent, game: &Game, viewer: PlayerId) -> Option<String
                 None => format!("{} {what} a life card", who(*player)),
             }
         }
+        E::EffectActivated { source, controller } => {
+            format!("{} used {}", who(*controller), name(*source))
+        }
+        E::NoLegalTargets { source, controller } => {
+            let _ = controller;
+            format!("{} had no legal target", name(*source))
+        }
         E::TriggerActivated { player, card } => {
             format!("{} activated {}'s [Trigger]", who(*player), name(*card))
         }
@@ -99,7 +106,17 @@ pub fn action_label(action: &Action, game: &Game) -> String {
             name(*card),
             db.get(game.state.card(*card).def).cost
         ),
-        Action::ActivateEffect { card, .. } => format!("Activate {}", name(*card)),
+        Action::ActivateEffect { card, slot } => {
+            // Flagged rather than hidden: activating with no target is legal
+            // and still costs, so the player should see the trade rather than
+            // discover it afterwards.
+            let suffix = if game.activation_finds_targets(*card, *slot) {
+                ""
+            } else {
+                " — no legal target"
+            };
+            format!("Activate {}{suffix}", name(*card))
+        }
         Action::GiveDon { to } => format!("DON!! → {}", name(*to)),
         Action::Attack { attacker, target } => format!(
             "{} ({}) → {} ({})",

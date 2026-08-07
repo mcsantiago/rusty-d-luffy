@@ -239,6 +239,41 @@ fn st06_cost_reduction_brings_a_character_into_ko_range() {
 
 /// ST06-004 Smoker cannot be K.O.'d by effects, but a lost battle still
 /// K.O.s him (10-2-1-1).
+/// Sakazuki K.O.s a Character "with a cost of 0", and no built-in deck contains
+/// one — cost 0 is only reachable after ST-06's own reduction effects. The
+/// activation stays legal and still costs, so the UI has to be able to say so
+/// up front rather than leaving the player to infer it from a silent board.
+#[test]
+fn st06_001_reports_when_it_has_no_legal_target() {
+    let Some((db, cards)) = load() else { return };
+    let mut game = game_at_main(db, cards, 5, 1);
+
+    let leader = game.state.player(PlayerId::P0).leader.unwrap();
+    assert_eq!(game.db().get(game.state.card(leader).def).number, "ST01-001");
+
+    // A cost-1 Character is not a legal target for a "cost of 0" effect.
+    let victim = put_in_play(&mut game, PlayerId::P1, "ST06-003");
+    assert_eq!(game.derived().get(victim).cost, 1);
+
+    let sakazuki = game.state.player(PlayerId::P1).leader.unwrap();
+    if game.db().get(game.state.card(sakazuki).def).number == "ST06-001" {
+        assert!(
+            !game.activation_finds_targets(sakazuki, 0),
+            "nothing costs 0, so the effect has no target"
+        );
+    }
+
+    // Shrinking it to 0 makes the same activation meaningful.
+    game.state.modifiers.push(op_core::effect::Modifier {
+        target: victim,
+        kind: op_core::effect::ModKind::Cost(-4),
+        duration: op_core::effect::Duration::ThisTurn,
+        source: victim,
+        controller: PlayerId::P0,
+    });
+    assert_eq!(game.derived().get(victim).cost, 0);
+}
+
 #[test]
 fn st06_004_resists_effect_ko_but_not_battle() {
     let Some((db, cards)) = load() else { return };

@@ -1424,6 +1424,12 @@ impl Game {
                 let options = self.selector_options(frame, &select);
                 if options.is_empty() {
                     // Nothing to choose; bind empty and continue (8-4-4-1).
+                    // Announced, because the cost has already been paid and
+                    // silence looks like a bug.
+                    events.push(GameEvent::NoLegalTargets {
+                        source: frame.source,
+                        controller: frame.controller,
+                    });
                     self.state.stack.frames[idx].bind(&key, Vec::new());
                     return OpOutcome::Advance;
                 }
@@ -1686,6 +1692,38 @@ impl Game {
             crate::effect::Who::You => controller,
             crate::effect::Who::Opponent => controller.opponent(),
         }
+    }
+
+    /// Whether an activated effect could currently affect anything.
+    ///
+    /// False when the effect asks for targets and none of its selectors match.
+    /// The rules permit activating anyway — "up to 1" allows choosing zero
+    /// (8-4-4-1) — and the cost is still paid (8-4-1-3), so this is advice for
+    /// the UI and for agents, deliberately *not* a legality check.
+    pub fn activation_finds_targets(&self, card: CardInstanceId, slot: u8) -> bool {
+        let Some(effect) = self
+            .scripts
+            .script(self.state.card(card).def)
+            .activated
+            .iter()
+            .find(|a| a.slot == slot)
+        else {
+            return true;
+        };
+
+        let controller = self.state.card(card).controller;
+        let frame = EffectFrame::new(card, controller, Vec::new());
+        let mut asked = false;
+        for op in &effect.ops {
+            if let crate::effect::EffectOp::Choose { select, .. } = op {
+                asked = true;
+                if !self.selector_options(&frame, select).is_empty() {
+                    return true;
+                }
+            }
+        }
+        // An effect that never asks for a target always does something.
+        !asked
     }
 
     /// Cards currently satisfying a selector.

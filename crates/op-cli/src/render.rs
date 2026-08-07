@@ -124,7 +124,12 @@ pub fn action(action: &Action, game: &Game) -> String {
             db.get(game.state.card(*card).def).cost
         ),
         Action::ActivateEffect { card, slot } => {
-            format!("activate {}'s effect #{slot}", name(*card))
+            let suffix = if game.activation_finds_targets(*card, *slot) {
+                ""
+            } else {
+                " (no legal target)"
+            };
+            format!("activate {}'s effect #{slot}{suffix}", name(*card))
         }
         Action::GiveDon { to } => format!("give 1 DON!! to {}", name(*to)),
         Action::Attack { attacker, target } => format!(
@@ -197,6 +202,12 @@ pub fn event(event: &PlayerEvent, game: &Game, viewer: PlayerId) -> Option<Strin
         E::KnockedOut { card } => format!("{} is K.O.'d", name(*card)),
         E::DamageDealt { player, amount } => {
             format!("{} take{} {amount} damage", who(*player), if *player == viewer { "" } else { "s" })
+        }
+        E::EffectActivated { source, controller } => {
+            format!("{} used {}", who(*controller), name(*source))
+        }
+        E::NoLegalTargets { source, .. } => {
+            format!("{} had no legal target", name(*source))
         }
         E::TriggerActivated { player, card } => {
             format!("{} activates {}'s [Trigger]", who(*player), name(*card))

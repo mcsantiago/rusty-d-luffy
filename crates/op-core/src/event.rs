@@ -112,6 +112,10 @@ pub enum GameEvent {
     BattleEnded,
 
     EffectActivated { source: CardInstanceId, controller: PlayerId },
+    /// An effect asked for a target and there were none. The cost has already
+    /// been paid at this point (8-4-1-3), so the player is owed an explanation
+    /// for why nothing happened.
+    NoLegalTargets { source: CardInstanceId, controller: PlayerId },
     GameEnded { result: GameOver },
 }
 
@@ -158,6 +162,7 @@ pub enum PlayerEvent {
     BattleEnded,
 
     EffectActivated { source: CardRef, controller: PlayerId },
+    NoLegalTargets { source: CardRef, controller: PlayerId },
     GameEnded { result: GameOver },
 }
 
@@ -295,6 +300,11 @@ impl GameEvent {
                     controller,
                 }
             }
+            // The source is revealed by activating it, so naming it is safe.
+            GameEvent::NoLegalTargets { source, controller } => PlayerEvent::NoLegalTargets {
+                source: CardRef::Visible(source),
+                controller,
+            },
             GameEvent::GameEnded { result } => PlayerEvent::GameEnded { result },
         }
     }
@@ -319,7 +329,8 @@ impl PlayerEvent {
             PlayerEvent::BattleResolved {
                 attacker, target, ..
             } => vec![attacker, target],
-            PlayerEvent::EffectActivated { source, .. } => vec![source],
+            PlayerEvent::EffectActivated { source, .. }
+            | PlayerEvent::NoLegalTargets { source, .. } => vec![source],
             _ => vec![],
         };
         refs.into_iter().filter_map(CardRef::id).collect()
