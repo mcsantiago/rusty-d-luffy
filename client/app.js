@@ -50,9 +50,9 @@ async function art(number) {
 // ---- rendering --------------------------------------------------------------
 
 /** Builds a card element. `card` is a VisibleCard from the engine. */
-function cardEl(card, { small = false } = {}) {
+function cardEl(card, { small = false, large = false } = {}) {
   const el = document.createElement("div");
-  el.className = "card" + (small ? " small" : "");
+  el.className = "card" + (small ? " small" : "") + (large ? " large" : "");
   el.dataset.id = String(card.id);
   if (card.rested) el.classList.add("rested");
   if (highlighted.has(card.id)) el.classList.add("highlight");
@@ -205,21 +205,28 @@ function boardIndex(view) {
   return index;
 }
 
+const cardName = (c) => {
+  if (!c) return "?";
+  const info = c.number ? catalogue.get(c.number) : null;
+  return info ? info.name : (c.number ?? "?");
+};
+
 function renderBattle(view) {
   const bar = $("battle-bar");
+  const modal = $("battle-modal");
+
   if (!view.battle) {
     bar.hidden = true;
+    modal.hidden = true;
     return;
   }
+
   const index = boardIndex(view);
   const attacker = index.get(view.battle.attacker);
   const defender = index.get(view.battle.target);
-  const label = (c) => {
-    if (!c) return "?";
-    const info = c.number ? catalogue.get(c.number) : null;
-    const nm = info ? info.name : (c.number ?? "?");
-    return c.power != null ? `${nm} <b>${c.power}</b>` : nm;
-  };
+  const label = (c) =>
+    c && c.power != null ? `${cardName(c)} <b>${c.power}</b>` : cardName(c);
+
   bar.hidden = false;
   bar.innerHTML = `
     <span class="atk">${label(attacker)}</span>
@@ -227,6 +234,34 @@ function renderBattle(view) {
     <span class="def">${label(defender)}</span>
     <span class="step">${view.battle.step}</span>
   `;
+
+  // The full view. Power shown here is derived, so DON!! and counters are
+  // already folded in — which is the whole point of showing it during the
+  // Counter step.
+  modal.hidden = false;
+  $("battle-step").textContent = `${view.battle.step} step`;
+
+  for (const [slot, card] of [["attacker", attacker], ["defender", defender]]) {
+    const holder = $(`battle-${slot}`);
+    holder.innerHTML = "";
+    if (card) holder.appendChild(cardEl(card, { large: true }));
+    $(`battle-${slot}-name`).textContent = cardName(card);
+    $(`battle-${slot}-power`).textContent =
+      card && card.power != null ? card.power : "—";
+  }
+
+  // 7-1-4-1: the attacker wins ties, so ">=" is the line that matters.
+  const ap = attacker && attacker.power;
+  const dp = defender && defender.power;
+  const verdict = $("battle-verdict");
+  if (typeof ap === "number" && typeof dp === "number") {
+    const wins = ap >= dp;
+    verdict.textContent = wins ? "attacker wins" : "attack repelled";
+    verdict.className = `verdict ${wins ? "bad" : "good"}`;
+  } else {
+    verdict.textContent = "";
+    verdict.className = "verdict";
+  }
 }
 
 function render(snap) {
@@ -263,8 +298,11 @@ function render(snap) {
   $("question").textContent =
     snap.question ?? (snap.thinking ? "Opponent is thinking…" : "Waiting…");
 
-  const options = $("options");
-  options.innerHTML = "";
+  const inBattle = !!view.battle;
+  const options = $(inBattle ? "battle-options" : "options");
+  $("options").innerHTML = "";
+  $("battle-options").innerHTML = "";
+  $("battle-question").textContent = inBattle ? (snap.question ?? "") : "";
   if (snap.thinking) {
     options.innerHTML = `<div class="thinking">Opponent is thinking…</div>`;
   }

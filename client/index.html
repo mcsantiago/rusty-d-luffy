@@ -124,6 +124,32 @@
         </div>
       </aside>
 
+      <div id="battle-modal" class="overlay" hidden>
+        <div class="battle-panel">
+          <div class="battle-step-label" id="battle-step"></div>
+          <div class="battle-cards">
+            <div class="fighter attacker">
+              <div class="role">Attacking</div>
+              <div class="fighter-card" id="battle-attacker"></div>
+              <div class="fighter-name" id="battle-attacker-name"></div>
+              <div class="fighter-power" id="battle-attacker-power"></div>
+            </div>
+            <div class="versus">
+              <span class="vs">VS</span>
+              <span class="verdict" id="battle-verdict"></span>
+            </div>
+            <div class="fighter defender">
+              <div class="role">Defending</div>
+              <div class="fighter-card" id="battle-defender"></div>
+              <div class="fighter-name" id="battle-defender-name"></div>
+              <div class="fighter-power" id="battle-defender-power"></div>
+            </div>
+          </div>
+          <div id="battle-question" class="battle-question"></div>
+          <div id="battle-options"></div>
+        </div>
+      </div>
+
       <div id="result" class="overlay" hidden>
         <div class="panel">
           <h1 id="result-text"></h1>
