@@ -713,7 +713,10 @@ fn action_kind(action: &Action) -> &'static str {
         Action::ActivateEffect { .. } => "effect",
         Action::Block { .. } => "block",
         Action::Counter { .. } | Action::CounterEvent { .. } => "counter",
-        Action::EndMainPhase | Action::DoneCountering => "end",
+        // Separate kinds: ending your turn hands the game over and is worth
+        // flagging, while finishing the Counter step is routine.
+        Action::EndMainPhase => "end-turn",
+        Action::DoneCountering => "done",
         _ => "other",
     }
 }

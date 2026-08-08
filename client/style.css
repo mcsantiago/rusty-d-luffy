@@ -323,7 +323,19 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
 .opt.play { border-left-color: #4a86c4; }
 .opt.don { border-left-color: var(--accent-2); }
 .opt.block, .opt.counter { border-left-color: var(--good); }
-.opt.end { border-left-color: #55708c; color: var(--muted); }
+/* Ending the turn hands the game to the opponent and cannot be taken back. */
+.opt.end-turn {
+  border-left-color: var(--accent);
+  background: rgba(217, 72, 75, 0.14);
+  border-color: rgba(217, 72, 75, 0.5);
+  border-left-width: 3px;
+  color: var(--ink);
+  font-weight: 600;
+}
+.opt.end-turn:hover { background: rgba(217, 72, 75, 0.26); border-color: var(--accent); }
+
+/* Finishing the Counter step is routine, and stays quiet. */
+.opt.done { border-left-color: #55708c; color: var(--muted); }
 
 .thinking { color: var(--muted); font-style: italic; font-size: 13px; padding: 8px 0; }
 
