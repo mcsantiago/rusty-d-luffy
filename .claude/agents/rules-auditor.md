@@ -49,7 +49,7 @@ finding:
 
 ### Mode A — a trace
 
-Input is a session log, `debug/session-*.jsonl`, written by
+Input is a session log, `data/debug/session-*.jsonl`, written by
 `crates/op-core/src/replay.rs`. Read that file first for the schema; in short,
 line 1 is a `header` (seed, both decklists, notes) and every later line is a
 `step` carrying the `action` taken, the `events` it produced, `turn`,
@@ -85,13 +85,62 @@ Read the trace as a referee would watch a game. What goes wrong here:
   not prove correctness, but a run that diverges on replay shows up here first.
 - **Silence.** An `EffectActivated` with no consequent events, or a
   `NoLegalTargets`, is often the symptom this repo cares about most: a card that
-  resolved and did nothing. Cross-check against the card's script.
+  resolved and did nothing. Cross-check against the card's script — **but read
+  the caveat below before filing one.**
+
+#### Not everything the engine does emits an event
+
+Read the `GameEvent` enum in `crates/op-core/src/event.rs` before your first
+finding, and establish which ops are observable at all. Several are not, and
+mistaking unobservable for dead is the easiest way to file a confident, wrong
+finding:
+
+- **There is no `PowerModified` event.** The whole `power_up` family — a large
+  fraction of ST-01/ST-02 scripts — applies a `Modifier` and emits nothing.
+  Silence after an `EffectActivated` is the *normal, correct* output for these.
+- **`detach_don` emits nothing** (`state.rs`), so DON!! returning from a card
+  that leaves the field is invisible, unlike the Refresh Phase return.
+- **The End Phase emits no `PhaseStarted`**, so "End Phase ran and nothing
+  happened" and "End Phase was skipped" look identical in the trace.
+
+When an effect is unobservable, the only proof is downstream arithmetic:
+
+- **Power** — find the next `BattleResolved` and reconcile `attacker_power` /
+  `target_power` against printed power plus DON!! plus counters plus effects.
+  Remember 6-5-5-2: DON!! grants power only on its controller's turn, so the
+  same board is worth different numbers on different turns.
+- **DON!! ledger** — count DON!! placed, given, rested for costs, and returned,
+  then check the total against the `SetActive` list in the next Refresh. This
+  is what proves a ③ cost was actually paid, and it is the strongest tool you
+  have for anything the event stream does not report.
+
+#### Auto-skipped battle steps are not missing steps
+
+The engine skips the Block and Counter steps when no legal action exists, so
+`BattleStepStarted{Block}` followed immediately by `BattleStepStarted{Counter}`
+looks exactly like a dropped step. It usually is not. Clearing it means
+reconstructing both hands from the omniscient log — tracking every card in and
+out across the whole trace — and confirming the player genuinely had nothing.
+This is the most laborious part of a Mode A audit. Budget for it, and do not
+file a missing-step finding without it.
 
 ### Mode B — a card script
 
 Input is a script in `crates/op-cards/src/sets/*.rs`, or a proposed diff. Each
-carries the card's printed text in a comment above it; the same text is in
-`data/cards/*.json` if you need the authoritative version.
+carries the card's printed text in a comment above it. The authoritative text is
+`data/cards/*.json`, one object per card, whose fields are:
+
+```
+id        card number, "ST01-014"     effect    the rules text
+name      "Guard Point"               trigger   [Trigger] text, SEPARATE field
+category  Character | Event | Leader  counter   counter value
+power  cost  types  colors  attributes  rarity  pack_id
+```
+
+**`[Trigger]` text is in `trigger`, not in `effect`.** Guessing `number`/`text`
+gets you a table where every Trigger card silently appears to have none, and the
+first trace that offers a Trigger prompt then looks like an engine bug. Verify a
+card you already know before trusting a table you built.
 
 Check, in this order:
 
@@ -135,6 +184,19 @@ the text you loaded.
 `SUSPECTED` (it looks wrong and here is what would settle it). A confident
 report full of maybes is worse than a short certain one.
 
+**Separate a broken engine from a silent log.** A third marker, `LOG`, is for
+findings where the engine state is correct but the trace cannot show it — an
+unemitted event, a phase that leaves no record. These are worth reporting: this
+tool exists to diagnose the engine from its logs, and a log that cannot
+distinguish "ran and did nothing" from "never ran" will cost the next audit a
+false finding. But they are not rules bugs, and filing them as if they were
+sends someone hunting a defect that is not there.
+
+**Work in absolute paths.** Your shell resets its working directory between
+calls, so a relative path that worked once will silently produce nothing later.
+Treat empty output as suspicious until you have proved it means "no matches"
+rather than "wrong directory".
+
 **Do not repair.** You have no edit tools by design. Report; the caller decides.
 Proposing the fix in prose is welcome, and for a missing validator check it is
 the point.
@@ -154,7 +216,7 @@ Lead with the verdict — clean, or N findings. Then per finding:
 
 ```
 [CONFIRMED] Attacker lost a tied battle — 7-1-4-1
-  Where:  debug/session-1786083424-*.jsonl, step 41
+  Where:  data/debug/session-1786083424-*.jsonl, step 41
   Seen:   BattleResolved{attacker: 12 (ST01-004 Zoro), target: 88 (ST02-005
           Killer), attacker_power: 5000, target_power: 5000,
           attacker_won: false}
