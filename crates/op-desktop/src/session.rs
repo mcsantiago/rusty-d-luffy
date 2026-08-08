@@ -71,6 +71,16 @@ pub struct CardToHand {
     pub how: &'static str,
 }
 
+/// A card that has just gone to a trash pile.
+#[derive(Debug, Clone, Serialize)]
+pub struct CardToTrash {
+    pub number: String,
+    /// Whose trash it landed in, so the UI knows which pile to send it to.
+    pub yours: bool,
+    /// Where it came from: "field", "hand" or "life".
+    pub from: &'static str,
+}
+
 /// Everything the UI needs after a step.
 #[derive(Debug, Clone, Serialize)]
 pub struct Snapshot {
@@ -97,6 +107,12 @@ pub struct Snapshot {
     /// turn is many engine steps and a single snapshot, so anything cleared per
     /// step would be gone before the player ever saw it.
     pub to_hand: Vec<CardToHand>,
+    /// Cards that reached a trash pile since the last decision.
+    ///
+    /// Built from the events that name the card — a K.O., a Counter spent, a
+    /// banished Life card. A card trashed to pay an activation cost is not
+    /// here, because the engine emits no event naming it.
+    pub to_trash: Vec<CardToTrash>,
     /// The Life card whose [Trigger] the human is being asked about.
     ///
     /// Sent only to the player taking the damage, who may see it whichever way
@@ -158,6 +174,7 @@ pub struct Session {
     battle_beats: Vec<BattleBeat>,
     battle_result: Option<String>,
     to_hand: Vec<CardToHand>,
+    to_trash: Vec<CardToTrash>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -269,6 +286,7 @@ impl Session {
             battle_beats: Vec::new(),
             battle_result: None,
             to_hand: Vec::new(),
+            to_trash: Vec::new(),
         };
         if let Some(path) = session.debug_log_path() {
             eprintln!("session log: {}", path.display());
@@ -294,6 +312,7 @@ impl Session {
     /// on a worker thread and let the board show the human's own move first.
     pub fn apply_human(&mut self, index: usize) -> Result<(), String> {
         self.to_hand.clear();
+        self.to_trash.clear();
         let pending = self.game.pending().ok_or("no decision is pending")?;
         if pending.player() != self.human {
             return Err("it is not your decision".into());
@@ -323,6 +342,7 @@ impl Session {
     /// Expensive — a search per decision. Call it off the UI thread.
     pub fn run_ai(&mut self) {
         self.to_hand.clear();
+        self.to_trash.clear();
         for _ in 0..10_000 {
             if self.game.is_over() {
                 return;
@@ -359,6 +379,7 @@ impl Session {
         for event in events {
             let projected = event.project(&self.game.state, self.human);
             self.note_card_to_hand(&projected);
+            self.note_card_to_trash(&projected);
             self.narrate_battle(&projected);
             if let Some(line) = crate::render::line(&projected, &self.game, self.human) {
                 self.log.push(line);
@@ -401,6 +422,38 @@ impl Session {
         }
         let number = def.number.clone();
         self.to_hand.push(CardToHand { number, how });
+    }
+
+    /// A card that has just landed in a trash pile.
+    ///
+    /// Only the events that name a card can be used, which leaves one real
+    /// gap: trashing a card to pay an activation cost — ST02-001's leader and
+    /// several ST-06 cards — emits nothing naming it, so it cannot be shown.
+    fn note_card_to_trash(&mut self, event: &op_core::PlayerEvent) {
+        use op_core::PlayerEvent as E;
+
+        let (card, from) = match event {
+            E::KnockedOut { card } => (*card, "field"),
+            E::Countered { card, .. } => (*card, "hand"),
+            E::LifeTaken {
+                card,
+                banished: true,
+                ..
+            } => (*card, "life"),
+            _ => return,
+        };
+
+        // Trash is an open area (3-5-2), so a card that reached one is public
+        // and the projection will have named it.
+        let Some(id) = card.id() else { return };
+        let instance = self.game.state.card(id);
+        let yours = instance.owner == self.human;
+        let number = self.db.get(instance.def).number.clone();
+        self.to_trash.push(CardToTrash {
+            number,
+            yours,
+            from,
+        });
     }
 
     /// Records what a battle event means for the defender's side of the story.
@@ -600,6 +653,7 @@ impl Session {
             battle_beats: self.battle_beats.clone(),
             battle_result: self.battle_result.clone(),
             to_hand: self.to_hand.clone(),
+            to_trash: self.to_trash.clone(),
             pending_kind,
             trigger_card,
             choose_source,
@@ -867,6 +921,56 @@ mod tests {
             announced > 0,
             "no plain Life card reached a hand in 12 games, so the animation is unreachable"
         );
+    }
+
+    /// Cards reaching a trash pile are announced so the UI can animate them.
+    ///
+    /// The gap this documents is as important as the coverage: trashing a card
+    /// to pay an activation cost emits no event naming it, so it cannot appear
+    /// here. Everything that *is* announced comes from an event that names the
+    /// card, and lands in the pile belonging to its owner.
+    #[test]
+    fn cards_reaching_a_trash_are_announced_with_where_they_came_from() {
+        let mut announced = 0;
+
+        for seed in 0..12u64 {
+            let Some(mut session) = seeded(seed) else {
+                return;
+            };
+
+            for _ in 0..5_000 {
+                let snap = session.snapshot();
+                if snap.over.is_some() {
+                    break;
+                }
+                for entry in &snap.to_trash {
+                    assert!(
+                        matches!(entry.from, "field" | "hand" | "life"),
+                        "seed {seed}: unknown origin {:?}",
+                        entry.from
+                    );
+                    assert!(
+                        session.db.by_number(&entry.number).is_some(),
+                        "seed {seed}: {} is not in the database",
+                        entry.number
+                    );
+                    announced += 1;
+                }
+
+                let next = snap
+                    .options
+                    .iter()
+                    .position(|o| o.kind == "attack")
+                    .or_else(|| snap.options.iter().position(|o| o.kind == "play"))
+                    .unwrap_or(0);
+                session
+                    .apply_human(next)
+                    .expect("offered option must be legal");
+                session.run_ai();
+            }
+        }
+
+        assert!(announced > 0, "nothing reached a trash in 12 games");
     }
 
     /// A Choose only ever arises from an effect resolving, so the card doing

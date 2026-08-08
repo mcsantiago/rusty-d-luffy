@@ -820,25 +820,58 @@ const FLY_TRAVEL = 700;
 const FLY_CAPTION = {
   life: "taken as damage — to your hand",
   draw: "drawn",
+  trash: "to the trash",
 };
 
 let flySeenFor = null;
+let flyQueue = [];
+let flyPump = null;
 
-/** One card per arrival since your last decision. An AI turn is a single
- *  snapshot, so several can land at once; they are staggered and stepped down
- *  the screen rather than stacked on the same spot. */
-function flyCardsToHand(snap) {
+/** Whether a modal is up. Animations wait for one: a card flying behind an
+ *  overlay is invisible, and one flying over a question the player is being
+ *  asked is worse than invisible. */
+const modalOpen = () => !!document.querySelector(".overlay:not([hidden])");
+
+/** Queues everything that arrived since the last decision. An AI turn is a
+ *  single snapshot, so several can land at once; the pump plays them one at a
+ *  time rather than stacking them on the same spot. */
+function flyCards(snap) {
   // Guarded by snapshot identity: one snapshot can be rendered more than once
   // and the cards must not fly twice.
-  if (!snap.to_hand.length || snap === flySeenFor) return;
+  if (snap === flySeenFor) return;
   flySeenFor = snap;
 
-  snap.to_hand.forEach((entry, i) => {
-    setTimeout(() => flyOne(entry, i), i * 450);
-  });
+  for (const entry of snap.to_hand) {
+    flyQueue.push({ ...entry, to: "hand" });
+  }
+  for (const entry of snap.to_trash) {
+    flyQueue.push({
+      ...entry,
+      how: "trash",
+      to: entry.yours ? "you-trash" : "opp-trash",
+    });
+  }
+  pumpFly();
 }
 
-async function flyOne(entry, offset = 0) {
+function pumpFly() {
+  if (flyPump) return;
+  const step = () => {
+    if (!flyQueue.length) {
+      flyPump = null;
+      return;
+    }
+    if (modalOpen()) {
+      flyPump = setTimeout(step, 250);
+      return;
+    }
+    flyOne(flyQueue.shift());
+    flyPump = setTimeout(step, 450);
+  };
+  flyPump = setTimeout(step, 0);
+}
+
+async function flyOne(entry) {
   const number = entry.number;
   const info = catalogue.get(number);
   const uri = await art(number);
@@ -850,13 +883,13 @@ async function flyOne(entry, offset = 0) {
     <div class="life-fly-name">${info ? info.name : number}</div>
     <div class="life-fly-note">${FLY_CAPTION[entry.how] ?? ""}</div>
   `;
-  el.style.marginTop = `${offset * 26}px`;
   document.body.appendChild(el);
 
-  // Measured now rather than declared in CSS: the hand moves as it fills.
-  const hand = $("hand").getBoundingClientRect();
-  const dx = hand.left + hand.width / 2 - window.innerWidth / 2;
-  const dy = hand.top - window.innerHeight / 2;
+  // Measured now rather than declared in CSS: the hand moves as it fills, and
+  // the trash piles sit at different ends of the board.
+  const target = ($(entry.to) ?? $("hand")).getBoundingClientRect();
+  const dx = target.left + target.width / 2 - window.innerWidth / 2;
+  const dy = target.top + target.height / 2 - window.innerHeight / 2;
 
   requestAnimationFrame(() => el.classList.add("shown"));
   setTimeout(() => {
@@ -1080,7 +1113,7 @@ function render(snap) {
   if (view.battle) renderBeats(snap);
   renderCounterTray(snap);
   renderTriggerTray(snap);
-  flyCardsToHand(snap);
+  flyCards(snap);
   announceTurn(snap);
   announceResult(snap.battle_result ?? null);
   renderChoose(snap);
