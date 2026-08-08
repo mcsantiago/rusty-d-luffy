@@ -94,48 +94,88 @@ fn load() -> Option<(Arc<CardDb>, Scripts)> {
     Some((Arc::new(db), cards))
 }
 
+/// One match. Returns `Some(true)` if the challenger won, `Some(false)` if the
+/// baseline did, `None` for a draw or a game that hit the action cap.
+fn play_match(
+    seed: u64,
+    db: &Arc<CardDb>,
+    cards: &Scripts,
+    challenger: &impl Fn(u64) -> Box<dyn Agent>,
+    baseline: &impl Fn(u64) -> Box<dyn Agent>,
+) -> Option<bool> {
+    // Alternate seats: on odd seeds the challenger goes second.
+    let challenger_seat = if seed % 2 == 0 {
+        PlayerId::P0
+    } else {
+        PlayerId::P1
+    };
+
+    let config = GameConfig {
+        seed,
+        first_player: PlayerId::P0,
+        decks: [st01(), st02()],
+        allow_illegal_decks: false,
+    };
+    let (mut game, _) = Game::new(config, Arc::clone(db), Arc::clone(cards)).expect("legal decks");
+
+    let mut a = challenger(seed);
+    let mut b = baseline(seed);
+    let result = if challenger_seat == PlayerId::P0 {
+        play_out(&mut game, a.as_mut(), b.as_mut(), 20_000)
+    } else {
+        play_out(&mut game, b.as_mut(), a.as_mut(), 20_000)
+    };
+
+    result
+        .and_then(|r| r.winner())
+        .map(|w| w == challenger_seat)
+}
+
 /// Runs `games` matches, alternating who goes first so seat advantage cancels.
 /// Returns wins for the agent built by `challenger`.
+///
+/// A match depends on nothing but its seed, so they fan out across cores and
+/// the totals come out the same as running them in order. ISMCTS is slow enough
+/// that doing this serially dominates the whole test suite.
 fn match_up(
     games: u32,
-    mut challenger: impl FnMut(u64) -> Box<dyn Agent>,
-    mut baseline: impl FnMut(u64) -> Box<dyn Agent>,
+    challenger: impl Fn(u64) -> Box<dyn Agent> + Sync,
+    baseline: impl Fn(u64) -> Box<dyn Agent> + Sync,
 ) -> Option<(u32, u32)> {
     let (db, cards) = load()?;
-    let (mut wins, mut losses) = (0, 0);
 
-    for seed in 0..games as u64 {
-        // Alternate seats: on odd seeds the challenger goes second.
-        let challenger_seat = if seed % 2 == 0 {
-            PlayerId::P0
-        } else {
-            PlayerId::P1
-        };
+    let threads = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+        .clamp(1, games.max(1) as usize);
 
-        let config = GameConfig {
-            seed,
-            first_player: PlayerId::P0,
-            decks: [st01(), st02()],
-            allow_illegal_decks: false,
-        };
-        let (mut game, _) =
-            Game::new(config, Arc::clone(&db), Arc::clone(&cards)).expect("legal decks");
+    let (db, cards, challenger, baseline) = (&db, &cards, &challenger, &baseline);
+    let tallies: Vec<(u32, u32)> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..threads)
+            .map(|t| {
+                // Stride rather than chunk, so the two seat assignments stay
+                // spread evenly if the threads finish at different rates.
+                scope.spawn(move || {
+                    let (mut wins, mut losses) = (0, 0);
+                    for seed in (t as u64..games as u64).step_by(threads) {
+                        match play_match(seed, db, cards, challenger, baseline) {
+                            Some(true) => wins += 1,
+                            Some(false) => losses += 1,
+                            None => {}
+                        }
+                    }
+                    (wins, losses)
+                })
+            })
+            .collect();
+        handles.into_iter().map(|h| h.join().unwrap()).collect()
+    });
 
-        let mut a = challenger(seed);
-        let mut b = baseline(seed);
-        let result = if challenger_seat == PlayerId::P0 {
-            play_out(&mut game, a.as_mut(), b.as_mut(), 20_000)
-        } else {
-            play_out(&mut game, b.as_mut(), a.as_mut(), 20_000)
-        };
-
-        match result.and_then(|r| r.winner()) {
-            Some(w) if w == challenger_seat => wins += 1,
-            Some(_) => losses += 1,
-            None => {}
-        }
-    }
-    Some((wins, losses))
+    Some(
+        tallies
+            .into_iter()
+            .fold((0, 0), |(w, l), (dw, dl)| (w + dw, l + dl)),
+    )
 }
 
 #[test]
@@ -183,42 +223,60 @@ fn ismcts_beats_the_heuristic_it_rolls_out_with() {
     );
 }
 
+/// Plays search against the heuristic, panicking on the first action either
+/// agent offers that the rules reject.
+fn every_action_is_legal(seed: u64, db: &Arc<CardDb>, cards: &Scripts) {
+    let config = GameConfig {
+        seed,
+        first_player: PlayerId::P0,
+        decks: [st01(), st02()],
+        allow_illegal_decks: false,
+    };
+    let (mut game, _) = Game::new(config, Arc::clone(db), Arc::clone(cards)).expect("legal decks");
+
+    let mut p0 = IsmctsAgent::new(IsmctsConfig {
+        iterations: 40,
+        rollout_depth: 25,
+        seed,
+        ..Default::default()
+    });
+    let mut p1 = HeuristicAgent::new(StdRng::seed_from_u64(seed));
+
+    let mut actions = 0;
+    while !game.is_over() {
+        let Some(pending) = game.pending() else { break };
+        let actor = pending.player();
+        let action = if actor == PlayerId::P0 {
+            p0.choose(&game, actor)
+        } else {
+            p1.choose(&game, actor)
+        };
+        // The seed is in the message because the seeds no longer run in order.
+        game.step(action.clone())
+            .unwrap_or_else(|e| panic!("seed {seed}: illegal action {action:?}: {e}"));
+        actions += 1;
+        assert!(actions < 20_000, "seed {seed}: game did not terminate");
+    }
+}
+
 #[test]
 fn agents_never_produce_an_illegal_action() {
     let Some((db, cards)) = load() else { return };
-    for seed in 0..6u64 {
-        let config = GameConfig {
-            seed,
-            first_player: PlayerId::P0,
-            decks: [st01(), st02()],
-            allow_illegal_decks: false,
-        };
-        let (mut game, _) =
-            Game::new(config, Arc::clone(&db), Arc::clone(&cards)).expect("legal decks");
+    let (db, cards) = (&db, &cards);
 
-        let mut p0 = IsmctsAgent::new(IsmctsConfig {
-            iterations: 40,
-            rollout_depth: 25,
-            seed,
-            ..Default::default()
-        });
-        let mut p1 = HeuristicAgent::new(StdRng::seed_from_u64(seed));
-
-        let mut actions = 0;
-        while !game.is_over() {
-            let Some(pending) = game.pending() else { break };
-            let actor = pending.player();
-            let action = if actor == PlayerId::P0 {
-                p0.choose(&game, actor)
-            } else {
-                p1.choose(&game, actor)
-            };
-            game.step(action.clone())
-                .unwrap_or_else(|e| panic!("agent produced illegal action {action:?}: {e}"));
-            actions += 1;
-            assert!(actions < 20_000, "game did not terminate");
+    // A thread per seed: they are independent and there are only a handful.
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..6u64)
+            .map(|seed| scope.spawn(move || every_action_is_legal(seed, db, cards)))
+            .collect();
+        for handle in handles {
+            // Re-raise rather than unwrap, so a failing assertion reports its
+            // own message instead of `Any { .. }`.
+            if let Err(payload) = handle.join() {
+                std::panic::resume_unwind(payload);
+            }
         }
-    }
+    });
 }
 
 #[test]

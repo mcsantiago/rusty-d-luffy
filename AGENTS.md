@@ -7,8 +7,8 @@ are easy to break without the tests noticing.
 ## Commands
 
 ```bash
-cargo test --workspace --release   # release: the ISMCTS matches are ~200s
-                                   # optimised and far worse in debug
+cargo test --workspace --release   # release: the ISMCTS matches are ~60s even
+                                   # fanned out across cores, and far worse in debug
 cargo fmt --all
 cargo clippy --workspace --all-targets   # CI runs this with -D warnings
 
