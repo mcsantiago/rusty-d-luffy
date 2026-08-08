@@ -554,6 +554,32 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
    The engine offers a Choose as one action per subset. Shown as cards rather
    than as a list of combinations, which is unreadable past two candidates. */
 
+/* The card doing the asking. "Choose up to 1" says nothing about why, and by
+   the time the prompt appears several cards on the board could have caused it. */
+#choose-source {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  margin: 0 0 16px;
+  padding: 12px;
+  border-radius: 10px;
+  background: rgba(74, 134, 196, 0.08);
+  border: 1px solid rgba(74, 134, 196, 0.35);
+}
+.source-art { flex: 0 0 auto; width: 76px; }
+.source-art img { width: 100%; border-radius: 6px; display: block; }
+.source-text { flex: 1; min-width: 0; }
+.source-who { font-weight: 700; font-size: 13px; margin-bottom: 4px; }
+
+.choose-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
 .choose-grid {
   display: flex;
   flex-wrap: wrap;

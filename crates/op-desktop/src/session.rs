@@ -94,6 +94,12 @@ pub struct Snapshot {
     /// card with no actions means "cannot act" in the Main Phase and nothing
     /// at all during a mulligan, where no card has actions by definition.
     pub pending_kind: Option<&'static str>,
+    /// The card whose effect is asking, while a `Choose` is pending.
+    ///
+    /// Public information: an effect resolves from a card that was played or
+    /// activated in the open, or from a [Trigger] revealed by activating it
+    /// (10-1-5-1).
+    pub choose_source: Option<String>,
     /// The human owes a `Choose`, of at most this many cards.
     ///
     /// Carries no card ids of its own: the engine offers a `Choose` as one
@@ -523,6 +529,15 @@ impl Session {
                 _ => None,
             });
 
+        // The frame on top of the stack is the one that suspended for this
+        // choice, so its source is the card doing the asking.
+        let choose_source = choose_up_to.and(self.game.state.stack.top()).map(|frame| {
+            self.db
+                .get(self.game.state.card(frame.source).def)
+                .number
+                .clone()
+        });
+
         Snapshot {
             view,
             log: self.log.clone(),
@@ -534,6 +549,7 @@ impl Session {
             battle_result: self.battle_result.clone(),
             pending_kind,
             trigger_card,
+            choose_source,
             choose_up_to,
             thinking: self.ai_to_act(),
             session_id: self.session_id.clone(),
@@ -737,6 +753,52 @@ mod tests {
             session.run_ai();
             session
         })
+    }
+
+    /// A Choose only ever arises from an effect resolving, so the card doing
+    /// the asking is always available — and the modal's header depends on it.
+    /// If the two ever came apart, the prompt would silently lose the one thing
+    /// that says why it is being asked.
+    #[test]
+    fn a_pending_choice_always_names_the_card_asking_it() {
+        let mut chosen = 0;
+
+        for seed in 0..12u64 {
+            let Some(mut session) = seeded(seed) else {
+                return;
+            };
+
+            for _ in 0..5_000 {
+                let snap = session.snapshot();
+                if snap.over.is_some() {
+                    break;
+                }
+                assert_eq!(
+                    snap.choose_up_to.is_some(),
+                    snap.choose_source.is_some(),
+                    "seed {seed}: a choice and its source must appear together"
+                );
+                if snap.choose_up_to.is_some() {
+                    chosen += 1;
+                }
+
+                // Taking option 0 everywhere ends the turn immediately and no
+                // effect ever resolves, which made an earlier version of this
+                // test pass without once meeting the thing it is about.
+                let next = snap
+                    .options
+                    .iter()
+                    .position(|o| o.kind == "effect")
+                    .or_else(|| snap.options.iter().position(|o| o.kind == "play"))
+                    .unwrap_or(0);
+                session
+                    .apply_human(next)
+                    .expect("offered option must be legal");
+                session.run_ai();
+            }
+        }
+
+        assert!(chosen > 0, "no choice arose in 12 games");
     }
 
     /// The Life card behind a [Trigger] is named only while its own player is

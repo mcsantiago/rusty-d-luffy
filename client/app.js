@@ -526,6 +526,30 @@ let picked = [];
 const sameSet = (a, b) =>
   a.length === b.length && [...a].sort().every((v, i) => v === [...b].sort()[i]);
 
+/** The card whose effect is asking, with its text.
+ *
+ * "Choose up to 1" says nothing about why, and by the time the prompt appears
+ * the source may be one of several cards that could have produced it. */
+async function renderChooseSource(number) {
+  const box = $("choose-source");
+  if (!number) {
+    box.hidden = true;
+    return;
+  }
+
+  const info = catalogue.get(number);
+  const uri = await art(number);
+  box.innerHTML = `
+    <div class="source-art">${uri ? `<img src="${uri}" alt="${number}" />` : number}</div>
+    <div class="source-text">
+      <div class="source-who">${info ? info.name : number} is asking</div>
+      ${info && info.effect ? `<div class="peffect">${info.effect.replaceAll("<br>", "<br/>")}</div>` : ""}
+      ${info && info.trigger ? `<div class="ptrigger">${info.trigger}</div>` : ""}
+    </div>
+  `;
+  box.hidden = false;
+}
+
 function renderChoose(snap) {
   const modal = $("choose-modal");
   if (snap.choose_up_to == null) {
@@ -546,6 +570,7 @@ function renderChoose(snap) {
 
   const index = cardIndex(snap.view);
   $("choose-title").textContent = snap.question ?? "Choose";
+  renderChooseSource(snap.choose_source);
   $("choose-sub").textContent =
     upTo === 1
       ? "Pick a card."
