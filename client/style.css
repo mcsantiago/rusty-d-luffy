@@ -405,6 +405,34 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
 .card.inert:hover { opacity: 1; }
 .card.selected { outline-color: var(--accent-2); }
 
+/* ---- the result of a battle ----
+
+   Its own overlay rather than a line in the modal: the engine clears the
+   battle the instant it resolves, so the modal is already gone. Non-interactive
+   and short-lived — it reports, it does not ask. */
+
+#battle-result {
+  position: fixed;
+  top: 84px;
+  left: 50%;
+  transform: translateX(-50%) translateY(-8px);
+  padding: 12px 26px;
+  border-radius: 12px;
+  background: rgba(8, 12, 18, 0.92);
+  border: 1px solid var(--line);
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.6);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  z-index: 60;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.18s, transform 0.18s;
+}
+#battle-result.shown { opacity: 1; transform: translateX(-50%) translateY(0); }
+#battle-result.landed { border-color: var(--accent); }
+#battle-result.repelled { border-color: var(--good); }
+
 /* ---- battle narration ----
 
    The board shows the result of a block or a Counter but never who did it or

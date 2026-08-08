@@ -76,6 +76,12 @@ pub struct Snapshot {
     /// What has happened so far in the battle being resolved, oldest first.
     /// Empty when no battle is running.
     pub battle_beats: Vec<BattleBeat>,
+    /// How the last battle ended, named for the cards that fought it.
+    ///
+    /// Outlives the battle deliberately: the engine clears `battle` the moment
+    /// it resolves, so anything shown only while one is running is gone before
+    /// it can be read. Cleared by the next attack.
+    pub battle_result: Option<String>,
     /// Which decision the human owes, as a stable tag.
     ///
     /// The UI cannot tell them apart from the options alone, and needs to: a
@@ -123,6 +129,7 @@ pub struct Session {
     debug: Option<op_core::SessionLog>,
     /// Narration for the battle in progress, reset by each attack.
     battle_beats: Vec<BattleBeat>,
+    battle_result: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -232,6 +239,7 @@ impl Session {
             session_id: format!("{:08x}", seed as u32),
             debug,
             battle_beats: Vec::new(),
+            battle_result: None,
         };
         if let Some(path) = session.debug_log_path() {
             eprintln!("session log: {}", path.display());
@@ -360,6 +368,7 @@ impl Session {
                     "attack",
                 );
                 self.battle_beats.clear();
+                self.battle_result = None;
                 b
             }
             E::Blocked { blocker, .. } => beat(
@@ -384,22 +393,37 @@ impl Session {
             ),
             E::KnockedOut { card } => beat(format!("{} is K.O.'d", name(*card)), *card, "result"),
             E::BattleResolved {
+                attacker,
+                target,
                 attacker_power,
                 target_power,
                 attacker_won,
-                ..
-            } => BattleBeat {
-                text: format!(
-                    "{attacker_power} against {target_power} — {}",
-                    if *attacker_won {
-                        "the attack lands"
-                    } else {
-                        "the attack is repelled"
-                    }
-                ),
-                card: None,
-                kind: "result",
-            },
+            } => {
+                // Named from the event rather than from the board: a successful
+                // [Blocker] replaced the target (10-1-4-1), and the card that
+                // actually fought is the one worth naming.
+                self.battle_result = Some(if *attacker_won {
+                    format!("{} attacks {} successfully", name(*attacker), name(*target))
+                } else {
+                    format!(
+                        "{} repelled {} successfully",
+                        name(*target),
+                        name(*attacker)
+                    )
+                });
+                BattleBeat {
+                    text: format!(
+                        "{attacker_power} against {target_power} — {}",
+                        if *attacker_won {
+                            "the attack lands"
+                        } else {
+                            "the attack is repelled"
+                        }
+                    ),
+                    card: None,
+                    kind: "result",
+                }
+            }
             // Nobody blocked, or nobody countered. Silence is the whole signal
             // here, so it is stated rather than left to be inferred.
             E::BattleStepStarted { step } => {
@@ -492,6 +516,7 @@ impl Session {
             over,
             turn_label,
             battle_beats: self.battle_beats.clone(),
+            battle_result: self.battle_result.clone(),
             pending_kind,
             choose_up_to,
             thinking: self.ai_to_act(),

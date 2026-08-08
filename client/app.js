@@ -66,10 +66,13 @@ async function art(number) {
  *
  * `plain` drops the menu. Used inside overlays, which are painted above it,
  * and for the trash pile, whose own click opens the pile.
+ *
+ * `preview` drops the hover panel too. The battle modal shows the cards it is
+ * about at full size already, so a second copy of one in the corner is noise.
  */
 function cardEl(
   card,
-  { small = false, large = false, yours = false, plain = false } = {},
+  { small = false, large = false, yours = false, plain = false, preview = true } = {},
 ) {
   const el = document.createElement("div");
   el.className = "card" + (small ? " small" : "") + (large ? " large" : "");
@@ -111,9 +114,12 @@ function cardEl(
   });
 
   if (plain) {
-    // No menu here, so the old hover panel is still how these are read.
-    el.addEventListener("mouseenter", () => showPreview(card.number));
-    el.addEventListener("mouseleave", hidePreview);
+    // No menu here, so the old hover panel is still how these are read —
+    // except where the surrounding overlay is already showing the card.
+    if (preview) {
+      el.addEventListener("mouseenter", () => showPreview(card.number));
+      el.addEventListener("mouseleave", hidePreview);
+    }
     return el;
   }
 
@@ -667,7 +673,7 @@ function renderBattle(view) {
   for (const [slot, card] of [["attacker", attacker], ["defender", defender]]) {
     const holder = $(`battle-${slot}`);
     holder.innerHTML = "";
-    if (card) holder.appendChild(cardEl(card, { large: true, plain: true }));
+    if (card) holder.appendChild(cardEl(card, { large: true, plain: true, preview: false }));
     $(`battle-${slot}-name`).textContent = cardName(card);
     $(`battle-${slot}-power`).textContent =
       card && card.power != null ? card.power : "—";
@@ -703,6 +709,48 @@ function renderBattle(view) {
 /** Beats from the snapshot currently being drawn. */
 let beatsNow = [];
 
+// ---- the result of a battle -------------------------------------------------
+//
+// Announced in its own overlay, not in the modal: the engine clears the battle
+// as soon as it resolves, so the modal has already closed by the time there is
+// a result to report.
+
+const RESULT_HOLD = 2000;
+let resultShown = null;
+let resultTimer = null;
+
+/** Announces how a battle ended, then fades. `text` is null between battles. */
+function announceResult(text) {
+  const box = $("battle-result");
+
+  // The result stays in the snapshot until the next attack, so re-renders in
+  // between must not restart the timer or it would never go away.
+  if (text === resultShown) return;
+  resultShown = text;
+  clearTimeout(resultTimer);
+
+  if (!text) {
+    box.hidden = true;
+    box.classList.remove("shown");
+    return;
+  }
+
+  box.textContent = text;
+  box.className = text.includes("repelled") ? "repelled" : "landed";
+  box.hidden = false;
+  // Next frame, so the transition has an initial state to move from.
+  requestAnimationFrame(() => box.classList.add("shown"));
+
+  resultTimer = setTimeout(() => {
+    box.classList.remove("shown");
+    // Hidden only once the fade has finished, so it cannot be tabbed to or
+    // caught mid-transition by the next render.
+    resultTimer = setTimeout(() => {
+      box.hidden = true;
+    }, 200);
+  }, RESULT_HOLD);
+}
+
 /** What the defender has done so far, as narration with the cards involved.
  *
  * The board shows the *result* of a block or a Counter — the target changes,
@@ -719,7 +767,7 @@ function renderBeats(snap) {
 
     const card = b.card == null ? null : index.get(b.card);
     if (card) {
-      row.appendChild(cardEl(card, { small: true, plain: true }));
+      row.appendChild(cardEl(card, { small: true, plain: true, preview: false }));
     } else {
       row.appendChild(
         Object.assign(document.createElement("div"), { className: "beat-nocard" }),
@@ -796,6 +844,7 @@ function render(snap) {
 
   renderBattle(view);
   if (view.battle) renderBeats(snap);
+  announceResult(snap.battle_result ?? null);
   renderChoose(snap);
 
   $("question").textContent =
