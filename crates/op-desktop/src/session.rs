@@ -51,6 +51,18 @@ pub struct Choice {
     pub kind: &'static str,
 }
 
+/// One thing that has happened in the battle now being resolved.
+///
+/// Carries the card responsible rather than only naming it, so the UI can show
+/// the blocker or the Counter that was actually used. `card` is `None` when the
+/// viewer may not identify it, on the same terms as any other projected event.
+#[derive(Debug, Clone, Serialize)]
+pub struct BattleBeat {
+    pub text: String,
+    pub card: Option<u32>,
+    pub kind: &'static str,
+}
+
 /// Everything the UI needs after a step.
 #[derive(Debug, Clone, Serialize)]
 pub struct Snapshot {
@@ -61,6 +73,9 @@ pub struct Snapshot {
     pub over: Option<String>,
     /// Whose turn it is, as a label.
     pub turn_label: String,
+    /// What has happened so far in the battle being resolved, oldest first.
+    /// Empty when no battle is running.
+    pub battle_beats: Vec<BattleBeat>,
     /// Which decision the human owes, as a stable tag.
     ///
     /// The UI cannot tell them apart from the options alone, and needs to: a
@@ -106,6 +121,8 @@ pub struct Session {
     /// Omniscient debug log for this session. Never shown to the player — it
     /// records `GameEvent`, so it contains both hands.
     debug: Option<op_core::SessionLog>,
+    /// Narration for the battle in progress, reset by each attack.
+    battle_beats: Vec<BattleBeat>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -214,6 +231,7 @@ impl Session {
             // appears verbatim in the log filename.
             session_id: format!("{:08x}", seed as u32),
             debug,
+            battle_beats: Vec::new(),
         };
         if let Some(path) = session.debug_log_path() {
             eprintln!("session log: {}", path.display());
@@ -301,6 +319,7 @@ impl Session {
     fn absorb(&mut self, events: &[op_core::GameEvent]) {
         for event in events {
             let projected = event.project(&self.game.state, self.human);
+            self.narrate_battle(&projected);
             if let Some(line) = crate::render::line(&projected, &self.game, self.human) {
                 self.log.push(line);
             }
@@ -310,6 +329,102 @@ impl Session {
             let excess = self.log.len() - 400;
             self.log.drain(..excess);
         }
+    }
+
+    /// Records what a battle event means for the defender's side of the story.
+    ///
+    /// Built from `BattleStepStarted` as well as the actions themselves,
+    /// because declining is silent: passing on a block emits no event at all,
+    /// and only the arrival of the next step distinguishes "chose not to" from
+    /// "still deciding".
+    fn narrate_battle(&mut self, event: &op_core::PlayerEvent) {
+        use op_core::PlayerEvent as E;
+
+        let db = &self.db;
+        let state = &self.game.state;
+        let name = |card: op_core::CardRef| match card.id() {
+            Some(id) => db.get(state.card(id).def).name.clone(),
+            None => "a card".to_string(),
+        };
+        let beat = |text: String, card: op_core::CardRef, kind| BattleBeat {
+            text,
+            card: card.id().map(|c| c.0),
+            kind,
+        };
+
+        let next = match event {
+            E::AttackDeclared { attacker, target } => {
+                let b = beat(
+                    format!("{} attacks {}", name(*attacker), name(*target)),
+                    *attacker,
+                    "attack",
+                );
+                self.battle_beats.clear();
+                b
+            }
+            E::Blocked { blocker, .. } => beat(
+                format!("{} blocks, and becomes the target", name(*blocker)),
+                *blocker,
+                "block",
+            ),
+            E::Countered {
+                card,
+                target,
+                amount,
+                ..
+            } => beat(
+                format!("{} counters with {}: +{amount}", name(*target), name(*card)),
+                *card,
+                "counter",
+            ),
+            E::TriggerActivated { card, .. } => beat(
+                format!("{} activates its [Trigger]", name(*card)),
+                *card,
+                "trigger",
+            ),
+            E::KnockedOut { card } => beat(format!("{} is K.O.'d", name(*card)), *card, "result"),
+            E::BattleResolved {
+                attacker_power,
+                target_power,
+                attacker_won,
+                ..
+            } => BattleBeat {
+                text: format!(
+                    "{attacker_power} against {target_power} — {}",
+                    if *attacker_won {
+                        "the attack lands"
+                    } else {
+                        "the attack is repelled"
+                    }
+                ),
+                card: None,
+                kind: "result",
+            },
+            // Nobody blocked, or nobody countered. Silence is the whole signal
+            // here, so it is stated rather than left to be inferred.
+            E::BattleStepStarted { step } => {
+                let missing = match step {
+                    op_core::BattleStep::Counter => ("block", "No blocker"),
+                    op_core::BattleStep::Damage => ("counter", "No Counter played"),
+                    _ => return,
+                };
+                // Outside a battle there is nothing to narrate, and a step
+                // whose action did happen needs no note that it did not.
+                if self.battle_beats.is_empty()
+                    || self.battle_beats.iter().any(|b| b.kind == missing.0)
+                {
+                    return;
+                }
+                BattleBeat {
+                    text: missing.1.to_string(),
+                    card: None,
+                    kind: "declined",
+                }
+            }
+            _ => return,
+        };
+
+        self.battle_beats.push(next);
     }
 
     pub fn snapshot(&self) -> Snapshot {
@@ -376,6 +491,7 @@ impl Session {
             question,
             over,
             turn_label,
+            battle_beats: self.battle_beats.clone(),
             pending_kind,
             choose_up_to,
             thinking: self.ai_to_act(),
@@ -555,6 +671,59 @@ mod tests {
             session.run_ai();
         }
         panic!("game did not finish");
+    }
+
+    /// The battle narration is the only place the UI says what the defender
+    /// did, and two of its beats are inferred from silence rather than
+    /// observed: declining to block and declining to counter emit no event, so
+    /// they are read off the arrival of the next step. That inference is what
+    /// this checks, over every battle a whole game happens to contain.
+    #[test]
+    fn battle_narration_never_claims_a_defence_that_did_not_happen() {
+        let Some(mut session) = fixture() else { return };
+
+        let mut battles = 0;
+        for _ in 0..5_000 {
+            let snap = session.snapshot();
+            if snap.over.is_some() {
+                break;
+            }
+
+            let beats = &snap.battle_beats;
+            if !beats.is_empty() {
+                battles += 1;
+                assert_eq!(
+                    beats[0].kind, "attack",
+                    "narration must open with the attack that started it: {beats:?}"
+                );
+                assert_eq!(
+                    beats.iter().filter(|b| b.kind == "attack").count(),
+                    1,
+                    "a second attack must have reset the narration: {beats:?}"
+                );
+
+                // "No blocker" and a block are contradictory, as are "No
+                // Counter played" and a counter. Only one of each pair can be
+                // in a single battle's story.
+                let has = |kind: &str| beats.iter().any(|b| b.kind == kind);
+                assert!(
+                    !(has("declined") && has("block") && has("counter")),
+                    "a declined beat sits alongside the defence it denies: {beats:?}"
+                );
+                assert!(
+                    beats
+                        .iter()
+                        .all(|b| b.kind != "declined" || b.card.is_none()),
+                    "nothing happened, so no card can be shown for it: {beats:?}"
+                );
+            }
+
+            session.apply_human(0).expect("first option must be legal");
+            session.run_ai();
+        }
+
+        // Otherwise the loop above asserted nothing at all.
+        assert!(battles > 0, "no battle was narrated in a whole game");
     }
 
     /// The UI is handed a view, never state — so nothing it renders can name a

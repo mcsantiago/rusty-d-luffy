@@ -674,17 +674,66 @@ function renderBattle(view) {
   }
 
   // 7-1-4-1: the attacker wins ties, so ">=" is the line that matters.
+  //
+  // Stated as a projection until the engine has actually resolved the battle.
+  // The comparison is the reason to show this at all — it is what tells you
+  // whether a Counter is worth spending — but before the Damage Step it is a
+  // forecast of an unfinished battle, and calling it "attacker wins" while the
+  // defender still holds decisions asserts an outcome nobody has reached.
   const ap = attacker && attacker.power;
   const dp = defender && defender.power;
+  const resolved = beatsNow.some((b) => b.kind === "result");
   const verdict = $("battle-verdict");
   if (typeof ap === "number" && typeof dp === "number") {
     const wins = ap >= dp;
-    verdict.textContent = wins ? "attacker wins" : "attack repelled";
-    verdict.className = `verdict ${wins ? "bad" : "good"}`;
+    verdict.textContent = resolved
+      ? wins
+        ? "the attack lands"
+        : "the attack is repelled"
+      : wins
+        ? "as it stands, the attack lands"
+        : "as it stands, it is repelled";
+    verdict.className = `verdict ${wins ? "bad" : "good"}${resolved ? "" : " projected"}`;
   } else {
     verdict.textContent = "";
     verdict.className = "verdict";
   }
+}
+
+/** Beats from the snapshot currently being drawn. */
+let beatsNow = [];
+
+/** What the defender has done so far, as narration with the cards involved.
+ *
+ * The board shows the *result* of a block or a Counter — the target changes,
+ * the power goes up — but never says who did it or with what, and by the time
+ * the modal closes the cards are back in the trash. */
+function renderBeats(snap) {
+  const box = $("battle-beats");
+  box.innerHTML = "";
+  const index = cardIndex(snap.view);
+
+  for (const b of snap.battle_beats) {
+    const row = document.createElement("div");
+    row.className = `beat ${b.kind}`;
+
+    const card = b.card == null ? null : index.get(b.card);
+    if (card) {
+      row.appendChild(cardEl(card, { small: true, plain: true }));
+    } else {
+      row.appendChild(
+        Object.assign(document.createElement("div"), { className: "beat-nocard" }),
+      );
+    }
+    row.appendChild(
+      Object.assign(document.createElement("div"), {
+        className: "beat-text",
+        textContent: b.text,
+      }),
+    );
+    box.appendChild(row);
+  }
+  box.scrollTop = box.scrollHeight;
 }
 
 function render(snap) {
@@ -701,6 +750,7 @@ function render(snap) {
   // is the only one where having none means a card cannot act. During a
   // mulligan no card has actions and none should look inert.
   cardsCanAct = snap.pending_kind === "main" && !view.battle;
+  beatsNow = snap.battle_beats ?? [];
 
   menus = new Map();
   cardless = [];
@@ -745,6 +795,7 @@ function render(snap) {
   for (const c of view.you.hand) hand.appendChild(cardSlot(c, { yours: true }));
 
   renderBattle(view);
+  if (view.battle) renderBeats(snap);
   renderChoose(snap);
 
   $("question").textContent =

@@ -405,6 +405,45 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
 .card.inert:hover { opacity: 1; }
 .card.selected { outline-color: var(--accent-2); }
 
+/* ---- battle narration ----
+
+   The board shows the result of a block or a Counter but never who did it or
+   with what, and the cards are in the trash by the time the modal closes. */
+
+.battle-beats {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 26vh;
+  overflow: auto;
+  margin: 16px 0 4px;
+  padding-right: 4px;
+}
+.beat {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: rgba(8, 12, 18, 0.4);
+  border-left: 3px solid var(--line);
+  font-size: 12px;
+}
+.beat .card.small { width: 34px; height: 48px; }
+.beat-nocard { width: 34px; flex: 0 0 auto; }
+.beat-text { flex: 1; }
+
+.beat.attack { border-left-color: var(--accent); }
+.beat.block { border-left-color: var(--good); }
+.beat.counter { border-left-color: var(--good); }
+.beat.trigger { border-left-color: var(--accent-2); }
+.beat.result { border-left-color: var(--ink); font-weight: 600; }
+/* Nothing happened, which is information too — stated, but quietly. */
+.beat.declined { color: var(--muted); font-style: italic; }
+
+/* A forecast of an unfinished battle, not an outcome. */
+.verdict.projected { opacity: 0.75; font-style: italic; font-weight: 500; }
+
 /* ---- choosing targets ----
 
    The engine offers a Choose as one action per subset. Shown as cards rather
