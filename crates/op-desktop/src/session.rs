@@ -164,20 +164,18 @@ impl Session {
             decks: [human_deck, ai_deck],
             allow_illegal_decks: false,
         };
-        let decks = config.decks.clone();
+        // Cloned so the log is written from the same config the game ran, but
+        // only after setup succeeds — a rejected decklist should not leave a
+        // log behind for a game that never started.
+        let logged = config.clone();
         let (game, opening) = Game::new(config, Arc::clone(&db), scripts)?;
 
         // Best-effort: a session that cannot write a debug log still plays.
         let debug = debug_dir.and_then(|dir| {
             op_core::SessionLog::create(
                 dir,
-                seed,
-                if human_first {
-                    PlayerId::P0
-                } else {
-                    PlayerId::P1
-                },
-                &decks,
+                &logged,
+                Some(&op_ingest::source_ref()),
                 vec![
                     format!("difficulty={difficulty:?}"),
                     "client=desktop".into(),
@@ -545,10 +543,14 @@ mod tests {
         assert!(snap.options.is_empty());
     }
 
-    /// The debug log must be a reproducer, not just a trace: the header
-    /// carries the seed and both decklists, and every step carries the action
-    /// and the resulting state hash. Replaying the recorded actions into a
-    /// fresh game from the same seed must reproduce those hashes exactly.
+    /// The debug log must be a reproducer, not just a trace.
+    ///
+    /// This drives a real session with real card data, then rebuilds the game
+    /// from the log alone — config from the header, actions from the steps —
+    /// and requires it to land on the live game's state hash. Parsing the file
+    /// and comparing it to the session that wrote it would prove only that
+    /// serialisation round-trips; the claim being pinned here is that the
+    /// recorded config and actions are *sufficient* to reconstruct the game.
     #[test]
     fn the_debug_log_replays_the_session_it_recorded() {
         let dir = temp_log_dir("log");
@@ -569,30 +571,30 @@ mod tests {
         }
         let final_hash = session.game.state.state_hash();
 
-        let text = std::fs::read_to_string(&path).expect("log should exist");
-        let mut lines = text.lines();
-
-        let header: serde_json::Value =
-            serde_json::from_str(lines.next().expect("header line")).unwrap();
-        assert_eq!(header["kind"], "header");
-        assert_eq!(header["seed"], 7);
-        assert_eq!(header["decks"][0]["cards"], 50);
-
-        // Every step is well-formed and the last hash matches the live game.
-        let mut last = None;
-        let mut count = 0;
-        for line in lines {
-            let step: serde_json::Value = serde_json::from_str(line).unwrap();
-            assert_eq!(step["kind"], "step");
-            last = step["state_hash"].as_u64();
-            count += 1;
-        }
-        assert!(count > 1, "expected several steps, got {count}");
+        let record = op_core::replay::read(&path).expect("the log should parse");
+        assert!(!record.truncated, "a cleanly written log is not truncated");
+        assert_eq!(record.header.seed, 7);
+        assert_eq!(record.header.decks[0].cards.len(), 50);
+        assert!(record.steps.len() > 1, "expected several steps");
+        // The card-data revision has to be in the file, or a divergent replay
+        // cannot be told apart from a bumped pin.
         assert_eq!(
-            last,
-            Some(final_hash),
-            "the last logged hash must match the live game"
+            record.header.card_data_ref.as_deref(),
+            Some(op_ingest::source_ref().as_str())
         );
+
+        // Rebuilt from the log, not borrowed from the session.
+        let db = CardDb::load_dir(crate::ingest::data_dir().join("cards")).expect("card data");
+        let scripts: Arc<dyn ScriptSource + Send + Sync> = Arc::new(Cards::new(&db));
+        let verified = record
+            .verify(Arc::new(db), scripts)
+            .expect("the log should replay");
+
+        assert_eq!(
+            verified.final_hash, final_hash,
+            "replaying the log must land on the live game's position"
+        );
+        assert_eq!(verified.steps, record.steps.len());
 
         std::fs::remove_dir_all(&dir).ok();
     }
