@@ -17,6 +17,8 @@ cargo run -p op-cli -- --help      # terminal client
 cargo run -p op-cards --bin coverage        # which cards have scripts
 cargo run -p op-cards --bin coverage -- ST03  # what one set still needs
 cargo run -p op-cards --bin dump-scripts    # every script as JSON
+
+python3 tools/rules/fetch_rules.py         # Comprehensive Rules into data/rules/
 cargo run -p op-ingest --bin op-fetch -- --help
 ```
 
@@ -94,7 +96,16 @@ are implementing, that is a signal.
 
 **Check the rules text before changing rules behaviour.** Intuition about how a
 TCG "obviously" works has been wrong here more than once, in both directions.
-The Comprehensive Rules are published; read the clause.
+The Comprehensive Rules are published; read the clause. `python3
+tools/rules/fetch_rules.py` puts them in `data/rules/` — gitignored, like the
+card data, because they are Bandai's copyright. The whole document is ~10,600
+words, so reading the surrounding section costs very little.
+
+The `rules-auditor` agent (`.claude/agents/`) reviews against them: it screens a
+`debug/*.jsonl` trace for illegal play, and checks a card script against its
+printed text and against what `validate_script` does and does not catch. It is
+read-only and cites a clause for every finding. Worth pointing at a new set's
+scripts before rolling it out.
 
 **Comments explain why, not what.** Prefer recording the reason a thing is
 surprising over narrating the code.
