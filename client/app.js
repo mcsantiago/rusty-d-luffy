@@ -42,6 +42,11 @@ let cardless = [];
 let cardsCanAct = false;
 /** Hand cards present at the last render, to spot the ones that just arrived. */
 let lastHandIds = new Set();
+/** The order the hand is drawn in, oldest first, so arrivals appear on the
+ *  right. The engine puts a draw at the back of the hand and a Life card at
+ *  the front, which would make one appear on each side; hand order carries no
+ *  rules meaning, so which end a card joins is the UI's to choose. */
+let handOrder = [];
 /** The cards in the battle currently being resolved, if any. */
 let battleAttacker = null;
 let battleDefender = null;
@@ -1136,12 +1141,18 @@ function render(snap) {
   }
   // Diffed by instance id rather than taken from the snapshot: several copies
   // of a card are indistinguishable by number, and the id says which is new.
-  let nth = 0;
+  const byId = new Map(view.you.hand.map((c) => [c.id, c]));
+  handOrder = handOrder.filter((id) => byId.has(id));
   for (const c of view.you.hand) {
-    const isNew = !lastHandIds.has(c.id);
-    hand.appendChild(cardSlot(c, { yours: true, arriving: isNew ? ++nth : 0 }));
+    if (!handOrder.includes(c.id)) handOrder.push(c.id);
   }
-  lastHandIds = new Set(view.you.hand.map((c) => c.id));
+
+  let nth = 0;
+  for (const id of handOrder) {
+    const isNew = !lastHandIds.has(id);
+    hand.appendChild(cardSlot(byId.get(id), { yours: true, arriving: isNew ? ++nth : 0 }));
+  }
+  lastHandIds = new Set(handOrder);
 
   renderBattle(view);
   if (view.battle) renderBeats(snap);
@@ -1252,7 +1263,8 @@ async function start() {
     // A new game starts at turn 1 again, which is a change worth announcing.
     lastTurn = null;
     // Seeded from the opening hand so a deal does not read as five arrivals.
-    lastHandIds = new Set(result.snapshot.view.you.hand.map((c) => c.id));
+    handOrder = result.snapshot.view.you.hand.map((c) => c.id);
+    lastHandIds = new Set(handOrder);
     lastSnapshot = result.snapshot;
     $("setup").hidden = true;
     $("result").hidden = true;
