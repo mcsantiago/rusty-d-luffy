@@ -3,6 +3,15 @@
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![Card coverage: 3/59 sets scripted](https://img.shields.io/badge/card_sets-3%2F59_scripted-orange)](#coverage-of-the-source)
 
+<p align="center">
+  <img src="docs/screenshot.png" alt="The desktop client during a battle, resolving a counter step: attacker and defender side by side at 5000 power each, with the counter cards available from hand listed below and a running game log down the right-hand side." width="900">
+</p>
+
+<p align="center">
+  <em>The desktop client at the counter step — the defender decides before damage.
+  Card art is fetched at runtime and is not part of this repository.</em>
+</p>
+
 > Unofficial fan project. Not affiliated with or endorsed by Bandai, Toei
 > Animation, Shueisha, or Eiichiro Oda. Source code is AGPL-3.0; third-party
 > names, trademarks, card data and artwork remain the property of their
