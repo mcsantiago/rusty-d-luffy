@@ -31,6 +31,13 @@ let catalogue = new Map();
 const artCache = new Map();
 /** Instance ids the hovered action refers to, for highlighting. */
 let highlighted = new Set();
+/** The card whose menu is open, or null. */
+let selected = null;
+/** Whether that menu was pinned by a click, which hover then cannot displace. */
+let pinned = false;
+/** Actions by subject id, plus the card-less remainder, from the last render. */
+let menus = new Map();
+let cardless = [];
 /** The cards in the battle currently being resolved, if any. */
 let battleAttacker = null;
 let battleDefender = null;
@@ -49,8 +56,19 @@ async function art(number) {
 
 // ---- rendering --------------------------------------------------------------
 
-/** Builds a card element. `card` is a VisibleCard from the engine. */
-function cardEl(card, { small = false, large = false } = {}) {
+/** Builds a card element. `card` is a VisibleCard from the engine.
+ *
+ * `yours` marks a card you control, which is the only kind that can look
+ * inert: the opponent's board offers you nothing by definition, and dimming
+ * all of it would say something about their position that it does not mean.
+ *
+ * `plain` drops the menu. Used inside overlays, which are painted above it,
+ * and for the trash pile, whose own click opens the pile.
+ */
+function cardEl(
+  card,
+  { small = false, large = false, yours = false, plain = false } = {},
+) {
   const el = document.createElement("div");
   el.className = "card" + (small ? " small" : "") + (large ? " large" : "");
   el.dataset.id = String(card.id);
@@ -90,8 +108,27 @@ function cardEl(card, { small = false, large = false } = {}) {
     el.classList.add("has-art");
   });
 
-  el.addEventListener("mouseenter", () => showPreview(card.number));
-  el.addEventListener("mouseleave", hidePreview);
+  if (plain) {
+    // No menu here, so the old hover panel is still how these are read.
+    el.addEventListener("mouseenter", () => showPreview(card.number));
+    el.addEventListener("mouseleave", hidePreview);
+    return el;
+  }
+
+  // Only once some card has a menu. Otherwise the whole hand dims during a
+  // mulligan, which is the one moment it most needs reading, and an opponent's
+  // turn leaves the board looking frozen rather than merely not yours.
+  if (menus.size > 0 && yours && !menus.has(card.id)) {
+    el.classList.add("inert");
+  }
+  if (card.id === selected) el.classList.add("selected");
+
+  el.addEventListener("mouseenter", () => hoverMenu(card, el, yours));
+  el.addEventListener("mouseleave", unhoverMenu);
+  el.addEventListener("click", (e) => {
+    e.stopPropagation();
+    pinMenu(card, el, yours);
+  });
   return el;
 }
 
@@ -116,6 +153,144 @@ async function showPreview(number) {
 function hidePreview() {
   $("preview").hidden = true;
 }
+
+// ---- card menu --------------------------------------------------------------
+//
+// Hovering a card shows its full-size view and the actions that start from it;
+// clicking pins that, so it can be read without holding the mouse still. The
+// flat list is still in the sidebar, so nothing here is the only route to a
+// legal action.
+//
+// Both edges are delayed. Opening waits so that sweeping the cursor across a
+// row does not fire a menu per card; closing waits because the cursor has to
+// cross a gap to reach the menu, and a menu that vanishes on the way is one
+// you cannot click.
+
+const OPEN_DELAY = 90;
+const CLOSE_DELAY = 180;
+let openTimer = null;
+let closeTimer = null;
+
+function hoverMenu(card, el, yours) {
+  clearTimeout(closeTimer);
+  if (pinned || selected === card.id) return;
+  clearTimeout(openTimer);
+  openTimer = setTimeout(() => showMenu(card, el, yours), OPEN_DELAY);
+}
+
+function unhoverMenu() {
+  clearTimeout(openTimer);
+  if (pinned) return;
+  closeTimer = setTimeout(closeMenu, CLOSE_DELAY);
+}
+
+/** A click pins the menu where hover would have let it go. Clicking the
+ *  pinned card again releases it. */
+function pinMenu(card, el, yours) {
+  clearTimeout(openTimer);
+  clearTimeout(closeTimer);
+  if (pinned && selected === card.id) {
+    closeMenu();
+    return;
+  }
+  pinned = true;
+  showMenu(card, el, yours);
+}
+
+function showMenu(card, el, yours) {
+  selected = card.id;
+  for (const c of document.querySelectorAll(".card.selected")) {
+    c.classList.remove("selected");
+  }
+  el.classList.add("selected");
+  openMenu(card, el, yours);
+}
+
+function closeMenu() {
+  clearTimeout(openTimer);
+  clearTimeout(closeTimer);
+  selected = null;
+  pinned = false;
+  $("card-menu").hidden = true;
+  $("card-menu").classList.remove("pinned");
+  for (const c of document.querySelectorAll(".card.selected")) {
+    c.classList.remove("selected");
+  }
+}
+
+async function openMenu(card, el, yours) {
+  const menu = $("card-menu");
+  const info = card.number ? catalogue.get(card.number) : null;
+  const options = menus.get(card.id) ?? [];
+  const uri = await art(card.number);
+
+  // The click may have been superseded while the art resolved.
+  if (selected !== card.id) return;
+
+  menu.innerHTML = `
+    <div class="menu-card">
+      ${uri ? `<img src="${uri}" alt="${card.number}" />` : ""}
+      <div class="menu-name">${info ? info.name : (card.number ?? "Face-down")}</div>
+      <div class="menu-meta">${
+        info
+          ? `${info.category} · cost ${info.cost}${
+              card.power != null ? ` · ${card.power} now` : ""
+            }`
+          : ""
+      }</div>
+      ${info && info.effect ? `<div class="peffect">${info.effect.replaceAll("<br>", "<br/>")}</div>` : ""}
+      ${info && info.trigger ? `<div class="ptrigger">${info.trigger}</div>` : ""}
+    </div>
+    <div class="menu-actions"></div>
+  `;
+
+  const list = menu.querySelector(".menu-actions");
+  // "Nothing from here" is worth saying about your own card and not about the
+  // opponent's, where it is never news. Theirs is a preview and nothing more.
+  if (options.length === 0 && yours) {
+    list.innerHTML = `<div class="menu-none">No actions from this card</div>`;
+  }
+  fillOptions(list, options);
+  list.hidden = options.length === 0 && !yours;
+
+  menu.classList.toggle("pinned", pinned);
+  menu.hidden = false;
+  place(menu, el);
+}
+
+/** Anchors the menu beside `el`, kept inside the window.
+ *
+ * Measured after unhiding, because a hidden element has no height and the
+ * hand row — where the menu must open upwards — is exactly where getting that
+ * wrong pushes it off the bottom of the screen.
+ */
+function place(menu, el) {
+  const card = el.getBoundingClientRect();
+  const box = menu.getBoundingClientRect();
+  const margin = 8;
+
+  let left = card.left + card.width / 2 - box.width / 2;
+  left = Math.max(margin, Math.min(left, window.innerWidth - box.width - margin));
+
+  // Prefer above the card, which is where the hand is looked at from; fall
+  // back to below when the card is near the top of the board.
+  let top = card.top - box.height - margin;
+  if (top < margin) top = Math.min(card.bottom + margin, window.innerHeight - box.height - margin);
+
+  menu.style.left = `${Math.round(left)}px`;
+  menu.style.top = `${Math.round(Math.max(margin, top))}px`;
+}
+
+// Clicking the pinned card or its text is not a dismissal; only the option
+// buttons inside close the menu, and they do it themselves.
+$("card-menu").addEventListener("click", (e) => e.stopPropagation());
+// The cursor leaving the card to reach the menu must not close it.
+$("card-menu").addEventListener("mouseenter", () => clearTimeout(closeTimer));
+$("card-menu").addEventListener("mouseleave", unhoverMenu);
+document.addEventListener("click", closeMenu);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closeMenu();
+});
 
 /** A card plus any DON!! given to it.
  *
@@ -185,7 +360,7 @@ function renderTrash(side, prefix, label) {
 
   if (side.trash.length > 0) {
     // Index 0 is the most recent card in (3-5-2), so it is the face-up top.
-    pile.appendChild(cardEl(side.trash[0], { small: true }));
+    pile.appendChild(cardEl(side.trash[0], { small: true, plain: true }));
     pile.addEventListener("click", () => openTrash(side, label));
   } else {
     pile.innerHTML = `<div class="trash-empty">trash</div>`;
@@ -204,7 +379,7 @@ function openTrash(side, label) {
     `${side.trash.length} card(s), most recent first`;
   const grid = $("trash-grid");
   grid.innerHTML = "";
-  for (const card of side.trash) grid.appendChild(cardEl(card));
+  for (const card of side.trash) grid.appendChild(cardEl(card, { plain: true }));
   $("trash-modal").hidden = false;
 }
 
@@ -253,24 +428,75 @@ $("trash-close").addEventListener("click", () => {
 });
 
 function renderSide(view, side, prefix) {
+  const yours = side === view.you;
+
   const leader = $(`${prefix}-leader`);
   leader.innerHTML = "";
-  if (side.leader) leader.appendChild(cardSlot(side.leader));
+  if (side.leader) leader.appendChild(cardSlot(side.leader, { yours }));
 
   const chars = $(`${prefix}-characters`);
   chars.innerHTML = "";
   if (side.characters.length === 0) {
     chars.innerHTML = `<div class="empty">no characters</div>`;
   }
-  for (const c of side.characters) chars.appendChild(cardSlot(c));
+  for (const c of side.characters) chars.appendChild(cardSlot(c, { yours }));
 
   const stage = $(`${prefix}-stage`);
   stage.innerHTML = "";
-  if (side.stage) stage.appendChild(cardSlot(side.stage, { small: true }));
+  if (side.stage) stage.appendChild(cardSlot(side.stage, { small: true, yours }));
 }
 
 function lifePips(n) {
   return `<span class="pips">${"●".repeat(n)}${"○".repeat(Math.max(0, 5 - n))}</span> ${n}`;
+}
+
+/** One action, as a button. Shared by the sidebar and the card menus so a
+ *  given action looks and behaves the same wherever it is offered. */
+function optionButton(opt) {
+  const b = document.createElement("button");
+  b.className = `opt ${opt.kind}`;
+  b.textContent = opt.label;
+  b.addEventListener("click", () => {
+    closeMenu();
+    choose(opt.index);
+  });
+  b.addEventListener("mouseenter", () => {
+    highlighted = new Set(opt.cards);
+    applyHighlight();
+  });
+  b.addEventListener("mouseleave", () => {
+    highlighted = new Set();
+    applyHighlight();
+  });
+  return b;
+}
+
+function fillOptions(container, options) {
+  for (const opt of options) container.appendChild(optionButton(opt));
+}
+
+/** Whether the full list is expanded. Kept across renders: a disclosure that
+ *  re-collapsed on every snapshot would be unusable during your own turn. */
+let allOpen = false;
+
+/** The actions that live on cards, flat and collapsed. A card menu is only
+ *  findable if you guess the right card, so this stays as the index of them.
+ *
+ *  Card-bound only: the card-less actions are already listed above it, and
+ *  showing the whole list here repeated every one of them. */
+function allActions(options) {
+  const box = document.createElement("details");
+  box.className = "all-actions";
+  box.open = allOpen;
+  box.innerHTML = `<summary>Card actions (${options.length})</summary>`;
+  box.addEventListener("toggle", () => {
+    allOpen = box.open;
+  });
+  const list = document.createElement("div");
+  list.className = "all-list";
+  fillOptions(list, options);
+  box.appendChild(list);
+  return box;
 }
 
 /** Every card on the board, by instance id, for looking up live power. */
@@ -280,6 +506,23 @@ function boardIndex(view) {
     for (const c of [side.leader, side.stage, ...side.characters]) {
       if (c) index.set(c.id, c);
     }
+  }
+  return index;
+}
+
+/** Whether `id` is a card the viewer controls, hand included. */
+function isYours(view, id) {
+  if (view.you.hand.some((c) => c.id === id)) return true;
+  const { leader, stage, characters } = view.you;
+  return [leader, stage, ...characters].some((c) => c && c.id === id);
+}
+
+/** Every card the viewer can click, for re-finding one across a re-render. */
+function cardIndex(view) {
+  const index = boardIndex(view);
+  for (const c of view.you.hand) index.set(c.id, c);
+  for (const side of [view.you, view.opponent]) {
+    for (const c of side.trash) index.set(c.id, c);
   }
   return index;
 }
@@ -323,7 +566,7 @@ function renderBattle(view) {
   for (const [slot, card] of [["attacker", attacker], ["defender", defender]]) {
     const holder = $(`battle-${slot}`);
     holder.innerHTML = "";
-    if (card) holder.appendChild(cardEl(card, { large: true }));
+    if (card) holder.appendChild(cardEl(card, { large: true, plain: true }));
     $(`battle-${slot}-name`).textContent = cardName(card);
     $(`battle-${slot}-power`).textContent =
       card && card.power != null ? card.power : "—";
@@ -347,6 +590,25 @@ function render(snap) {
   const view = snap.view;
   battleAttacker = view.battle ? view.battle.attacker : null;
   battleDefender = view.battle ? view.battle.target : null;
+
+  // Grouped before anything is drawn: a card needs to know whether it has
+  // actions to decide whether it looks inert.
+  //
+  // A live battle keeps its decisions in the modal, which covers the board —
+  // so no card carries a menu while one is running.
+  menus = new Map();
+  cardless = [];
+  const carded = [];
+  for (const opt of snap.options) {
+    if (opt.subject == null || view.battle) {
+      cardless.push(opt);
+      continue;
+    }
+    carded.push(opt);
+    const list = menus.get(opt.subject);
+    if (list) list.push(opt);
+    else menus.set(opt.subject, [opt]);
+  }
 
   $("turn-label").textContent = snap.turn_label;
   $("session-id").textContent = snap.session_id ? `#${snap.session_id}` : "";
@@ -374,7 +636,7 @@ function render(snap) {
   if (view.you.hand.length === 0) {
     hand.innerHTML = `<div class="empty">hand empty</div>`;
   }
-  for (const c of view.you.hand) hand.appendChild(cardSlot(c));
+  for (const c of view.you.hand) hand.appendChild(cardSlot(c, { yours: true }));
 
   renderBattle(view);
 
@@ -382,27 +644,38 @@ function render(snap) {
     snap.question ?? (snap.thinking ? "Opponent is thinking…" : "Waiting…");
 
   const inBattle = !!view.battle;
-  const options = $(inBattle ? "battle-options" : "options");
   $("options").innerHTML = "";
   $("battle-options").innerHTML = "";
   $("battle-question").textContent = inBattle ? (snap.question ?? "") : "";
-  if (snap.thinking) {
-    options.innerHTML = `<div class="thinking">Opponent is thinking…</div>`;
+
+  if (inBattle) {
+    // The modal owns the whole decision while a battle runs, so it gets the
+    // undivided list.
+    fillOptions($("battle-options"), snap.options);
+  } else {
+    fillOptions($("options"), cardless);
+    if (carded.length > 0) {
+      $("options").appendChild(allActions(carded));
+    }
   }
-  for (const opt of snap.options) {
-    const b = document.createElement("button");
-    b.className = `opt ${opt.kind}`;
-    b.textContent = opt.label;
-    b.addEventListener("click", () => choose(opt.index));
-    b.addEventListener("mouseenter", () => {
-      highlighted = new Set(opt.cards);
-      applyHighlight();
-    });
-    b.addEventListener("mouseleave", () => {
-      highlighted = new Set();
-      applyHighlight();
-    });
-    options.appendChild(b);
+  if (snap.thinking) {
+    $(inBattle ? "battle-options" : "options").innerHTML =
+      `<div class="thinking">Opponent is thinking…</div>`;
+  }
+
+  // The board was rebuilt underneath any open menu. A pinned one is re-anchored
+  // to the new element, or dropped if that card has left play. An unpinned one
+  // just closes: its card element is gone, so no mouseleave can ever arrive to
+  // close it later, and hovering again costs nothing.
+  if (selected !== null) {
+    const el = document.querySelector(`.card[data-id="${selected}"]`);
+    const card = cardIndex(view).get(selected);
+    if (pinned && el && card && !inBattle) {
+      el.classList.add("selected");
+      openMenu(card, el, isYours(view, selected));
+    } else {
+      closeMenu();
+    }
   }
 
   const log = $("log");

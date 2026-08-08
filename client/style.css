@@ -348,6 +348,79 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
 .peffect { font-size: 12px; line-height: 1.4; }
 .ptrigger { font-size: 12px; margin-top: 6px; color: var(--accent-2); }
 
+/* ---- card menu ----
+
+   Hovering a card shows its full view and the actions that start from it;
+   clicking pins that in place. Anchored in script, since it follows whichever
+   card the cursor is on. */
+
+#card-menu {
+  position: fixed;
+  width: 240px;
+  background: var(--felt-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px;
+  z-index: 40;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
+}
+/* The aspect ratio is declared so the menu has its final height before the art
+   decodes — it is positioned by measurement, and a late reflow would leave it
+   hanging off the bottom of the window. */
+#card-menu img {
+  width: 100%;
+  aspect-ratio: 5 / 7;
+  border-radius: 6px;
+  display: block;
+  margin-bottom: 8px;
+}
+.menu-name { font-weight: 700; font-size: 14px; }
+.menu-meta { color: var(--muted); font-size: 11px; margin: 2px 0 8px; }
+.menu-card { max-height: 46vh; overflow: auto; }
+.menu-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.menu-none { color: var(--muted); font-size: 12px; font-style: italic; }
+
+/* Pinned outlives the cursor, so it says so: an unpinned menu that happened to
+   stay put would otherwise look stuck. */
+#card-menu.pinned { border-color: var(--accent-2); }
+#card-menu.pinned::after {
+  content: "pinned — click again or Esc";
+  display: block;
+  margin-top: 8px;
+  font-size: 10px;
+  color: var(--accent-2);
+  text-align: center;
+}
+
+/* A card with nothing to offer, so the board reads at a glance. Kept legible
+   rather than greyed out: you still need to judge a board you cannot act on. */
+.card.inert { opacity: 0.55; }
+.card.inert:hover { opacity: 1; }
+.card.selected { outline-color: var(--accent-2); }
+
+/* ---- the full list ----
+
+   Every action is reachable from its card, but only once you know which card
+   to click. This stays as the index, closed by default. */
+
+.all-actions { margin-top: 10px; }
+.all-actions summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--muted);
+  padding: 4px 0;
+  user-select: none;
+}
+.all-actions summary:hover { color: var(--ink); }
+.all-list { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+
 /* ---- DON!! ----
 
    DON!! are fungible and have no art, so they are drawn rather than imaged.

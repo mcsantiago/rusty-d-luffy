@@ -43,6 +43,9 @@ pub struct Choice {
     pub label: String,
     /// Cards this action involves, so hovering can highlight them.
     pub cards: Vec<u32>,
+    /// The card whose menu this action belongs in. `None` for the card-less
+    /// actions, which are the only ones the sidebar must still hold.
+    pub subject: Option<u32>,
     /// Coarse kind, for grouping and styling.
     pub kind: &'static str,
 }
@@ -311,6 +314,7 @@ impl Session {
                     index,
                     label: crate::render::action_label(action, &self.game),
                     cards: action_cards(action).iter().map(|c| c.0).collect(),
+                    subject: action_subject(action).map(|c| c.0),
                     kind: action_kind(action),
                 })
                 .collect()
@@ -409,6 +413,26 @@ fn action_cards(action: &Action) -> Vec<CardInstanceId> {
         Action::Counter { card, to } | Action::CounterEvent { card, to } => vec![*card, *to],
         Action::Choose { cards } => cards.clone(),
         _ => Vec::new(),
+    }
+}
+
+/// The one card an action is offered *from*, which is the card the player
+/// reaches for: the attacker rather than its target, the Counter leaving hand
+/// rather than the card it saves. Not `action_cards().first()`, whose order
+/// exists for highlighting and is not load-bearing.
+fn action_subject(action: &Action) -> Option<CardInstanceId> {
+    match action {
+        Action::PlayCard { card, .. } => Some(*card),
+        Action::ActivateEffect { card, .. } => Some(*card),
+        Action::GiveDon { to } => Some(*to),
+        Action::Attack { attacker, .. } => Some(*attacker),
+        Action::Block { blocker } => *blocker,
+        Action::Counter { card, .. } | Action::CounterEvent { card, .. } => Some(*card),
+        Action::Mulligan(_)
+        | Action::EndMainPhase
+        | Action::DoneCountering
+        | Action::UseTrigger(_)
+        | Action::Choose { .. } => None,
     }
 }
 
@@ -613,5 +637,38 @@ mod tests {
         }
         // 17 cards per starter deck, leaders included, no duplicates.
         assert_eq!(catalogue.len(), 34);
+    }
+
+    /// Menus are built by matching `subject`, so a misattributed action shows
+    /// up under the wrong card — for an attack, one the player does not even
+    /// control. Needs no card data, so it cannot skip itself.
+    #[test]
+    fn an_action_is_offered_from_the_card_the_player_reaches_for() {
+        let (a, b) = (CardInstanceId(1), CardInstanceId(2));
+
+        // The attacker, not the target: the defender is not offering this.
+        assert_eq!(
+            action_subject(&Action::Attack {
+                attacker: a,
+                target: b
+            }),
+            Some(a)
+        );
+        assert_eq!(action_subject(&Action::GiveDon { to: a }), Some(a));
+        // The card leaving your hand, not the one being saved.
+        assert_eq!(action_subject(&Action::Counter { card: a, to: b }), Some(a));
+        assert_eq!(
+            action_subject(&Action::PlayCard {
+                card: a,
+                replacing: Some(b)
+            }),
+            Some(a)
+        );
+
+        // No subject: these are what keeps the sidebar alive.
+        assert_eq!(action_subject(&Action::EndMainPhase), None);
+        assert_eq!(action_subject(&Action::DoneCountering), None);
+        assert_eq!(action_subject(&Action::Mulligan(true)), None);
+        assert_eq!(action_subject(&Action::Block { blocker: None }), None);
     }
 }
