@@ -211,6 +211,19 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
 }
 
 .card:hover { transform: translateY(-4px); box-shadow: 0 8px 20px rgba(0,0,0,0.45); z-index: 5; }
+
+/* A card that has just arrived in hand grows into place. Overshoots slightly:
+   a straight fade-in at final size is easy to miss between two renders, which
+   is the whole thing this is for. */
+@keyframes card-arrives {
+  0% { transform: scale(0.72); opacity: 0; }
+  55% { transform: scale(1.1); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+.card.arriving {
+  animation: card-arrives 420ms cubic-bezier(0.2, 0, 0.2, 1) both;
+  z-index: 6;
+}
 .card.small { width: 72px; height: 100px; }
 
 /* A card and the DON!! given to it. The rotation sits here so both turn
@@ -410,24 +423,27 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
    Shown once on its way to the hand. The travel distance is set in script,
    because the hand it is heading for moves as it fills. */
 
+/* Placed in script — it starts in the corner right of the hand and below the
+   trash, both of which move as the board fills. */
 .life-fly {
   position: fixed;
-  top: 50%;
-  left: 50%;
-  width: 190px;
-  padding: 14px;
+  top: 0;
+  left: 0;
+  width: 150px;
+  padding: 12px;
   border-radius: 14px;
   text-align: center;
   background: rgba(8, 12, 18, 0.94);
   border: 1px solid var(--accent);
   box-shadow: 0 24px 70px rgba(0, 0, 0, 0.7);
-  transform: translate(-50%, -50%) scale(0.88);
+  transform-origin: 50% 50%;
+  transform: scale(0.88);
   opacity: 0;
   transition: opacity 0.3s, transform 0.65s cubic-bezier(0.4, 0, 0.2, 1);
   z-index: 46;
   pointer-events: none;
 }
-.life-fly.shown { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+.life-fly.shown { opacity: 1; transform: scale(1); }
 .life-fly img { width: 100%; border-radius: 8px; display: block; margin-bottom: 10px; }
 .life-fly-name { font-weight: 700; font-size: 14px; }
 .life-fly-note {

@@ -40,6 +40,8 @@ let menus = new Map();
 let cardless = [];
 /** Whether a card with no menu is genuinely unable to act right now. */
 let cardsCanAct = false;
+/** Hand cards present at the last render, to spot the ones that just arrived. */
+let lastHandIds = new Set();
 /** The cards in the battle currently being resolved, if any. */
 let battleAttacker = null;
 let battleDefender = null;
@@ -72,11 +74,25 @@ async function art(number) {
  */
 function cardEl(
   card,
-  { small = false, large = false, yours = false, plain = false, preview = true } = {},
+  {
+    small = false,
+    large = false,
+    yours = false,
+    plain = false,
+    preview = true,
+    arriving = 0,
+  } = {},
 ) {
   const el = document.createElement("div");
   el.className = "card" + (small ? " small" : "") + (large ? " large" : "");
   el.dataset.id = String(card.id);
+  // A card that was not in hand last render grows into place, so a draw or a
+  // Life card taken is visible as an arrival rather than the hand just being
+  // one wider than it was.
+  if (arriving) {
+    el.classList.add("arriving");
+    el.style.animationDelay = `${(arriving - 1) * 90}ms`;
+  }
   if (card.rested) el.classList.add("rested");
   if (highlighted.has(card.id)) el.classList.add("highlight");
   // A battle is easy to lose track of once the log has scrolled, and the
@@ -809,19 +825,14 @@ function renderBeats(snap) {
   box.scrollTop = box.scrollHeight;
 }
 
-// ---- a card arriving in hand ------------------------------------------------
+// ---- a card going to the trash ----------------------------------------------
 //
-// Damage and draws both put a card in your hand with nothing to decide, so the
-// only trace was a counter changing and the hand silently growing. Each is
-// shown once on its way there.
+// A card leaving the board or your hand for a trash pile has nowhere on screen
+// to say so — the pile just gains one. Shown once on its way there.
 
 const FLY_HOLD = 1000;
 const FLY_TRAVEL = 700;
-const FLY_CAPTION = {
-  life: "taken as damage — to your hand",
-  draw: "drawn",
-  trash: "to the trash",
-};
+const FLY_CAPTION = { trash: "to the trash" };
 
 let flySeenFor = null;
 let flyQueue = [];
@@ -832,18 +843,15 @@ let flyPump = null;
  *  asked is worse than invisible. */
 const modalOpen = () => !!document.querySelector(".overlay:not([hidden])");
 
-/** Queues everything that arrived since the last decision. An AI turn is a
- *  single snapshot, so several can land at once; the pump plays them one at a
- *  time rather than stacking them on the same spot. */
+/** Queues everything trashed since the last decision. An AI turn is a single
+ *  snapshot, so several can land at once; the pump plays them one at a time
+ *  rather than stacking them on the same spot. */
 function flyCards(snap) {
   // Guarded by snapshot identity: one snapshot can be rendered more than once
   // and the cards must not fly twice.
   if (snap === flySeenFor) return;
   flySeenFor = snap;
 
-  for (const entry of snap.to_hand) {
-    flyQueue.push({ ...entry, to: "hand" });
-  }
   for (const entry of snap.to_trash) {
     flyQueue.push({
       ...entry,
@@ -885,15 +893,34 @@ async function flyOne(entry) {
   `;
   document.body.appendChild(el);
 
-  // Measured now rather than declared in CSS: the hand moves as it fills, and
-  // the trash piles sit at different ends of the board.
+  // Everything here is measured rather than declared in CSS: the hand grows as
+  // it fills and the trash piles sit at opposite ends of the board, so neither
+  // the corner it starts in nor the pile it flies to has a fixed position.
+  const hand = $("hand").getBoundingClientRect();
+  const trash = $("you-trash").getBoundingClientRect();
+  const box = el.getBoundingClientRect();
+  const margin = 12;
+
+  // Right-aligned to the hand grid and below the trash: the hand fills from
+  // the left, so this corner stays clear of the cards it is about.
+  const left = Math.max(
+    margin,
+    Math.min(hand.right - box.width, window.innerWidth - box.width - margin),
+  );
+  const top = Math.max(
+    margin,
+    Math.min(trash.bottom + margin, window.innerHeight - box.height - margin),
+  );
+  el.style.left = `${Math.round(left)}px`;
+  el.style.top = `${Math.round(top)}px`;
+
   const target = ($(entry.to) ?? $("hand")).getBoundingClientRect();
-  const dx = target.left + target.width / 2 - window.innerWidth / 2;
-  const dy = target.top + target.height / 2 - window.innerHeight / 2;
+  const dx = target.left + target.width / 2 - (left + box.width / 2);
+  const dy = target.top + target.height / 2 - (top + box.height / 2);
 
   requestAnimationFrame(() => el.classList.add("shown"));
   setTimeout(() => {
-    el.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px)) scale(0.22)`;
+    el.style.transform = `translate(${dx}px, ${dy}px) scale(0.22)`;
     el.style.opacity = "0";
     setTimeout(() => el.remove(), FLY_TRAVEL);
   }, FLY_HOLD);
@@ -1107,7 +1134,14 @@ function render(snap) {
   if (view.you.hand.length === 0) {
     hand.innerHTML = `<div class="empty">hand empty</div>`;
   }
-  for (const c of view.you.hand) hand.appendChild(cardSlot(c, { yours: true }));
+  // Diffed by instance id rather than taken from the snapshot: several copies
+  // of a card are indistinguishable by number, and the id says which is new.
+  let nth = 0;
+  for (const c of view.you.hand) {
+    const isNew = !lastHandIds.has(c.id);
+    hand.appendChild(cardSlot(c, { yours: true, arriving: isNew ? ++nth : 0 }));
+  }
+  lastHandIds = new Set(view.you.hand.map((c) => c.id));
 
   renderBattle(view);
   if (view.battle) renderBeats(snap);
@@ -1217,6 +1251,8 @@ async function start() {
     artCache.clear();
     // A new game starts at turn 1 again, which is a change worth announcing.
     lastTurn = null;
+    // Seeded from the opening hand so a deal does not read as five arrivals.
+    lastHandIds = new Set(result.snapshot.view.you.hand.map((c) => c.id));
     lastSnapshot = result.snapshot;
     $("setup").hidden = true;
     $("result").hidden = true;
