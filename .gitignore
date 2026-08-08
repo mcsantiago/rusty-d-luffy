@@ -14,3 +14,6 @@ __pycache__/
 
 # Per-session debug logs
 /debug/
+
+# `dump-scripts` output; CI keeps it as an artifact, not in the tree
+/card-scripts.json

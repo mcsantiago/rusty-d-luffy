@@ -76,6 +76,32 @@ pub enum Timing {
     EndOfBattle,
 }
 
+impl Timing {
+    /// Whether the engine ever activates an auto effect at this timing.
+    ///
+    /// A script declaring a timing nothing fires is dead: the card simply has
+    /// no text. Every `true` below must correspond to a `queue_autos` call in
+    /// `game.rs`, and `validate` turns that correspondence into a test.
+    pub fn is_activated_by_engine(self) -> bool {
+        match self {
+            Timing::OnPlay
+            | Timing::WhenAttacking
+            | Timing::OnYourOpponentsAttack
+            | Timing::EndOfYourTurn
+            | Timing::EndOfYourOpponentsTurn
+            | Timing::EndOfBattle => true,
+            // Declared for the printed keyword, not yet wired: blocking is
+            // resolved from the `Blocker` keyword, without consulting scripts.
+            Timing::OnBlock => false,
+            // No K.O. hook exists; `knock_out` moves the card and stops.
+            Timing::OnKo => false,
+            // `[Trigger]` ops live in `CardScript::trigger` and are resolved
+            // from the Life area (10-1-5-3); the variant is never queued.
+            Timing::Trigger => false,
+        }
+    }
+}
+
 /// One instruction in a card script.
 ///
 /// The vocabulary grows as sets are implemented; the kernel only needs to know
@@ -126,6 +152,67 @@ pub enum EffectOp {
     /// engine after a `[Trigger]`'s ops so that a Trigger which played or
     /// otherwise relocated the card does not then trash it (10-1-5-3).
     TrashIfInLimbo,
+}
+
+impl EffectOp {
+    /// The op's name, for diagnostics.
+    pub fn name(&self) -> &'static str {
+        match self {
+            EffectOp::Choose { .. } => "Choose",
+            EffectOp::Modify { .. } => "Modify",
+            EffectOp::Ko { .. } => "Ko",
+            EffectOp::Rest { .. } => "Rest",
+            EffectOp::SetActive { .. } => "SetActive",
+            EffectOp::Draw { .. } => "Draw",
+            EffectOp::GiveDon { .. } => "GiveDon",
+            EffectOp::MoveTo { .. } => "MoveTo",
+            EffectOp::PlayBound { .. } => "PlayBound",
+            EffectOp::DigTop { .. } => "DigTop",
+            EffectOp::RequireIf { .. } => "RequireIf",
+            EffectOp::TrashIfInLimbo => "TrashIfInLimbo",
+        }
+    }
+
+    /// The binding key this op acts on, if any.
+    ///
+    /// Reading a key nothing bound is not an error at run time — [`EffectFrame::bound`]
+    /// hands back an empty slice and the op does nothing — so this exists for
+    /// [`crate::validate`] to catch the mistake before a game does.
+    ///
+    /// [`EffectFrame::bound`]: EffectFrame::bound
+    pub fn reads(&self) -> Option<&str> {
+        match self {
+            EffectOp::Modify { key, .. }
+            | EffectOp::Ko { key }
+            | EffectOp::Rest { key }
+            | EffectOp::SetActive { key }
+            | EffectOp::GiveDon { key, .. }
+            | EffectOp::MoveTo { key, .. }
+            | EffectOp::PlayBound { key } => Some(key),
+            EffectOp::Choose { .. }
+            | EffectOp::DigTop { .. }
+            | EffectOp::Draw { .. }
+            | EffectOp::RequireIf { .. }
+            | EffectOp::TrashIfInLimbo => None,
+        }
+    }
+
+    /// The binding key this op fills in, if any.
+    pub fn binds(&self) -> Option<&str> {
+        match self {
+            EffectOp::Choose { key, .. } | EffectOp::DigTop { key, .. } => Some(key),
+            EffectOp::Modify { .. }
+            | EffectOp::Ko { .. }
+            | EffectOp::Rest { .. }
+            | EffectOp::SetActive { .. }
+            | EffectOp::Draw { .. }
+            | EffectOp::GiveDon { .. }
+            | EffectOp::MoveTo { .. }
+            | EffectOp::PlayBound { .. }
+            | EffectOp::RequireIf { .. }
+            | EffectOp::TrashIfInLimbo => None,
+        }
+    }
 }
 
 /// Who an op applies to, relative to the effect's controller.

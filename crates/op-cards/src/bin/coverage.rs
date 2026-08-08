@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 use std::process::ExitCode;
 
-use op_cards::{Cards, KEYWORD_ONLY};
+use op_cards::{validate_all_scripts, Cards, KEYWORD_ONLY};
 use op_core::card::CardDb;
 use op_core::script::ScriptSource;
 
@@ -87,7 +87,11 @@ fn main() -> ExitCode {
                 println!("      {}", line.trim());
             }
         }
-        return ExitCode::SUCCESS;
+        return if report_problems(Some(only)) > 0 {
+            ExitCode::FAILURE
+        } else {
+            ExitCode::SUCCESS
+        };
     }
 
     // Summary for everything.
@@ -131,9 +135,31 @@ fn main() -> ExitCode {
         );
     }
 
-    if todo_total > 0 {
+    let malformed = report_problems(None);
+
+    if todo_total > 0 || malformed > 0 {
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS
     }
+}
+
+/// Scripts that exist but are malformed, restricted to one set when asked.
+///
+/// Worth printing next to the counts because it is the gap they hide: a card
+/// with a broken binding key is scripted, counts as done, and still does
+/// nothing.
+fn report_problems(only: Option<&str>) -> usize {
+    let problems: Vec<_> = validate_all_scripts()
+        .into_iter()
+        .filter(|(number, _)| only.is_none_or(|set| number.starts_with(set)))
+        .collect();
+    if problems.is_empty() {
+        return 0;
+    }
+    println!("\n{} malformed script(s):", problems.len());
+    for (number, diagnostic) in &problems {
+        println!("  {number} {diagnostic}");
+    }
+    problems.len()
 }

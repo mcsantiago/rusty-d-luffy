@@ -31,6 +31,18 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets
 
+      # Card scripts are written as Rust builders, which reads well one card at
+      # a time and not at all in aggregate. The dump is a reviewable data form
+      # of the whole set, and a working sample of the format a runtime loader
+      # would have to accept. It needs no `data/` — scripts are compiled in.
+      - name: Dump card scripts
+        run: cargo run -p op-cards --bin dump-scripts -- card-scripts.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: card-scripts
+          path: card-scripts.json
+          retention-days: 7
+
   test:
     strategy:
       fail-fast: false
