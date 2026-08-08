@@ -7,7 +7,6 @@ use std::sync::Arc;
 
 use op_cards::Cards;
 use op_core::card::{CardDb, Keyword};
-use op_core::effect::Timing;
 use op_core::script::ScriptSource;
 use op_core::state::Placement;
 use op_core::zone::Zone;
@@ -544,30 +543,6 @@ fn st01_006_chopper_has_blocker_as_a_printed_keyword() {
     assert!(game.derived().get(chopper).has_keyword(Keyword::Blocker));
 }
 
-#[test]
-fn every_scripted_timing_is_reachable_by_the_engine() {
-    let Some((db, cards)) = load() else { return };
-    // Guards against a script using a timing the engine never fires — the
-    // failure mode where a card silently does nothing.
-    let fired: &[Timing] = &[
-        Timing::OnPlay,
-        Timing::WhenAttacking,
-        Timing::OnYourOpponentsAttack,
-        Timing::EndOfYourTurn,
-        Timing::EndOfYourOpponentsTurn,
-        Timing::EndOfBattle,
-    ];
-    for (_, def) in db.iter() {
-        let Some(id) = db.by_number(&def.number) else {
-            continue;
-        };
-        for auto in &cards.script(id).auto {
-            assert!(
-                fired.contains(&auto.timing),
-                "{} uses timing {:?}, which the engine never activates",
-                def.number,
-                auto.timing
-            );
-        }
-    }
-}
+// Timing reachability used to be checked here. It is now one of the checks in
+// `op_core::validate`, exercised by `tests/scripts_are_well_formed.rs` — which
+// needs no `data/`, so it cannot skip itself.

@@ -31,6 +31,7 @@ pub mod legal;
 pub mod replay;
 pub mod script;
 pub mod state;
+pub mod validate;
 pub mod view;
 pub mod zone;
 
@@ -44,5 +45,6 @@ pub use legal::legal_actions;
 pub use replay::SessionLog;
 pub use script::{CardScript, NoScripts, ScriptSource};
 pub use state::{BattleStep, GameOver, GameState, Phase};
+pub use validate::{validate_script, Diagnostic};
 pub use view::PlayerView;
 pub use zone::Zone;

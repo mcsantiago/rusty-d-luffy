@@ -12,6 +12,7 @@ pub mod sets;
 use op_core::card::CardDb;
 use op_core::ids::CardDefId;
 use op_core::script::{CardScript, ScriptSource};
+use op_core::validate::{validate_script, Diagnostic};
 
 /// Scripts resolved against a particular card database.
 pub struct Cards {
@@ -67,6 +68,23 @@ pub fn all_scripts() -> Vec<(&'static str, CardScript)> {
     out.extend(sets::st02::scripts());
     out.extend(sets::st06::scripts());
     out
+}
+
+/// Every problem [`op_core::validate`] finds across [`all_scripts`], tagged
+/// with the card it came from and returned in script order.
+///
+/// A non-empty result is a bug, not a warning: each entry is a card that
+/// compiles and then does less than its printed text says. It needs no
+/// `CardDb`, so it runs on a bare clone.
+pub fn validate_all_scripts() -> Vec<(String, Diagnostic)> {
+    all_scripts()
+        .into_iter()
+        .flat_map(|(number, script)| {
+            validate_script(&script)
+                .into_iter()
+                .map(move |d| (number.to_string(), d))
+        })
+        .collect()
 }
 
 /// Cards whose entire text is a printed keyword the database already carries,

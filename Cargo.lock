@@ -2026,6 +2026,7 @@ version = "0.1.0"
 dependencies = [
  "op-core",
  "rand",
+ "serde_json",
 ]
 
 [[package]]

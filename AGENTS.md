@@ -16,6 +16,7 @@ cargo run -p op-desktop            # desktop client
 cargo run -p op-cli -- --help      # terminal client
 cargo run -p op-cards --bin coverage        # which cards have scripts
 cargo run -p op-cards --bin coverage -- ST03  # what one set still needs
+cargo run -p op-cards --bin dump-scripts    # every script as JSON
 cargo run -p op-ingest --bin op-fetch -- --help
 ```
 
@@ -69,6 +70,15 @@ be negative mid-calculation and is clamped only by `effective_cost()` (rule
 **Effect resolution suspends as data.** An `EffectFrame` carries an instruction
 pointer, so `GameState` stays `Clone + Serialize` even mid-effect. Do not
 introduce async or coroutines into resolution.
+
+**A script that does nothing still passes the type checker.** Binding keys are
+strings and an op that reads an unbound key gets an empty slice, so a `choose`
+on `"t"` read back as `"target"` compiles, runs, and silently has no effect.
+`op_core::validate::validate_script` catches that class — unbound keys, dead
+bindings, reads before their `choose`, timings the engine never fires,
+unsatisfiable costs — and `op-cards/tests/scripts_are_well_formed.rs` runs it
+over every script. Add a check there rather than a one-off test when a new way
+to write a silently-dead script appears.
 
 **One legal-action generator.** `op_core::legal_actions` serves search, the RL
 action mask, and (eventually) the server validator. Keep it faithful to the
