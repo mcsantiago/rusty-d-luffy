@@ -38,6 +38,8 @@ let pinned = false;
 /** Actions by subject id, plus the card-less remainder, from the last render. */
 let menus = new Map();
 let cardless = [];
+/** Whether a card with no menu is genuinely unable to act right now. */
+let cardsCanAct = false;
 /** The cards in the battle currently being resolved, if any. */
 let battleAttacker = null;
 let battleDefender = null;
@@ -115,10 +117,10 @@ function cardEl(
     return el;
   }
 
-  // Only once some card has a menu. Otherwise the whole hand dims during a
-  // mulligan, which is the one moment it most needs reading, and an opponent's
-  // turn leaves the board looking frozen rather than merely not yours.
-  if (menus.size > 0 && yours && !menus.has(card.id)) {
+  // Keyed to the decision, not to whether any card happens to have a menu:
+  // with no DON!! left, nothing is playable and every card should dim, which
+  // is exactly when a "some card has a menu" test switches the dimming off.
+  if (cardsCanAct && yours && !menus.has(card.id)) {
     el.classList.add("inert");
   }
   if (card.id === selected) el.classList.add("selected");
@@ -695,6 +697,11 @@ function render(snap) {
   //
   // A live battle keeps its decisions in the modal, which covers the board —
   // so no card carries a menu while one is running.
+  // The Main Phase is the only decision whose actions belong to cards, so it
+  // is the only one where having none means a card cannot act. During a
+  // mulligan no card has actions and none should look inert.
+  cardsCanAct = snap.pending_kind === "main" && !view.battle;
+
   menus = new Map();
   cardless = [];
   const carded = [];

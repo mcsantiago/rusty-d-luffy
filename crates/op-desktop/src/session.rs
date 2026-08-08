@@ -61,6 +61,12 @@ pub struct Snapshot {
     pub over: Option<String>,
     /// Whose turn it is, as a label.
     pub turn_label: String,
+    /// Which decision the human owes, as a stable tag.
+    ///
+    /// The UI cannot tell them apart from the options alone, and needs to: a
+    /// card with no actions means "cannot act" in the Main Phase and nothing
+    /// at all during a mulligan, where no card has actions by definition.
+    pub pending_kind: Option<&'static str>,
     /// The human owes a `Choose`, of at most this many cards.
     ///
     /// Carries no card ids of its own: the engine offers a `Choose` as one
@@ -348,6 +354,12 @@ impl Session {
             "Opponent's turn".to_string()
         };
 
+        let pending_kind = self
+            .game
+            .pending()
+            .filter(|p| p.player() == self.human)
+            .map(pending_kind);
+
         let choose_up_to = self
             .game
             .pending()
@@ -364,6 +376,7 @@ impl Session {
             question,
             over,
             turn_label,
+            pending_kind,
             choose_up_to,
             thinking: self.ai_to_act(),
             session_id: self.session_id.clone(),
@@ -451,6 +464,17 @@ fn action_subject(action: &Action) -> Option<CardInstanceId> {
         | Action::DoneCountering
         | Action::UseTrigger(_)
         | Action::Choose { .. } => None,
+    }
+}
+
+fn pending_kind(pending: &Pending) -> &'static str {
+    match pending {
+        Pending::Mulligan { .. } => "mulligan",
+        Pending::MainAction { .. } => "main",
+        Pending::Block { .. } => "block",
+        Pending::Counter { .. } => "counter",
+        Pending::Trigger { .. } => "trigger",
+        Pending::Choose { .. } => "choose",
     }
 }
 
@@ -655,6 +679,60 @@ mod tests {
         }
         // 17 cards per starter deck, leaders included, no duplicates.
         assert_eq!(catalogue.len(), 34);
+    }
+
+    /// The UI dims cards that cannot act, and decides whether to by reading
+    /// `pending_kind`. A tag that stopped matching the decision would dim the
+    /// hand during a mulligan or leave it lit with no DON!! left, which is the
+    /// bug this replaced. Needs no card data, so it cannot skip itself.
+    #[test]
+    fn every_decision_has_a_tag_the_ui_can_key_off() {
+        let card = CardInstanceId(0);
+        let cases = [
+            (
+                Pending::Mulligan {
+                    player: PlayerId::P0,
+                },
+                "mulligan",
+            ),
+            (
+                Pending::MainAction {
+                    player: PlayerId::P0,
+                },
+                "main",
+            ),
+            (
+                Pending::Block {
+                    player: PlayerId::P0,
+                },
+                "block",
+            ),
+            (
+                Pending::Counter {
+                    player: PlayerId::P0,
+                },
+                "counter",
+            ),
+            (
+                Pending::Trigger {
+                    player: PlayerId::P0,
+                    card,
+                },
+                "trigger",
+            ),
+            (
+                Pending::Choose {
+                    player: PlayerId::P0,
+                    key: "t".into(),
+                    options: vec![card],
+                    up_to: 1,
+                },
+                "choose",
+            ),
+        ];
+        for (pending, tag) in cases {
+            assert_eq!(pending_kind(&pending), tag, "{pending:?}");
+        }
     }
 
     /// Menus are built by matching `subject`, so a misattributed action shows
