@@ -784,6 +784,87 @@ function renderBeats(snap) {
   box.scrollTop = box.scrollHeight;
 }
 
+// ---- the Counter step -------------------------------------------------------
+//
+// The flat list named the cards involved and nothing more, which does not
+// identify *which* Zoro when two are in play, and the modal blurs the board it
+// is talking about. The cards are shown here instead, in the modal that is
+// asking about them.
+//
+// Only counters aimed at the card under attack are shown. Boosting a different
+// battler is legal and occasionally right, so those stay in the list below —
+// they are rare enough not to be worth a second selection step for.
+
+/** The Counter value a hand card is worth, from its printed details. */
+function counterValue(card) {
+  const info = card && card.number ? catalogue.get(card.number) : null;
+  return info && info.counter != null ? info.counter : null;
+}
+
+function renderCounterTray(snap) {
+  const tray = $("counter-tray");
+  const view = snap.view;
+  if (snap.pending_kind !== "counter" || !view.battle) {
+    tray.hidden = true;
+    return;
+  }
+
+  const defender = view.battle.target;
+  const index = cardIndex(view);
+  const target = index.get(defender);
+  const basePower = target && target.power != null ? target.power : null;
+
+  const options = snap.options.filter(
+    (o) => o.kind === "counter" && o.cards[1] === defender,
+  );
+
+  $("counter-prompt").textContent = options.length
+    ? `Play a Counter for ${cardName(target)}`
+    : `No Counter in hand for ${cardName(target)}`;
+
+  const hand = $("counter-hand");
+  hand.innerHTML = "";
+
+  const power = $("battle-defender-power");
+  const restore = () => {
+    power.textContent = basePower == null ? "—" : basePower;
+    power.classList.remove("boosted");
+  };
+
+  for (const opt of options) {
+    const card = index.get(opt.cards[0]);
+    if (!card) continue;
+
+    const holder = document.createElement("div");
+    holder.className = "counter-option";
+    holder.appendChild(cardEl(card, { small: true, plain: true, preview: false }));
+
+    // An Event played as a Counter has no printed Counter value; its worth is
+    // whatever its text does, so it is labelled rather than given a number.
+    const value = counterValue(card);
+    holder.appendChild(
+      Object.assign(document.createElement("div"), {
+        className: "counter-value",
+        textContent: value == null ? "[Counter]" : `+${value}`,
+      }),
+    );
+
+    holder.addEventListener("mouseenter", () => {
+      if (basePower == null || value == null) return;
+      power.textContent = basePower + value;
+      power.classList.add("boosted");
+    });
+    holder.addEventListener("mouseleave", restore);
+    holder.addEventListener("click", () => {
+      restore();
+      choose(opt.index);
+    });
+    hand.appendChild(holder);
+  }
+
+  tray.hidden = false;
+}
+
 function render(snap) {
   const view = snap.view;
   battleAttacker = view.battle ? view.battle.attacker : null;
@@ -844,6 +925,7 @@ function render(snap) {
 
   renderBattle(view);
   if (view.battle) renderBeats(snap);
+  renderCounterTray(snap);
   announceResult(snap.battle_result ?? null);
   renderChoose(snap);
 

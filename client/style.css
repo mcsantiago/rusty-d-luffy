@@ -433,6 +433,57 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
 #battle-result.landed { border-color: var(--accent); }
 #battle-result.repelled { border-color: var(--good); }
 
+/* The battle modal is about the board behind it, so it dims rather than
+   obscures — a heavy blur hides the cards being discussed. */
+#battle-modal { backdrop-filter: blur(2px); background: rgba(8, 12, 18, 0.72); }
+
+/* ---- the Counter step ----
+
+   The cards you may spend, in the modal that is asking about them. The flat
+   list named them, which does not say which Zoro when two are in play. */
+
+#counter-tray {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.counter-prompt {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 10px;
+  text-align: center;
+}
+.counter-hand {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+.counter-option {
+  position: relative;
+  padding: 4px;
+  border-radius: 9px;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: border-color 0.1s, transform 0.1s;
+}
+.counter-option:hover { transform: translateY(-3px); border-color: var(--good); }
+.counter-value {
+  position: absolute;
+  top: -7px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 1px 7px;
+  border-radius: 9px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  color: var(--bg);
+  background: var(--good);
+}
+/* What the defender's power becomes if this Counter is played. */
+.fighter-power.boosted { color: var(--good); }
+
 /* ---- battle narration ----
 
    The board shows the result of a block or a Counter but never who did it or
