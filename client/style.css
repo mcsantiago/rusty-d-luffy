@@ -405,6 +405,66 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
 .card.inert:hover { opacity: 1; }
 .card.selected { outline-color: var(--accent-2); }
 
+/* ---- choosing targets ----
+
+   The engine offers a Choose as one action per subset. Shown as cards rather
+   than as a list of combinations, which is unreadable past two candidates. */
+
+.choose-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  justify-content: center;
+  max-height: 54vh;
+  overflow: auto;
+  padding: 4px;
+}
+.choose-option {
+  position: relative;
+  border-radius: 9px;
+  padding: 5px;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: border-color 0.1s, transform 0.1s;
+}
+.choose-option:hover { transform: translateY(-3px); border-color: var(--line); }
+.choose-option.picked { border-color: var(--accent-2); background: rgba(240, 180, 41, 0.12); }
+.choose-rank {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 20px;
+  height: 20px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 20px;
+  text-align: center;
+  color: var(--bg);
+  background: var(--accent-2);
+}
+.choose-option:not(.picked) .choose-rank { display: none; }
+/* A candidate the PlayerView does not hold, so there is no art to draw. */
+.choose-unknown {
+  width: var(--card-w);
+  height: var(--card-h);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 8px;
+  font-size: 11px;
+  border-radius: 7px;
+  background: #223145;
+  border: 1px solid #34485f;
+}
+.choose-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 18px;
+}
+
 /* ---- the full list ----
 
    Every action is reachable from its card, but only once you know which card

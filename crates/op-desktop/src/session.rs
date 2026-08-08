@@ -13,7 +13,8 @@ use op_core::card::{CardDb, Category};
 use op_core::script::ScriptSource;
 use op_core::view::PlayerView;
 use op_core::{
-    legal_actions, Action, CardInstanceId, DeckList, Game, GameConfig, PlayerId, SetupError,
+    legal_actions, Action, CardInstanceId, DeckList, Game, GameConfig, Pending, PlayerId,
+    SetupError,
 };
 use rand::rngs::StdRng;
 use rand::SeedableRng;
@@ -60,6 +61,13 @@ pub struct Snapshot {
     pub over: Option<String>,
     /// Whose turn it is, as a label.
     pub turn_label: String,
+    /// The human owes a `Choose`, of at most this many cards.
+    ///
+    /// Carries no card ids of its own: the engine offers a `Choose` as one
+    /// action per subset, so the candidates are already in `options` and every
+    /// one of them appears there singly. This says only which kind of decision
+    /// is pending, which the UI otherwise cannot tell from a list of labels.
+    pub choose_up_to: Option<u8>,
     /// The AI owes a decision; the UI should expect a `game://update` shortly.
     pub thinking: bool,
     /// Short identifier for this session, matching its log filename, so a bug
@@ -340,6 +348,15 @@ impl Session {
             "Opponent's turn".to_string()
         };
 
+        let choose_up_to = self
+            .game
+            .pending()
+            .filter(|p| p.player() == self.human)
+            .and_then(|p| match p {
+                Pending::Choose { up_to, .. } => Some(*up_to),
+                _ => None,
+            });
+
         Snapshot {
             view,
             log: self.log.clone(),
@@ -347,6 +364,7 @@ impl Session {
             question,
             over,
             turn_label,
+            choose_up_to,
             thinking: self.ai_to_act(),
             session_id: self.session_id.clone(),
         }

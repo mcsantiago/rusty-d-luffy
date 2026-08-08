@@ -427,6 +427,13 @@ $("trash-close").addEventListener("click", () => {
   $("trash-modal").hidden = true;
 });
 
+$("choose-confirm").addEventListener("click", () => {
+  if (lastSnapshot) submitChoice(picked, lastSnapshot);
+});
+$("choose-none").addEventListener("click", () => {
+  if (lastSnapshot) submitChoice([], lastSnapshot);
+});
+
 function renderSide(view, side, prefix) {
   const yours = side === view.you;
 
@@ -497,6 +504,98 @@ function allActions(options) {
   fillOptions(list, options);
   box.appendChild(list);
   return box;
+}
+
+// ---- choosing targets -------------------------------------------------------
+//
+// The engine offers a Choose as one action per subset, which is a list of
+// combinations and unreadable past two candidates. This turns it back into
+// what the player is actually doing: picking cards.
+
+/** Cards picked so far, in click order. */
+let picked = [];
+
+const sameSet = (a, b) =>
+  a.length === b.length && [...a].sort().every((v, i) => v === [...b].sort()[i]);
+
+function renderChoose(snap) {
+  const modal = $("choose-modal");
+  if (snap.choose_up_to == null) {
+    modal.hidden = true;
+    picked = [];
+    return;
+  }
+
+  const upTo = snap.choose_up_to;
+  // Every candidate appears as a subset of one, so the singletons are the
+  // candidate list — in the engine's order, which is the board's order.
+  const candidates = [];
+  for (const opt of snap.options) {
+    if (opt.cards.length === 1 && !candidates.includes(opt.cards[0])) {
+      candidates.push(opt.cards[0]);
+    }
+  }
+
+  const index = cardIndex(snap.view);
+  $("choose-title").textContent = snap.question ?? "Choose";
+  $("choose-sub").textContent =
+    upTo === 1
+      ? "Pick a card."
+      : `Pick up to ${upTo} — ${picked.length} chosen.`;
+
+  const grid = $("choose-grid");
+  grid.innerHTML = "";
+  for (const id of candidates) {
+    const card = index.get(id);
+    const holder = document.createElement("div");
+    holder.className = "choose-option" + (picked.includes(id) ? " picked" : "");
+
+    if (card) {
+      holder.appendChild(cardEl(card, { plain: true }));
+    } else {
+      // A candidate the view does not hold — off-board, mid-effect. The
+      // engine's own label is the only description available for it.
+      const opt = snap.options.find((o) => o.cards.length === 1 && o.cards[0] === id);
+      holder.innerHTML = `<div class="choose-unknown">${opt ? opt.label : id}</div>`;
+    }
+
+    holder.appendChild(
+      Object.assign(document.createElement("div"), {
+        className: "choose-rank",
+        textContent: picked.includes(id) ? String(picked.indexOf(id) + 1) : "",
+      }),
+    );
+
+    holder.addEventListener("click", () => {
+      if (upTo === 1) {
+        submitChoice([id], snap);
+        return;
+      }
+      if (picked.includes(id)) picked = picked.filter((p) => p !== id);
+      else if (picked.length < upTo) picked.push(id);
+      renderChoose(snap);
+    });
+    grid.appendChild(holder);
+  }
+
+  // Declining is only on the table when the engine actually offers it.
+  const canDecline = snap.options.some((o) => o.cards.length === 0);
+  $("choose-none").hidden = !canDecline;
+  $("choose-confirm").hidden = upTo === 1;
+  $("choose-confirm").disabled = picked.length === 0;
+  modal.hidden = false;
+}
+
+/** Submits a set of cards by finding the option that names exactly them. */
+function submitChoice(cards, snap) {
+  const opt = snap.options.find((o) => sameSet(o.cards, cards));
+  if (!opt) {
+    $("question").textContent = "That combination is not on offer";
+    return;
+  }
+  picked = [];
+  $("choose-modal").hidden = true;
+  choose(opt.index);
 }
 
 /** Every card on the board, by instance id, for looking up live power. */
@@ -639,6 +738,7 @@ function render(snap) {
   for (const c of view.you.hand) hand.appendChild(cardSlot(c, { yours: true }));
 
   renderBattle(view);
+  renderChoose(snap);
 
   $("question").textContent =
     snap.question ?? (snap.thinking ? "Opponent is thinking…" : "Waiting…");
