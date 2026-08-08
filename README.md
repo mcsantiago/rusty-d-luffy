@@ -221,8 +221,13 @@ cargo run -p op-cards --bin coverage -- EB01  # what EB01 still needs, with text
 
 ## Status
 
+**v0.1.0** — the first tagged release. Playable against the AI on macOS, Windows
+and Linux; the binaries are unsigned, so both Gatekeeper and SmartScreen will
+warn on first launch. Card data is not bundled and is fetched on first run.
+
 Implemented: the rules kernel, ST-01, ST-02 and ST-06 at full script coverage,
-the legal-action generator, heuristic and ISMCTS agents, and the terminal client.
+the legal-action generator, heuristic and ISMCTS agents, static validation of
+card scripts, and both clients — desktop and terminal.
 
 Not yet built: PyO3 bindings and the Gymnasium environment, and the authoritative
 multiplayer server and web client. Both sit on top of the existing kernel — the
