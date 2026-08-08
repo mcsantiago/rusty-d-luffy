@@ -63,6 +63,14 @@ pub struct BattleBeat {
     pub kind: &'static str,
 }
 
+/// A card that arrived in the human's hand with nothing to decide about it.
+#[derive(Debug, Clone, Serialize)]
+pub struct CardToHand {
+    pub number: String,
+    /// What put it there: "life" or "draw". Only the caption differs.
+    pub how: &'static str,
+}
+
 /// Everything the UI needs after a step.
 #[derive(Debug, Clone, Serialize)]
 pub struct Snapshot {
@@ -82,6 +90,13 @@ pub struct Snapshot {
     /// it resolves, so anything shown only while one is running is gone before
     /// it can be read. Cleared by the next attack.
     pub battle_result: Option<String>,
+    /// Cards that reached the human's hand since their last decision, with
+    /// nothing to decide about them.
+    ///
+    /// Scoped to a client-visible step rather than to one engine step: an AI
+    /// turn is many engine steps and a single snapshot, so anything cleared per
+    /// step would be gone before the player ever saw it.
+    pub to_hand: Vec<CardToHand>,
     /// The Life card whose [Trigger] the human is being asked about.
     ///
     /// Sent only to the player taking the damage, who may see it whichever way
@@ -142,6 +157,7 @@ pub struct Session {
     /// Narration for the battle in progress, reset by each attack.
     battle_beats: Vec<BattleBeat>,
     battle_result: Option<String>,
+    to_hand: Vec<CardToHand>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -252,6 +268,7 @@ impl Session {
             debug,
             battle_beats: Vec::new(),
             battle_result: None,
+            to_hand: Vec::new(),
         };
         if let Some(path) = session.debug_log_path() {
             eprintln!("session log: {}", path.display());
@@ -276,6 +293,7 @@ impl Session {
     /// Stops there: the AI's reply is a separate step so the caller can put it
     /// on a worker thread and let the board show the human's own move first.
     pub fn apply_human(&mut self, index: usize) -> Result<(), String> {
+        self.to_hand.clear();
         let pending = self.game.pending().ok_or("no decision is pending")?;
         if pending.player() != self.human {
             return Err("it is not your decision".into());
@@ -304,6 +322,7 @@ impl Session {
     ///
     /// Expensive — a search per decision. Call it off the UI thread.
     pub fn run_ai(&mut self) {
+        self.to_hand.clear();
         for _ in 0..10_000 {
             if self.game.is_over() {
                 return;
@@ -339,6 +358,7 @@ impl Session {
     fn absorb(&mut self, events: &[op_core::GameEvent]) {
         for event in events {
             let projected = event.project(&self.game.state, self.human);
+            self.note_card_to_hand(&projected);
             self.narrate_battle(&projected);
             if let Some(line) = crate::render::line(&projected, &self.game, self.human) {
                 self.log.push(line);
@@ -349,6 +369,38 @@ impl Session {
             let excess = self.log.len() - 400;
             self.log.drain(..excess);
         }
+    }
+
+    /// A card that reached the human's hand without asking them anything.
+    ///
+    /// A Life card is skipped when it has printed text: one with a [Trigger]
+    /// was already shown by the prompt offering it, and one with an effect is
+    /// worth reading rather than glimpsing. A draw is never skipped — seeing
+    /// what you drew is the whole point.
+    fn note_card_to_hand(&mut self, event: &op_core::PlayerEvent) {
+        use op_core::PlayerEvent as E;
+
+        let (card, how) = match event {
+            E::LifeTaken {
+                player,
+                card,
+                banished,
+            } if *player == self.human && !banished => (*card, "life"),
+            // Turn 0 is setup: the opening hand and a mulligan are dealt, not
+            // drawn, and five cards flying past at once says nothing.
+            E::Drew { player, card } if *player == self.human && self.game.state.turn > 0 => {
+                (*card, "draw")
+            }
+            _ => return,
+        };
+
+        let Some(id) = card.id() else { return };
+        let def = self.db.get(self.game.state.card(id).def);
+        if how == "life" && (def.trigger.is_some() || def.effect.is_some()) {
+            return;
+        }
+        let number = def.number.clone();
+        self.to_hand.push(CardToHand { number, how });
     }
 
     /// Records what a battle event means for the defender's side of the story.
@@ -547,6 +599,7 @@ impl Session {
             turn_label,
             battle_beats: self.battle_beats.clone(),
             battle_result: self.battle_result.clone(),
+            to_hand: self.to_hand.clone(),
             pending_kind,
             trigger_card,
             choose_source,
@@ -753,6 +806,67 @@ mod tests {
             session.run_ai();
             session
         })
+    }
+
+    /// The Life card that flies to the hand is announced for exactly one
+    /// snapshot, and only for cards with no printed text of their own. Both
+    /// halves matter: a card that is never announced makes the animation dead
+    /// code, and one announced twice would fly twice.
+    #[test]
+    fn a_plain_life_card_is_announced_on_its_way_to_hand() {
+        let mut announced = 0;
+
+        for seed in 0..12u64 {
+            let Some(mut session) = seeded(seed) else {
+                return;
+            };
+
+            for _ in 0..5_000 {
+                let snap = session.snapshot();
+                if snap.over.is_some() {
+                    break;
+                }
+                for entry in &snap.to_hand {
+                    let def = session
+                        .db
+                        .by_number(&entry.number)
+                        .map(|d| session.db.get(d))
+                        .expect("announced a card the database does not have");
+                    if entry.how == "life" {
+                        assert!(
+                            def.effect.is_none() && def.trigger.is_none(),
+                            "seed {seed}: {} has printed text and should not fly past",
+                            entry.number
+                        );
+                        announced += 1;
+                    }
+                    // A draw during setup is a dealt hand, not a draw worth
+                    // showing; five cards flying past at once says nothing.
+                    assert!(
+                        entry.how != "draw" || snap.view.turn > 0,
+                        "seed {seed}: announced a setup draw"
+                    );
+                }
+
+                // Attacking is what deals damage, so a run that only ends turns
+                // would never take a Life card at all.
+                let next = snap
+                    .options
+                    .iter()
+                    .position(|o| o.kind == "attack")
+                    .or_else(|| snap.options.iter().position(|o| o.kind == "play"))
+                    .unwrap_or(0);
+                session
+                    .apply_human(next)
+                    .expect("offered option must be legal");
+                session.run_ai();
+            }
+        }
+
+        assert!(
+            announced > 0,
+            "no plain Life card reached a hand in 12 games, so the animation is unreachable"
+        );
     }
 
     /// A Choose only ever arises from an effect resolving, so the card doing

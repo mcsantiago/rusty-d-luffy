@@ -809,6 +809,63 @@ function renderBeats(snap) {
   box.scrollTop = box.scrollHeight;
 }
 
+// ---- a card arriving in hand ------------------------------------------------
+//
+// Damage and draws both put a card in your hand with nothing to decide, so the
+// only trace was a counter changing and the hand silently growing. Each is
+// shown once on its way there.
+
+const FLY_HOLD = 1000;
+const FLY_TRAVEL = 700;
+const FLY_CAPTION = {
+  life: "taken as damage — to your hand",
+  draw: "drawn",
+};
+
+let flySeenFor = null;
+
+/** One card per arrival since your last decision. An AI turn is a single
+ *  snapshot, so several can land at once; they are staggered and stepped down
+ *  the screen rather than stacked on the same spot. */
+function flyCardsToHand(snap) {
+  // Guarded by snapshot identity: one snapshot can be rendered more than once
+  // and the cards must not fly twice.
+  if (!snap.to_hand.length || snap === flySeenFor) return;
+  flySeenFor = snap;
+
+  snap.to_hand.forEach((entry, i) => {
+    setTimeout(() => flyOne(entry, i), i * 450);
+  });
+}
+
+async function flyOne(entry, offset = 0) {
+  const number = entry.number;
+  const info = catalogue.get(number);
+  const uri = await art(number);
+
+  const el = document.createElement("div");
+  el.className = "life-fly";
+  el.innerHTML = `
+    ${uri ? `<img src="${uri}" alt="${number}" />` : ""}
+    <div class="life-fly-name">${info ? info.name : number}</div>
+    <div class="life-fly-note">${FLY_CAPTION[entry.how] ?? ""}</div>
+  `;
+  el.style.marginTop = `${offset * 26}px`;
+  document.body.appendChild(el);
+
+  // Measured now rather than declared in CSS: the hand moves as it fills.
+  const hand = $("hand").getBoundingClientRect();
+  const dx = hand.left + hand.width / 2 - window.innerWidth / 2;
+  const dy = hand.top - window.innerHeight / 2;
+
+  requestAnimationFrame(() => el.classList.add("shown"));
+  setTimeout(() => {
+    el.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px)) scale(0.22)`;
+    el.style.opacity = "0";
+    setTimeout(() => el.remove(), FLY_TRAVEL);
+  }, FLY_HOLD);
+}
+
 // ---- whose turn it is -------------------------------------------------------
 //
 // The turn label in the top bar changes without anyone looking at it. A turn
@@ -1023,6 +1080,7 @@ function render(snap) {
   if (view.battle) renderBeats(snap);
   renderCounterTray(snap);
   renderTriggerTray(snap);
+  flyCardsToHand(snap);
   announceTurn(snap);
   announceResult(snap.battle_result ?? null);
   renderChoose(snap);
