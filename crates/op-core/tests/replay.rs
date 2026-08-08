@@ -291,3 +291,117 @@ fn a_corrupt_record_that_is_not_the_last_is_rejected() {
         other => panic!("expected a malformed-record error, got {other:?}"),
     }
 }
+
+/// The state hash folds only the pending decision's *discriminant* and owner,
+/// so a change to a `Pending` payload matches on hash while being exactly the
+/// regression an old log is kept to catch. The position fields close that.
+#[test]
+fn a_changed_pending_payload_is_caught_even_though_the_hash_matches() {
+    let dir = TempDir::new("pending-payload");
+    let config = config_for(
+        5,
+        decklist("LDR-001", deck_of("CHR-5K", 40)),
+        decklist("LDR-002", deck_of("CHR-BLOCK", 40)),
+    );
+    let (path, _) = logged_playout(&dir, config, 9);
+
+    let text = std::fs::read_to_string(&path).unwrap();
+    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+
+    // Find a step whose pending decision has a payload worth changing, and
+    // rewrite only that — the hash stays exactly as recorded.
+    let target = (1..lines.len())
+        .find(|&i| {
+            serde_json::from_str::<serde_json::Value>(&lines[i])
+                .ok()
+                .and_then(|s| s["pending_repr"].as_str().map(|r| r.contains('{')))
+                .unwrap_or(false)
+        })
+        .expect("some step has a pending decision");
+
+    let mut step: serde_json::Value = serde_json::from_str(&lines[target]).unwrap();
+    let hash_before = step["state_hash"].as_u64().unwrap();
+    step["pending_repr"] = serde_json::json!("Pending::Fabricated { player: PlayerId(0) }");
+    let n = step["n"].as_u64().unwrap();
+    lines[target] = serde_json::to_string(&step).unwrap();
+    std::fs::write(&path, lines.join("\n") + "\n").unwrap();
+
+    let record = replay::read(&path).expect("still parses");
+    assert_eq!(
+        record.steps.iter().find(|s| s.n == n).unwrap().state_hash,
+        hash_before,
+        "the hash must be untouched, or this proves nothing"
+    );
+
+    match record.verify(Arc::new(TestCards::new().db.clone()), scripts()) {
+        Err(Divergence::State { step, field, .. }) => {
+            assert_eq!(step, n);
+            assert_eq!(field, "pending");
+        }
+        Err(other) => panic!("expected a State divergence, got {other:?}"),
+        Ok(_) => panic!("a changed pending payload must not replay clean"),
+    }
+}
+
+/// A log from a build that wrote a different format should say so, rather than
+/// surfacing as a serde type error on whichever field happened to move.
+#[test]
+fn a_log_from_another_format_version_is_refused_by_name() {
+    let dir = TempDir::new("version");
+    let config = config_for(
+        5,
+        decklist("LDR-001", deck_of("CHR-5K", 40)),
+        decklist("LDR-002", deck_of("CHR-BLOCK", 40)),
+    );
+    let (path, _) = logged_playout(&dir, config, 4);
+
+    let text = std::fs::read_to_string(&path).unwrap();
+    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+    let mut header: serde_json::Value = serde_json::from_str(&lines[0]).unwrap();
+    assert_eq!(
+        header["version"],
+        replay::FORMAT_VERSION,
+        "the writer must stamp the version it writes"
+    );
+    header["version"] = serde_json::json!(replay::FORMAT_VERSION + 7);
+    lines[0] = serde_json::to_string(&header).unwrap();
+    std::fs::write(&path, lines.join("\n") + "\n").unwrap();
+
+    match replay::read(&path) {
+        Err(err) => {
+            let message = err.to_string();
+            assert!(
+                message.contains("version"),
+                "the error should name the version, got: {message}"
+            );
+        }
+        Ok(_) => panic!("a log from an unknown format version must be refused"),
+    }
+}
+
+/// `Verified::steps` counts what was actually replayed. It previously echoed
+/// the record count, so assertions against it could not fail.
+#[test]
+fn the_replayed_step_count_is_counted_not_echoed() {
+    let dir = TempDir::new("counted");
+    let config = config_for(
+        5,
+        decklist("LDR-001", deck_of("CHR-5K", 40)),
+        decklist("LDR-002", deck_of("CHR-BLOCK", 40)),
+    );
+    let (path, _) = logged_playout(&dir, config, 6);
+
+    // Truncating mid-record drops the partial line, so fewer records replay
+    // than the file appears to hold — which an echoed count could never show.
+    // The first line is the header, so keeping four lines keeps three steps.
+    let text = std::fs::read_to_string(&path).unwrap();
+    let keep: Vec<&str> = text.lines().take(4).collect();
+    std::fs::write(&path, keep.join("\n") + "\n{\"kind\":\"st").unwrap();
+
+    let record = replay::read(&path).expect("a truncated log replays its prefix");
+    let verified = record
+        .verify(Arc::new(TestCards::new().db.clone()), scripts())
+        .expect("the prefix matches");
+    assert_eq!(verified.steps, record.steps.len());
+    assert_eq!(verified.steps, 3, "header plus three steps: three replayed");
+}

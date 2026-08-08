@@ -48,6 +48,13 @@ use crate::state::GameState;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Header<'a> {
     kind: Cow<'a, str>,
+    /// Log format version.
+    ///
+    /// Present so a format change reports itself rather than surfacing as a
+    /// serde type error on whichever field happened to move. Absent in logs
+    /// written before versioning, which is what `0` means.
+    #[serde(default)]
+    pub version: u32,
     /// Wall-clock start, seconds since the epoch. Only for ordering files.
     pub started_at: u64,
     pub seed: u64,
@@ -57,13 +64,21 @@ pub struct Header<'a> {
     /// deliberately illegal deck replays instead of failing setup.
     #[serde(default)]
     pub allow_illegal_decks: bool,
-    /// Revision of the card data this session ran against. A replay against a
-    /// different revision can diverge for reasons that are not the engine's
-    /// fault, and without this there is nothing in the file to say so.
+    /// The card-data revision this *build* was pinned to (`SOURCE_REF`, or the
+    /// env override) when the session ran.
+    ///
+    /// Not necessarily the revision the data on disk was fetched at — nothing
+    /// in `data/` records that, and the client does not refetch when the pin
+    /// moves. So a matching value here is weaker evidence than it looks: it
+    /// rules out a pin bump between recording and replay, not a stale cache on
+    /// either machine.
     #[serde(default)]
     pub card_data_ref: Option<Cow<'a, str>>,
     pub notes: Vec<String>,
 }
+
+/// The format this build writes, and the only one it can replay.
+pub const FORMAT_VERSION: u32 = 1;
 
 /// A decklist, in the order the cards were listed.
 ///
@@ -114,9 +129,16 @@ pub struct Step<'a> {
     pub turn: u32,
     pub turn_player: u8,
     pub phase: String,
-    /// Who owes the next decision, if anyone.
+    /// Who owes the next decision, if anyone. Human-facing.
     pub pending: Option<String>,
     pub game_over: Option<String>,
+    /// The same two, as the exact `Debug` form a replay can compare against.
+    /// Separate from the fields above so the readable ones stay free to change
+    /// without silently weakening the check.
+    #[serde(default)]
+    pub pending_repr: String,
+    #[serde(default)]
+    pub game_over_repr: String,
     /// Every instance id mentioned above, resolved. Includes the current
     /// battle's participants, so a Counter can be checked against the card
     /// actually under attack without cross-referencing earlier records.
@@ -165,6 +187,7 @@ impl SessionLog {
         let mut writer = BufWriter::new(File::create(&path)?);
         let header = Header {
             kind: Cow::Borrowed(HEADER),
+            version: FORMAT_VERSION,
             started_at,
             seed,
             first_player: config.first_player.0,
@@ -246,6 +269,8 @@ impl SessionLog {
             phase: format!("{:?}", state.phase),
             pending: state.pending.as_ref().map(|p| format!("{p:?}")),
             game_over: state.game_over.map(|r| format!("{r:?}")),
+            pending_repr: format!("{:?}", state.pending),
+            game_over_repr: format!("{:?}", state.game_over),
             cards,
             battle: state.battle.as_ref().map(|b| BattleRef {
                 step: format!("{:?}", b.step),
@@ -294,6 +319,11 @@ pub enum ReadError {
     },
     #[error("{path} is empty: a log begins with a header record")]
     Empty { path: PathBuf },
+    #[error(
+        "log format version {found}, this build replays version {expected}; \
+         re-record it or use a matching build"
+    )]
+    Version { expected: u32, found: u32 },
     #[error("{path} line {line}: {source}")]
     Malformed {
         path: PathBuf,
@@ -340,6 +370,12 @@ pub fn read(path: impl AsRef<Path>) -> Result<SessionRecord, ReadError> {
     }
 
     let header: Header<'static> = parse(&path, 1, &lines[0], HEADER)?;
+    if header.version != FORMAT_VERSION {
+        return Err(ReadError::Version {
+            expected: FORMAT_VERSION,
+            found: header.version,
+        });
+    }
     if header.first_player > 1 {
         return Err(ReadError::BadSeat {
             path,
@@ -405,6 +441,24 @@ struct Kind {
     kind: String,
 }
 
+/// Where two event lists first disagree.
+///
+/// Equal lengths with different contents is the case that matters: reporting
+/// only the counts reads as though nothing is wrong.
+fn first_difference(expected: &[GameEvent], actual: &[GameEvent]) -> String {
+    match expected.iter().zip(actual).position(|(e, a)| e != a) {
+        Some(i) => format!(
+            "first at index {i}: replayed {:?}, recorded {:?}",
+            actual[i], expected[i]
+        ),
+        None if expected.len() == actual.len() => "identical".to_string(),
+        None => format!(
+            "first {} match, then the lists differ in length",
+            expected.len().min(actual.len())
+        ),
+    }
+}
+
 /// A replay that matched the log.
 pub struct Verified {
     /// Records replayed, including the setup record.
@@ -433,12 +487,25 @@ pub enum Divergence {
         expected: u64,
         actual: u64,
     },
-    #[error("step {step}: {} events, recorded {}", actual.len(), expected.len())]
+    #[error(
+        "step {step}: events differ ({}); replayed {}, recorded {}",
+        first_difference(expected, actual),
+        actual.len(),
+        expected.len()
+    )]
     Events {
         step: u64,
         action: Option<Box<Action>>,
         expected: Vec<GameEvent>,
         actual: Vec<GameEvent>,
+    },
+    #[error("step {step}: {field} is {actual:?}, recorded {expected:?}")]
+    State {
+        step: u64,
+        action: Option<Box<Action>>,
+        field: &'static str,
+        expected: String,
+        actual: String,
     },
     #[error("step {step}: the log records no action, but setup was already replayed")]
     MissingAction { step: u64 },
@@ -475,6 +542,7 @@ impl SessionRecord {
         // `Game::new` left. Taking it means a second such record is caught
         // rather than silently re-checked against a stale opening.
         let mut opening = Some(opening);
+        let mut replayed = 0usize;
         for record in &self.steps {
             let outcome = match &record.action {
                 None => opening
@@ -492,10 +560,11 @@ impl SessionRecord {
                 }
             };
             check(record, &outcome, &game)?;
+            replayed += 1;
         }
 
         Ok(Verified {
-            steps: self.steps.len(),
+            steps: replayed,
             final_hash: game.state.state_hash(),
             game,
         })
@@ -529,6 +598,45 @@ fn check(record: &Step, outcome: &StepOutcome, game: &Game) -> Result<(), Diverg
             action: action(),
             expected: record.events.to_vec(),
             actual: outcome.events.clone(),
+        });
+    }
+
+    // The hash is not enough on its own. `GameState::state_hash` folds only the
+    // pending decision's discriminant and owner, and only whether the game is
+    // over — so a change to a `Pending` payload, or to *why* someone lost,
+    // matches on hash while being exactly the kind of regression an old log is
+    // kept to catch.
+    let position: [(&'static str, String, &String); 3] = [
+        ("phase", format!("{:?}", game.state.phase), &record.phase),
+        (
+            "pending",
+            format!("{:?}", game.state.pending),
+            &record.pending_repr,
+        ),
+        (
+            "game_over",
+            format!("{:?}", game.state.game_over),
+            &record.game_over_repr,
+        ),
+    ];
+    for (field, actual, expected) in position {
+        if &actual != expected {
+            return Err(Divergence::State {
+                step: record.n,
+                action: action(),
+                field,
+                expected: expected.clone(),
+                actual,
+            });
+        }
+    }
+    if game.state.turn != record.turn {
+        return Err(Divergence::State {
+            step: record.n,
+            action: action(),
+            field: "turn",
+            expected: record.turn.to_string(),
+            actual: game.state.turn.to_string(),
         });
     }
     Ok(())

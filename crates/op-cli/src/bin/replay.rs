@@ -52,7 +52,7 @@ fn run() -> Result<bool> {
     };
 
     let data_dir = options.data_dir.clone().unwrap_or_else(data::data_dir);
-    let db = data::load_db(&data_dir)?;
+    let db = data::load_db_offline(&data_dir)?;
     let scripts: Arc<dyn ScriptSource + Send + Sync> = Arc::new(Cards::new(&db));
     let db = Arc::new(db);
 
@@ -61,7 +61,17 @@ fn run() -> Result<bool> {
 
     for path in &options.logs {
         println!("{}", path.display());
-        let record = replay::read(path).with_context(|| format!("reading {}", path.display()))?;
+        let record = match replay::read(path) {
+            Ok(record) => record,
+            Err(err) => {
+                // Sweeping debug/*.jsonl is the point of this tool. Aborting on
+                // the first unreadable file would let one stale log hide every
+                // divergence after it.
+                println!("  UNREADABLE — {err}");
+                all_matched = false;
+                continue;
+            }
+        };
 
         let header = &record.header;
         println!(
@@ -127,6 +137,7 @@ fn report(record: &replay::SessionRecord, divergence: &Divergence) {
         Divergence::Rejected { step, .. }
         | Divergence::Hash { step, .. }
         | Divergence::Events { step, .. }
+        | Divergence::State { step, .. }
         | Divergence::MissingAction { step } => Some(*step),
         Divergence::Setup(_) => None,
     };

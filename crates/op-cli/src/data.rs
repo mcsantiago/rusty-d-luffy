@@ -27,7 +27,26 @@ pub fn data_dir() -> PathBuf {
 
 /// Loads the card database, fetching it first if this is a bare checkout.
 pub fn load_db(data_dir: &Path) -> Result<CardDb> {
+    load_db_inner(data_dir, true)
+}
+
+/// Loads the card database, failing rather than fetching when it is absent.
+///
+/// For tools that verify rather than play: a mistyped `--data-dir` should be an
+/// error, not a several-hundred-request download of the entire card pool.
+pub fn load_db_offline(data_dir: &Path) -> Result<CardDb> {
+    load_db_inner(data_dir, false)
+}
+
+fn load_db_inner(data_dir: &Path, may_fetch: bool) -> Result<CardDb> {
     let cards = data_dir.join("cards");
+    if !op_ingest::is_populated(&cards) && !may_fetch {
+        anyhow::bail!(
+            "no card data in {} — fetch it first with `op-fetch --data-dir {}`",
+            cards.display(),
+            data_dir.display()
+        );
+    }
     if !op_ingest::is_populated(&cards) {
         println!("No card data yet — fetching (this happens once)...");
         let plan = op_ingest::Plan {
