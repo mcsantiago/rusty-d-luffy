@@ -223,42 +223,60 @@ fn ismcts_beats_the_heuristic_it_rolls_out_with() {
     );
 }
 
+/// Plays search against the heuristic, panicking on the first action either
+/// agent offers that the rules reject.
+fn every_action_is_legal(seed: u64, db: &Arc<CardDb>, cards: &Scripts) {
+    let config = GameConfig {
+        seed,
+        first_player: PlayerId::P0,
+        decks: [st01(), st02()],
+        allow_illegal_decks: false,
+    };
+    let (mut game, _) = Game::new(config, Arc::clone(db), Arc::clone(cards)).expect("legal decks");
+
+    let mut p0 = IsmctsAgent::new(IsmctsConfig {
+        iterations: 40,
+        rollout_depth: 25,
+        seed,
+        ..Default::default()
+    });
+    let mut p1 = HeuristicAgent::new(StdRng::seed_from_u64(seed));
+
+    let mut actions = 0;
+    while !game.is_over() {
+        let Some(pending) = game.pending() else { break };
+        let actor = pending.player();
+        let action = if actor == PlayerId::P0 {
+            p0.choose(&game, actor)
+        } else {
+            p1.choose(&game, actor)
+        };
+        // The seed is in the message because the seeds no longer run in order.
+        game.step(action.clone())
+            .unwrap_or_else(|e| panic!("seed {seed}: illegal action {action:?}: {e}"));
+        actions += 1;
+        assert!(actions < 20_000, "seed {seed}: game did not terminate");
+    }
+}
+
 #[test]
 fn agents_never_produce_an_illegal_action() {
     let Some((db, cards)) = load() else { return };
-    for seed in 0..6u64 {
-        let config = GameConfig {
-            seed,
-            first_player: PlayerId::P0,
-            decks: [st01(), st02()],
-            allow_illegal_decks: false,
-        };
-        let (mut game, _) =
-            Game::new(config, Arc::clone(&db), Arc::clone(&cards)).expect("legal decks");
+    let (db, cards) = (&db, &cards);
 
-        let mut p0 = IsmctsAgent::new(IsmctsConfig {
-            iterations: 40,
-            rollout_depth: 25,
-            seed,
-            ..Default::default()
-        });
-        let mut p1 = HeuristicAgent::new(StdRng::seed_from_u64(seed));
-
-        let mut actions = 0;
-        while !game.is_over() {
-            let Some(pending) = game.pending() else { break };
-            let actor = pending.player();
-            let action = if actor == PlayerId::P0 {
-                p0.choose(&game, actor)
-            } else {
-                p1.choose(&game, actor)
-            };
-            game.step(action.clone())
-                .unwrap_or_else(|e| panic!("agent produced illegal action {action:?}: {e}"));
-            actions += 1;
-            assert!(actions < 20_000, "game did not terminate");
+    // A thread per seed: they are independent and there are only a handful.
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..6u64)
+            .map(|seed| scope.spawn(move || every_action_is_legal(seed, db, cards)))
+            .collect();
+        for handle in handles {
+            // Re-raise rather than unwrap, so a failing assertion reports its
+            // own message instead of `Any { .. }`.
+            if let Err(payload) = handle.join() {
+                std::panic::resume_unwind(payload);
+            }
         }
-    }
+    });
 }
 
 #[test]
