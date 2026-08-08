@@ -102,6 +102,35 @@ impl Timing {
     }
 }
 
+/// Which DON!! in the cost area an effect may give.
+///
+/// A card reading "give up to 1 rested DON!! card" qualifies the DON!! being
+/// *selected*, not the state it ends up in. Bandai's ST01-001 ruling settles
+/// it: a DON!! already given to another Character may not be taken, on the
+/// grounds that it is not a rested DON!! card.
+///
+/// Giving therefore never changes a DON!!'s rest state. They are rested on the
+/// way back to the cost area instead, by 6-2-3 and 6-5-5-4.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DonSource {
+    /// The ordinary give of 6-5-5-1.
+    Active,
+    /// Only DON!! already rested, as ST01-001 and friends require.
+    Rested,
+    /// Either, for a card that qualifies neither way.
+    Any,
+}
+
+impl DonSource {
+    pub fn admits(self, rested: bool) -> bool {
+        match self {
+            DonSource::Active => !rested,
+            DonSource::Rested => rested,
+            DonSource::Any => true,
+        }
+    }
+}
+
 /// One instruction in a card script.
 ///
 /// The vocabulary grows as sets are implemented; the kernel only needs to know
@@ -125,8 +154,12 @@ pub enum EffectOp {
     /// Draw `n` cards.
     Draw { player: Who, n: u8 },
     /// Give `n` DON!! from the cost area to the card bound under `key`
-    /// (6-5-5-1). `rested` DON!! are given rested.
-    GiveDon { key: String, n: u8, rested: bool },
+    /// (6-5-5-1), choosing them per [`DonSource`].
+    GiveDon {
+        key: String,
+        n: u8,
+        source: DonSource,
+    },
     /// Move every card bound under `key` to `to`.
     MoveTo { key: String, to: Zone },
     /// Play every card bound under `key` from wherever it is, for free.

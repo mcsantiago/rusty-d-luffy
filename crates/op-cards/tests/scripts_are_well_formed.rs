@@ -70,3 +70,45 @@ fn every_script_survives_a_json_round_trip() {
         assert_eq!(script, back, "{number} changed across a round trip");
     }
 }
+
+/// Every card whose text reads "rested DON!! card" must select a rested one.
+///
+/// Bandai's ST01-001 ruling settles that the adjective qualifies the DON!!
+/// being selected rather than the state it ends up in, so a script that asked
+/// for `Any` here would let the effect spend an active DON!! the player still
+/// needs. The three cards below are the whole of it today; a new one that
+/// genuinely takes an active DON!! by effect should be added to the expected
+/// set deliberately, not by relaxing the assertion.
+#[test]
+fn a_rested_don_effect_selects_only_rested_don() {
+    use op_core::effect::{DonSource, EffectOp};
+
+    let mut seen: Vec<&str> = Vec::new();
+    for (number, script) in all_scripts() {
+        let ops = script
+            .activated
+            .iter()
+            .flat_map(|e| e.ops.iter())
+            .chain(script.auto.iter().flat_map(|e| e.ops.iter()))
+            .chain(script.trigger.iter());
+        for op in ops {
+            if let EffectOp::GiveDon { source, .. } = op {
+                assert_eq!(
+                    *source,
+                    DonSource::Rested,
+                    "{number} gives DON!! from {source:?}; every printed give today reads \
+                     \"rested DON!! card\""
+                );
+                seen.push(number);
+            }
+        }
+    }
+
+    seen.sort_unstable();
+    seen.dedup();
+    assert_eq!(
+        seen,
+        vec!["ST01-001", "ST01-007", "ST01-011"],
+        "the set of DON!!-giving cards changed; check each against its printed text"
+    );
+}

@@ -6,6 +6,7 @@
 mod common;
 
 use common::{deck_of, game_with, TestCards, TestScripts};
+use op_core::effect::DonSource;
 use op_core::state::Placement;
 use op_core::zone::Zone;
 use op_core::{Action, BattleStep, Game, GameEvent, GameOver, Pending, Phase, PlayerId};
@@ -249,6 +250,152 @@ fn rule_6_1_1_every_phase_of_a_turn_announces_itself() {
             (Phase::End, PlayerId::P1),
         ]
     );
+}
+
+// ---- giving DON!! ----------------------------------------------------------
+
+/// A card whose activated effect gives `n` DON!! to itself, drawn per `source`.
+/// Bound to the effect's own card so the give is not preceded by a choice.
+fn gives_don_to_self(source: DonSource, n: u8) -> op_core::script::CardScript {
+    op_core::script::CardScript {
+        activated: vec![op_core::script::ActivatedEffect {
+            conditions: vec![],
+            cost: op_core::script::ActivationCost::default(),
+            ops: vec![op_core::effect::EffectOp::GiveDon {
+                key: op_core::effect::SELF_BINDING.to_string(),
+                n,
+                source,
+            }],
+            slot: 0,
+            once_per_turn: false,
+        }],
+        ..Default::default()
+    }
+}
+
+/// Sets up turn 3, where the turn player holds three DON!!, with a source card
+/// in play whose effect gives to itself from `source`.
+fn don_fixture(source: DonSource, n: u8) -> (Game, op_core::CardInstanceId) {
+    let cards = TestCards::new();
+    let scripts = TestScripts::default().with(cards.def("CHR-5K"), gives_don_to_self(source, n));
+    let (mut game, _) = game_with(
+        &cards,
+        scripts,
+        7,
+        ("LDR-001", deck_of("CHR-5K", 30)),
+        ("LDR-002", deck_of("CHR-5K", 30)),
+    );
+    to_main(&mut game);
+    end_turn(&mut game);
+    end_turn(&mut game);
+    assert_eq!(game.state.player(PlayerId::P0).cost_area.len(), 3);
+    let source = put_in_play(&mut game, PlayerId::P0, "CHR-5K");
+    (game, source)
+}
+
+/// 6-5-5-1: "Place 1 **active** DON!! card from your cost area underneath your
+/// Leader or a Character card". The ordinary give takes an active DON!!, and
+/// giving does not rest it — 6-2-3 does that on its way back.
+#[test]
+fn rule_6_5_5_1_the_ordinary_give_takes_an_active_don_and_leaves_it_active() {
+    let (_cards, mut game) = fixture();
+    to_main(&mut game);
+    let leader = game.state.player(PlayerId::P0).leader.unwrap();
+
+    // Turn 1 gives the first player exactly one DON!!. Rest it, and the give
+    // has nothing to take.
+    let don = game.state.player(PlayerId::P0).cost_area[0];
+    game.state.card_mut(don).rested = true;
+    assert!(
+        !op_core::legal_actions(&game).contains(&Action::GiveDon { to: leader }),
+        "a rested DON!! is not an active one (6-5-5-1)"
+    );
+    assert!(game.step(Action::GiveDon { to: leader }).is_err());
+
+    game.state.card_mut(don).rested = false;
+    game.step(Action::GiveDon { to: leader }).unwrap();
+    assert_eq!(game.state.card(leader).attached_don, vec![don]);
+    assert!(
+        game.state.card(don).is_active(),
+        "giving is not resting; the DON!! keeps the state it was in"
+    );
+}
+
+/// ST01-001: "Give this Leader or 1 of your Characters up to 1 rested DON!!
+/// card." The adjective qualifies the DON!! being *selected*, not the state it
+/// ends up in — Bandai's ruling refuses a DON!! already given to another
+/// Character on exactly that ground. An active DON!! is therefore not
+/// available to the effect, however much the player would like to spend it.
+#[test]
+fn a_rested_don_source_takes_the_rested_don_and_not_an_active_one() {
+    let (mut game, source) = don_fixture(DonSource::Rested, 1);
+
+    let don = game.state.player(PlayerId::P0).cost_area.clone();
+    game.state.card_mut(don[2]).rested = true;
+
+    game.step(Action::ActivateEffect {
+        card: source,
+        slot: 0,
+        discard: vec![],
+    })
+    .unwrap();
+
+    assert_eq!(
+        game.state.card(source).attached_don,
+        vec![don[2]],
+        "the rested DON!! is the only one the effect may take"
+    );
+    assert!(
+        game.state.card(don[2]).rested,
+        "it was already rested and giving does not change that"
+    );
+    for &active in &don[..2] {
+        assert!(
+            game.state.card(active).is_active(),
+            "an untaken DON!! is left alone"
+        );
+    }
+}
+
+/// The same effect with nothing rested to take. "Up to 1" makes giving zero
+/// legal, so this resolves and simply gives nothing — the failure it guards
+/// against is the engine helping itself to an active DON!! instead.
+#[test]
+fn a_rested_don_source_gives_nothing_when_every_don_is_active() {
+    let (mut game, source) = don_fixture(DonSource::Rested, 1);
+    let before = game.state.player(PlayerId::P0).cost_area.clone();
+
+    game.step(Action::ActivateEffect {
+        card: source,
+        slot: 0,
+        discard: vec![],
+    })
+    .unwrap();
+
+    assert!(game.state.card(source).attached_don.is_empty());
+    assert_eq!(
+        game.state.player(PlayerId::P0).cost_area,
+        before,
+        "no DON!! left the cost area"
+    );
+}
+
+/// `n` is a ceiling, not a quota: two rested DON!! satisfy a give of two, and
+/// one rested DON!! gives one rather than reaching for an active one.
+#[test]
+fn a_rested_don_source_gives_as_many_as_are_rested_up_to_n() {
+    let (mut game, source) = don_fixture(DonSource::Rested, 2);
+    let don = game.state.player(PlayerId::P0).cost_area.clone();
+    game.state.card_mut(don[1]).rested = true;
+
+    game.step(Action::ActivateEffect {
+        card: source,
+        slot: 0,
+        discard: vec![],
+    })
+    .unwrap();
+
+    assert_eq!(game.state.card(source).attached_don, vec![don[1]]);
 }
 
 // ---- battle ----------------------------------------------------------------
