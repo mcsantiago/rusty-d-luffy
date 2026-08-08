@@ -325,6 +325,14 @@ impl Game {
             Action::EndMainPhase => {
                 self.state.pending = None;
                 self.state.phase = Phase::End;
+                // The other four phases are announced in `tick_phase`; the End
+                // Phase is entered from here because the Main Phase ends on the
+                // turn player's word, and a trace that omits the announcement
+                // cannot tell a quiet End Phase from one that never ran.
+                events.push(GameEvent::PhaseStarted {
+                    phase: Phase::End,
+                    player,
+                });
                 Ok(())
             }
 
