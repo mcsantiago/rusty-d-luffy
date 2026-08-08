@@ -66,9 +66,12 @@ pub struct Snapshot {
 
 /// Where session logs go, or `None` when disabled.
 ///
+/// Resolved by the caller rather than read here: a session that consulted the
+/// process environment would make concurrent tests race on a global.
+///
 /// `OPSIM_DEBUG_DIR=` (empty) turns logging off; anything else overrides the
-/// default of `<repo>/debug`.
-fn debug_dir() -> Option<std::path::PathBuf> {
+/// default of `<data dir>/debug`.
+pub fn debug_dir_from_env() -> Option<std::path::PathBuf> {
     match std::env::var("OPSIM_DEBUG_DIR") {
         Ok(dir) if dir.is_empty() => None,
         Ok(dir) => Some(std::path::PathBuf::from(dir)),
@@ -123,16 +126,34 @@ impl Difficulty {
     }
 }
 
+/// Everything needed to start a session.
+///
+/// A struct rather than eight positional arguments: at that width the call site
+/// stops being readable and swapping two booleans compiles fine.
+pub struct SessionConfig {
+    pub seed: u64,
+    pub human_deck: DeckList,
+    pub ai_deck: DeckList,
+    pub human_first: bool,
+    pub difficulty: Difficulty,
+    /// Where to write the session log, or `None` to disable it.
+    pub debug_dir: Option<std::path::PathBuf>,
+}
+
 impl Session {
     pub fn new(
         db: Arc<CardDb>,
         scripts: Arc<dyn ScriptSource + Send + Sync>,
-        seed: u64,
-        human_deck: DeckList,
-        ai_deck: DeckList,
-        human_first: bool,
-        difficulty: Difficulty,
+        options: SessionConfig,
     ) -> Result<Session, SetupError> {
+        let SessionConfig {
+            seed,
+            human_deck,
+            ai_deck,
+            human_first,
+            difficulty,
+            debug_dir,
+        } = options;
         let config = GameConfig {
             seed,
             first_player: if human_first {
@@ -147,7 +168,7 @@ impl Session {
         let (game, opening) = Game::new(config, Arc::clone(&db), scripts)?;
 
         // Best-effort: a session that cannot write a debug log still plays.
-        let debug = debug_dir().and_then(|dir| {
+        let debug = debug_dir.and_then(|dir| {
             op_core::SessionLog::create(
                 dir,
                 seed,
@@ -370,7 +391,16 @@ impl Session {
 /// Cards an action refers to, for UI highlighting.
 fn action_cards(action: &Action) -> Vec<CardInstanceId> {
     match action {
-        Action::PlayCard { card } | Action::ActivateEffect { card, .. } => vec![*card],
+        Action::PlayCard { card, replacing } => {
+            let mut ids = vec![*card];
+            ids.extend(replacing.iter().copied());
+            ids
+        }
+        Action::ActivateEffect { card, discard, .. } => {
+            let mut ids = vec![*card];
+            ids.extend(discard.iter().copied());
+            ids
+        }
         Action::GiveDon { to } => vec![*to],
         Action::Attack { attacker, target } => vec![*attacker, *target],
         Action::Block {
@@ -401,17 +431,29 @@ mod tests {
     use op_cards::Cards;
 
     fn fixture() -> Option<Session> {
+        fixture_logging_to(None)
+    }
+
+    /// A unique directory per caller, so tests never share log state.
+    fn temp_log_dir(tag: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("opsim-{tag}-{}", std::process::id()))
+    }
+
+    fn fixture_logging_to(debug_dir: Option<std::path::PathBuf>) -> Option<Session> {
         let dir = crate::ingest::data_dir().join("cards");
         let db = CardDb::load_dir(dir).ok()?;
         let scripts: Arc<dyn ScriptSource + Send + Sync> = Arc::new(Cards::new(&db));
         Session::new(
             Arc::new(db),
             scripts,
-            7,
-            crate::st01(),
-            crate::st02(),
-            true,
-            Difficulty::Easy,
+            SessionConfig {
+                seed: 7,
+                human_deck: crate::st01(),
+                ai_deck: crate::st02(),
+                human_first: true,
+                difficulty: Difficulty::Easy,
+                debug_dir,
+            },
         )
         .ok()
         .map(|mut session| {
@@ -509,11 +551,8 @@ mod tests {
     /// fresh game from the same seed must reproduce those hashes exactly.
     #[test]
     fn the_debug_log_replays_the_session_it_recorded() {
-        let dir = std::env::temp_dir().join(format!("opsim-log-{}", std::process::id()));
-        std::env::set_var("OPSIM_DEBUG_DIR", &dir);
-
-        let Some(mut session) = fixture() else {
-            std::env::remove_var("OPSIM_DEBUG_DIR");
+        let dir = temp_log_dir("log");
+        let Some(mut session) = fixture_logging_to(Some(dir.clone())) else {
             return;
         };
         let path = session
@@ -556,7 +595,6 @@ mod tests {
         );
 
         std::fs::remove_dir_all(&dir).ok();
-        std::env::remove_var("OPSIM_DEBUG_DIR");
     }
 
     #[test]

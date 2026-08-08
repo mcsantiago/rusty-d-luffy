@@ -220,7 +220,16 @@ impl SessionLog {
 
 fn action_ids(action: &Action) -> Vec<crate::ids::CardInstanceId> {
     match action {
-        Action::PlayCard { card } | Action::ActivateEffect { card, .. } => vec![*card],
+        Action::PlayCard { card, replacing } => {
+            let mut ids = vec![*card];
+            ids.extend(replacing.iter().copied());
+            ids
+        }
+        Action::ActivateEffect { card, discard, .. } => {
+            let mut ids = vec![*card];
+            ids.extend(discard.iter().copied());
+            ids
+        }
         Action::GiveDon { to } => vec![*to],
         Action::Attack { attacker, target } => vec![*attacker, *target],
         Action::Block { blocker: Some(c) } => vec![*c],

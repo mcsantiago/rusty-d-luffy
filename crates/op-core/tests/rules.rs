@@ -862,8 +862,12 @@ fn rule_9_2_1_2_empty_deck_loses_the_game() {
 
 // ---- area limits -----------------------------------------------------------
 
+/// 3-7-6-1: with five Characters out, a sixth is played by trashing one of
+/// them first — the play is not refused, and *which* one is the player's
+/// choice. The trash happens before the new card arrives, so its [On Play]
+/// sees a board of four plus itself.
 #[test]
-fn rule_3_7_6_character_area_holds_at_most_five() {
+fn rule_3_7_6_1_a_full_character_area_is_made_room_in() {
     let cards = TestCards::new();
     let (mut game, _) = game_with(
         &cards,
@@ -873,16 +877,129 @@ fn rule_3_7_6_character_area_holds_at_most_five() {
         ("LDR-002", deck_of("CHR-2K", 30)),
     );
     to_main(&mut game);
+    // Enough DON!! to afford the play.
+    end_turn(&mut game);
+    end_turn(&mut game);
+
+    let mut board = Vec::new();
     for _ in 0..5 {
-        put_in_play(&mut game, PlayerId::P0, "CHR-2K");
+        board.push(put_in_play(&mut game, PlayerId::P0, "CHR-2K"));
     }
     assert_eq!(game.state.player(PlayerId::P0).characters.len(), 5);
 
-    // With a full area, playing a sixth is rejected rather than silently
-    // overflowing (3-7-6-1 requires a trash-to-make-room choice, not yet
-    // supported).
     let in_hand = game.state.player(PlayerId::P0).hand[0];
-    assert!(game.step(Action::PlayCard { card: in_hand }).is_err());
+
+    // Naming nothing is illegal — the rule requires making room.
+    assert!(game
+        .step(Action::PlayCard {
+            card: in_hand,
+            replacing: None
+        })
+        .is_err());
+
+    // The generator offers one option per Character already out.
+    let offers: Vec<_> = op_core::legal_actions(&game)
+        .into_iter()
+        .filter(|a| matches!(a, Action::PlayCard { card, .. } if *card == in_hand))
+        .collect();
+    assert_eq!(
+        offers.len(),
+        5,
+        "one option per Character that could be trashed"
+    );
+
+    // Trashing someone else's Character is not making room on your own board.
+    let theirs = put_in_play(&mut game, PlayerId::P1, "CHR-2K");
+    assert!(game
+        .step(Action::PlayCard {
+            card: in_hand,
+            replacing: Some(theirs)
+        })
+        .is_err());
+
+    let victim = board[2];
+    game.step(Action::PlayCard {
+        card: in_hand,
+        replacing: Some(victim),
+    })
+    .unwrap();
+
+    assert_eq!(game.state.card(victim).zone, Zone::Trash);
+    assert_eq!(game.state.card(in_hand).zone, Zone::Character);
+    assert_eq!(
+        game.state.player(PlayerId::P0).characters.len(),
+        5,
+        "still five: one left as one arrived"
+    );
+}
+
+/// 8-3-1: a cost that trashes from hand is a choice, so every way of paying it
+/// is offered rather than the engine picking for the player.
+#[test]
+fn rule_8_3_1_a_hand_cost_is_the_players_choice() {
+    let cards = TestCards::new();
+    let scripts = TestScripts::default().with(
+        cards.def("CHR-5K"),
+        op_core::script::CardScript {
+            activated: vec![op_core::script::ActivatedEffect {
+                conditions: vec![],
+                cost: op_core::script::ActivationCost {
+                    rest_don: 0,
+                    rest_self: false,
+                    trash_from_hand: 1,
+                },
+                ops: vec![op_core::effect::EffectOp::Draw {
+                    player: op_core::effect::Who::You,
+                    n: 1,
+                }],
+                slot: 0,
+                once_per_turn: false,
+            }],
+            ..Default::default()
+        },
+    );
+    let (mut game, _) = game_with(
+        &cards,
+        scripts,
+        7,
+        ("LDR-001", deck_of("CHR-5K", 30)),
+        ("LDR-002", deck_of("CHR-5K", 30)),
+    );
+    to_main(&mut game);
+    let source = put_in_play(&mut game, PlayerId::P0, "CHR-5K");
+
+    let hand = game.state.player(PlayerId::P0).hand.clone();
+    let offers: Vec<_> = op_core::legal_actions(&game)
+        .into_iter()
+        .filter(|a| matches!(a, Action::ActivateEffect { .. }))
+        .collect();
+    assert_eq!(
+        offers.len(),
+        hand.len(),
+        "one option per card that could be trashed"
+    );
+
+    // Naming the wrong number of cards is rejected rather than silently fixed.
+    assert!(game
+        .step(Action::ActivateEffect {
+            card: source,
+            slot: 0,
+            discard: vec![]
+        })
+        .is_err());
+
+    // The named card is the one that goes, not whichever came first.
+    let chosen = hand[2];
+    game.step(Action::ActivateEffect {
+        card: source,
+        slot: 0,
+        discard: vec![chosen],
+    })
+    .unwrap();
+    assert_eq!(game.state.card(chosen).zone, Zone::Trash);
+    assert!(hand[0..2]
+        .iter()
+        .all(|&c| game.state.card(c).zone == Zone::Hand));
 }
 
 // ---- battle step sequencing ------------------------------------------------

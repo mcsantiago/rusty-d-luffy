@@ -118,25 +118,44 @@ pub fn action(action: &Action, game: &Game) -> String {
         Action::Mulligan(true) => "mulligan (shuffle back and redraw 5)".into(),
         Action::Mulligan(false) => "keep this hand".into(),
         Action::EndMainPhase => "end turn".into(),
-        Action::PlayCard { card } => {
+        Action::PlayCard { card, replacing } => {
             let suffix = if game.play_finds_targets(*card) {
                 ""
             } else {
                 " (no target)"
             };
+            let room = match replacing {
+                Some(victim) => format!(", trashing {}", name(*victim)),
+                None => String::new(),
+            };
             format!(
-                "play {} (cost {}){suffix}",
+                "play {} (cost {}){room}{suffix}",
                 name(*card),
                 db.get(game.state.card(*card).def).cost
             )
         }
-        Action::ActivateEffect { card, slot } => {
+        Action::ActivateEffect {
+            card,
+            slot,
+            discard,
+        } => {
             let suffix = if game.activation_finds_targets(*card, *slot) {
                 ""
             } else {
                 " (no target)"
             };
-            format!("activate {}'s effect #{slot}{suffix}", name(*card))
+            let cost = match discard.as_slice() {
+                [] => String::new(),
+                cards => format!(
+                    ", trashing {}",
+                    cards
+                        .iter()
+                        .map(|&c| name(c))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            };
+            format!("activate {}'s effect #{slot}{cost}{suffix}", name(*card))
         }
         Action::GiveDon { to } => format!("give 1 DON!! to {}", name(*to)),
         Action::Attack { attacker, target } => format!(

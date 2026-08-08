@@ -14,9 +14,20 @@ pub enum Action {
 
     /// Play a Character or Stage card, or activate a `[Main]` Event, from hand
     /// (6-5-3-1).
-    PlayCard { card: CardInstanceId },
+    PlayCard {
+        card: CardInstanceId,
+        /// A Character to trash first, when the Character area is already full
+        /// (3-7-6-1). `None` when there is room.
+        replacing: Option<CardInstanceId>,
+    },
     /// Activate an `[Activate: Main]` effect on a card in play (6-5-4-1).
-    ActivateEffect { card: CardInstanceId, slot: u8 },
+    ActivateEffect {
+        card: CardInstanceId,
+        slot: u8,
+        /// Cards from hand to trash as part of the activation cost (8-3-1).
+        /// Which ones is the player's choice, so it travels with the action.
+        discard: Vec<CardInstanceId>,
+    },
     /// Give one active DON!! from the cost area to a Leader or Character
     /// (6-5-5-1).
     GiveDon { to: CardInstanceId },

@@ -155,7 +155,7 @@ fn shape(action: &Action, game: &Game) -> f64 {
         // Keeping the mulligan is fine; taking one is only worth it on a hand
         // with nothing cheap, which one-ply search cannot judge.
         Action::Mulligan(true) => -0.1,
-        Action::PlayCard { card } => {
+        Action::PlayCard { card, .. } => {
             // Prefer developing Characters over spending Events early.
             match game.db().get(game.state.card(*card).def).category {
                 Category::Character => 0.5,

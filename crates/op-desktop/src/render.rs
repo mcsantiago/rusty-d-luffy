@@ -105,19 +105,27 @@ pub fn action_label(action: &Action, game: &Game) -> String {
         Action::Mulligan(true) => "Mulligan".into(),
         Action::Mulligan(false) => "Keep".into(),
         Action::EndMainPhase => "End turn".into(),
-        Action::PlayCard { card } => {
+        Action::PlayCard { card, replacing } => {
             let suffix = if game.play_finds_targets(*card) {
                 ""
             } else {
                 " — no target"
             };
+            let room = match replacing {
+                Some(victim) => format!(" — trashing {}", name(*victim)),
+                None => String::new(),
+            };
             format!(
-                "Play {} ({}){suffix}",
+                "Play {} ({}){room}{suffix}",
                 name(*card),
                 db.get(game.state.card(*card).def).cost
             )
         }
-        Action::ActivateEffect { card, slot } => {
+        Action::ActivateEffect {
+            card,
+            slot,
+            discard,
+        } => {
             // Flagged rather than hidden: activating with no target is legal
             // and still costs, so the player should see the trade rather than
             // discover it afterwards.
@@ -126,7 +134,18 @@ pub fn action_label(action: &Action, game: &Game) -> String {
             } else {
                 " — no target"
             };
-            format!("Activate {}{suffix}", name(*card))
+            let cost = match discard.as_slice() {
+                [] => String::new(),
+                cards => format!(
+                    " — trashing {}",
+                    cards
+                        .iter()
+                        .map(|&c| name(c))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            };
+            format!("Activate {}{cost}{suffix}", name(*card))
         }
         Action::GiveDon { to } => format!("DON!! → {}", name(*to)),
         Action::Attack { attacker, target } => format!(

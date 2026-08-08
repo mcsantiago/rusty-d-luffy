@@ -45,9 +45,18 @@ pub fn legal_actions(game: &Game) -> Vec<Action> {
                     continue;
                 }
                 match def.category {
-                    // Playing into a full Character area needs the
-                    // trash-to-make-room choice from 3-7-6-1, not yet modelled.
-                    Category::Character if characters_full => continue,
+                    // 3-7-6-1: with a full board, every Character already out
+                    // is a legal thing to trash for room, so the choice is
+                    // enumerated rather than the play being refused.
+                    Category::Character if characters_full => {
+                        for victim in state.player(player).characters.clone() {
+                            out.push(Action::PlayCard {
+                                card,
+                                replacing: Some(victim),
+                            });
+                        }
+                        continue;
+                    }
                     Category::Character | Category::Stage => {}
                     // An Event with no [Main] effect has nothing to do when
                     // played (its text may be [Counter]-only).
@@ -63,7 +72,10 @@ pub fn legal_actions(game: &Game) -> Vec<Action> {
                     }
                     Category::Leader | Category::Don => continue,
                 }
-                out.push(Action::PlayCard { card });
+                out.push(Action::PlayCard {
+                    card,
+                    replacing: None,
+                });
             }
 
             // Activate an effect on a card in play (6-5-4-1).
@@ -87,10 +99,18 @@ pub fn legal_actions(game: &Game) -> Vec<Action> {
                     if !game.can_pay(player, card, &effect.cost) {
                         continue;
                     }
-                    out.push(Action::ActivateEffect {
-                        card,
-                        slot: effect.slot,
-                    });
+                    // A hand cost is a choice: which cards to trash is the
+                    // player's, so each option is offered separately.
+                    for discard in subsets_of_size(
+                        state.player(player).hand.as_slice(),
+                        effect.cost.trash_from_hand as usize,
+                    ) {
+                        out.push(Action::ActivateEffect {
+                            card,
+                            slot: effect.slot,
+                            discard,
+                        });
+                    }
                 }
             }
 
@@ -153,6 +173,20 @@ pub fn legal_actions(game: &Game) -> Vec<Action> {
             .map(|cards| Action::Choose { cards })
             .collect(),
     }
+}
+
+/// All subsets of `options` with exactly `n` elements.
+///
+/// `n == 0` yields one empty choice, which is what an effect with no hand cost
+/// needs: exactly one way to pay nothing.
+fn subsets_of_size(options: &[CardInstanceId], n: usize) -> Vec<Vec<CardInstanceId>> {
+    if n == 0 {
+        return vec![Vec::new()];
+    }
+    subsets(options, n)
+        .into_iter()
+        .filter(|s| s.len() == n)
+        .collect()
 }
 
 /// All subsets of `options` with at most `max` elements, smallest first.

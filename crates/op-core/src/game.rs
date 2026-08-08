@@ -349,11 +349,13 @@ impl Game {
                 Ok(())
             }
 
-            Action::PlayCard { card } => self.play_card(player, card, events),
+            Action::PlayCard { card, replacing } => self.play_card(player, card, replacing, events),
 
-            Action::ActivateEffect { card, slot } => {
-                self.activate_effect(player, card, slot, events)
-            }
+            Action::ActivateEffect {
+                card,
+                slot,
+                discard,
+            } => self.activate_effect(player, card, slot, &discard, events),
 
             Action::Attack { attacker, target } => {
                 self.declare_attack(player, attacker, target, events)
@@ -370,6 +372,7 @@ impl Game {
         &mut self,
         player: PlayerId,
         card: CardInstanceId,
+        replacing: Option<CardInstanceId>,
         events: &mut Vec<GameEvent>,
     ) -> Result<(), IllegalAction> {
         if self.state.card(card).zone != Zone::Hand || self.state.card(card).controller != player {
@@ -386,17 +389,41 @@ impl Game {
             )));
         }
 
-        // 3-7-6-1 / 3-8-5-1: a full area must be made room in *before* the new
-        // card is played. Not yet supported as a player choice, so playing into
-        // a full Character area is simply illegal for now.
-        if category == Category::Character && self.state.player(player).characters.len() >= 5 {
-            return Err(IllegalAction::Illegal(
-                "Character area is full (trashing to make room is not implemented)".into(),
-            ));
+        // 3-7-6-1: with 5 Characters out, playing a sixth means trashing one of
+        // them first. Which one is the player's choice, and the trash happens
+        // *before* the new card arrives — so its [On Play] sees a board of four
+        // plus itself.
+        let full = self.state.player(player).characters.len() >= 5;
+        match (category, full, replacing) {
+            (Category::Character, true, None) => {
+                return Err(IllegalAction::Illegal(
+                    "the Character area is full; name a Character to trash (3-7-6-1)".into(),
+                ))
+            }
+            (Category::Character, true, Some(victim)) => {
+                if !self.state.player(player).characters.contains(&victim) {
+                    return Err(IllegalAction::Illegal(
+                        "can only trash one of your own Characters to make room".into(),
+                    ));
+                }
+            }
+            (_, _, Some(_)) => {
+                return Err(IllegalAction::Illegal(
+                    "nothing needs trashing to play that card".into(),
+                ))
+            }
+            _ => {}
         }
 
         for don in available.into_iter().take(cost as usize) {
             self.state.card_mut(don).rested = true;
+        }
+
+        // Ordered per 3-7-6-1: room is made before the card is played.
+        if let Some(victim) = replacing {
+            self.state
+                .move_card(victim, player, Zone::Trash, Placement::Top);
+            events.push(GameEvent::KnockedOut { card: victim });
         }
 
         match category {
@@ -467,6 +494,7 @@ impl Game {
         player: PlayerId,
         card: CardInstanceId,
         slot: u8,
+        discard: &[CardInstanceId],
         events: &mut Vec<GameEvent>,
     ) -> Result<(), IllegalAction> {
         if self.state.card(card).controller != player || !self.state.card(card).zone.is_field() {
@@ -500,7 +528,22 @@ impl Game {
                 "cannot pay the activation cost".into(),
             ));
         }
-        self.pay(player, card, &effect.cost, events);
+        if discard.len() != effect.cost.trash_from_hand as usize {
+            return Err(IllegalAction::Illegal(format!(
+                "this costs {} card(s) from hand, {} named",
+                effect.cost.trash_from_hand,
+                discard.len()
+            )));
+        }
+        if let Some(bad) = discard
+            .iter()
+            .find(|c| !self.state.player(player).hand.contains(c))
+        {
+            return Err(IllegalAction::Illegal(format!(
+                "{bad:?} is not in your hand"
+            )));
+        }
+        self.pay(player, card, &effect.cost, discard, events);
 
         if effect.once_per_turn {
             self.state.card_mut(card).used_once_per_turn.push(slot);
@@ -539,6 +582,7 @@ impl Game {
         player: PlayerId,
         card: CardInstanceId,
         cost: &crate::script::ActivationCost,
+        discard: &[CardInstanceId],
         events: &mut Vec<GameEvent>,
     ) {
         for don in self
@@ -552,15 +596,9 @@ impl Game {
             self.state.card_mut(card).rested = true;
             events.push(GameEvent::Rested { card });
         }
-        // Which cards are trashed is a choice the player should make; until the
-        // choice plumbing covers costs, the leftmost cards are taken. Only
-        // ST02-001 uses this, and only for a single card.
-        for _ in 0..cost.trash_from_hand {
-            let Some(&discard) = self.state.player(player).hand.first() else {
-                break;
-            };
+        for &card in discard {
             self.state
-                .move_card(discard, player, Zone::Trash, Placement::Top);
+                .move_card(card, player, Zone::Trash, Placement::Top);
         }
     }
 
@@ -1829,7 +1867,18 @@ impl Game {
                 if !self.can_pay(controller, card, &effect.cost) {
                     continue;
                 }
-                self.pay(controller, card, &effect.cost, events);
+                // An auto effect fires without an action to carry a choice, so
+                // a hand cost still takes the leftmost card. Only ST06-002 is
+                // affected today; a real choice needs the effect to suspend.
+                let discard: Vec<CardInstanceId> = self
+                    .state
+                    .player(controller)
+                    .hand
+                    .iter()
+                    .take(effect.cost.trash_from_hand as usize)
+                    .copied()
+                    .collect();
+                self.pay(controller, card, &effect.cost, &discard, events);
             }
             if effect.once_per_turn {
                 self.state

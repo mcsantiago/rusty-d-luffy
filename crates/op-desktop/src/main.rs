@@ -313,11 +313,14 @@ fn new_game(
     let session = Session::new(
         Arc::clone(&loaded.db),
         Arc::clone(&loaded.scripts),
-        seed,
-        human.clone(),
-        ai.clone(),
-        you_first,
-        Difficulty::parse(&difficulty),
+        session::SessionConfig {
+            seed,
+            human_deck: human.clone(),
+            ai_deck: ai.clone(),
+            human_first: you_first,
+            difficulty: Difficulty::parse(&difficulty),
+            debug_dir: session::debug_dir_from_env(),
+        },
     )
     .map_err(|e| e.to_string())?;
 
