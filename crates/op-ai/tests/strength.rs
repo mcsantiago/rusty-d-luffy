@@ -104,7 +104,7 @@ fn play_match(
     baseline: &impl Fn(u64) -> Box<dyn Agent>,
 ) -> Option<bool> {
     // Alternate seats: on odd seeds the challenger goes second.
-    let challenger_seat = if seed % 2 == 0 {
+    let challenger_seat = if seed.is_multiple_of(2) {
         PlayerId::P0
     } else {
         PlayerId::P1
