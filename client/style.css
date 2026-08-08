@@ -437,6 +437,32 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
    obscures — a heavy blur hides the cards being discussed. */
 #battle-modal { backdrop-filter: blur(2px); background: rgba(8, 12, 18, 0.72); }
 
+/* ---- the Life card that came off ----
+
+   Shown because the choice is otherwise blind: "Activate [Trigger]" or "Take
+   into hand", about a card the player has not seen. */
+
+#trigger-tray {
+  margin-top: 14px;
+  padding: 12px;
+  border-radius: 10px;
+  background: rgba(240, 180, 41, 0.07);
+  border: 1px solid rgba(240, 180, 41, 0.35);
+}
+.trigger-head {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent-2);
+  margin-bottom: 10px;
+  text-align: center;
+}
+.trigger-body { display: flex; gap: 14px; align-items: flex-start; }
+.trigger-art { flex: 0 0 auto; width: 92px; }
+.trigger-art img { width: 100%; border-radius: 7px; display: block; }
+.trigger-text { flex: 1; min-width: 0; }
+
 /* ---- the Counter step ----
 
    The cards you may spend, in the modal that is asking about them. The flat

@@ -784,6 +784,43 @@ function renderBeats(snap) {
   box.scrollTop = box.scrollHeight;
 }
 
+// ---- the Life card that came off ---------------------------------------------
+//
+// Taking damage offers "Activate [Trigger]" or "Take into hand" — a choice
+// about a card the player has not seen. The card is theirs to see either way:
+// declining adds it to their hand unrevealed (10-1-5-2).
+
+async function renderTriggerTray(snap) {
+  const tray = $("trigger-tray");
+  const number = snap.trigger_card;
+  if (!number) {
+    tray.hidden = true;
+    return;
+  }
+
+  const info = catalogue.get(number);
+  const uri = await art(number);
+  if (snap !== lastSnapshot) return; // superseded while the art resolved
+
+  tray.innerHTML = `
+    <div class="trigger-head">This Life card has a [Trigger]</div>
+    <div class="trigger-body">
+      <div class="trigger-art">${uri ? `<img src="${uri}" alt="${number}" />` : number}</div>
+      <div class="trigger-text">
+        <div class="pname">${info ? info.name : number}</div>
+        <div class="pmeta">${
+          info
+            ? `${info.category} · cost ${info.cost}${info.power != null ? ` · ${info.power}` : ""}`
+            : number
+        }</div>
+        ${info && info.trigger ? `<div class="ptrigger">${info.trigger}</div>` : ""}
+        ${info && info.effect ? `<div class="peffect">${info.effect.replaceAll("<br>", "<br/>")}</div>` : ""}
+      </div>
+    </div>
+  `;
+  tray.hidden = false;
+}
+
 // ---- the Counter step -------------------------------------------------------
 //
 // The flat list named the cards involved and nothing more, which does not
@@ -926,6 +963,7 @@ function render(snap) {
   renderBattle(view);
   if (view.battle) renderBeats(snap);
   renderCounterTray(snap);
+  renderTriggerTray(snap);
   announceResult(snap.battle_result ?? null);
   renderChoose(snap);
 

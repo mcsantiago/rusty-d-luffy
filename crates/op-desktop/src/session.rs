@@ -82,6 +82,12 @@ pub struct Snapshot {
     /// it resolves, so anything shown only while one is running is gone before
     /// it can be read. Cleared by the next attack.
     pub battle_result: Option<String>,
+    /// The Life card whose [Trigger] the human is being asked about.
+    ///
+    /// Sent only to the player taking the damage, who may see it whichever way
+    /// they answer: declining adds it to their hand unrevealed (10-1-5-2). The
+    /// opponent learns it by revelation on activation (10-1-5-1), never here.
+    pub trigger_card: Option<String>,
     /// Which decision the human owes, as a stable tag.
     ///
     /// The UI cannot tell them apart from the options alone, and needs to: a
@@ -499,6 +505,15 @@ impl Session {
             .filter(|p| p.player() == self.human)
             .map(pending_kind);
 
+        let trigger_card = self
+            .game
+            .pending()
+            .and_then(|p| match p {
+                Pending::Trigger { player, card } if *player == self.human => Some(*card),
+                _ => None,
+            })
+            .map(|card| self.db.get(self.game.state.card(card).def).number.clone());
+
         let choose_up_to = self
             .game
             .pending()
@@ -518,6 +533,7 @@ impl Session {
             battle_beats: self.battle_beats.clone(),
             battle_result: self.battle_result.clone(),
             pending_kind,
+            trigger_card,
             choose_up_to,
             thinking: self.ai_to_act(),
             session_id: self.session_id.clone(),
@@ -696,6 +712,72 @@ mod tests {
             session.run_ai();
         }
         panic!("game did not finish");
+    }
+
+    /// A session on `seed`, for tests that need more than one game to meet the
+    /// situation they are about.
+    fn seeded(seed: u64) -> Option<Session> {
+        let dir = crate::ingest::data_dir().join("cards");
+        let db = CardDb::load_dir(dir).ok()?;
+        let scripts: Arc<dyn ScriptSource + Send + Sync> = Arc::new(Cards::new(&db));
+        Session::new(
+            Arc::new(db),
+            scripts,
+            SessionConfig {
+                seed,
+                human_deck: crate::st01(),
+                ai_deck: crate::st02(),
+                human_first: true,
+                difficulty: Difficulty::Easy,
+                debug_dir: None,
+            },
+        )
+        .ok()
+        .map(|mut session| {
+            session.run_ai();
+            session
+        })
+    }
+
+    /// The Life card behind a [Trigger] is named only while its own player is
+    /// deciding about it. They may see it either way — declining adds it to
+    /// their hand unrevealed (10-1-5-2) — but the opponent learns it by
+    /// revelation on activation (10-1-5-1), and the snapshot must not become a
+    /// second route to it.
+    #[test]
+    fn a_trigger_card_is_named_only_while_its_own_player_is_asked() {
+        let mut asked = 0;
+
+        for seed in 0..12u64 {
+            let Some(mut session) = seeded(seed) else {
+                return;
+            };
+
+            for _ in 0..5_000 {
+                let snap = session.snapshot();
+                if snap.over.is_some() {
+                    break;
+                }
+                if snap.pending_kind == Some("trigger") {
+                    assert!(
+                        snap.trigger_card.is_some(),
+                        "seed {seed}: asked about a Trigger without saying which card"
+                    );
+                    asked += 1;
+                } else {
+                    assert!(
+                        snap.trigger_card.is_none(),
+                        "seed {seed}: named a Life card with no Trigger decision pending ({:?})",
+                        snap.pending_kind
+                    );
+                }
+                session.apply_human(0).expect("first option must be legal");
+                session.run_ai();
+            }
+        }
+
+        // Otherwise only the negative half was ever exercised.
+        assert!(asked > 0, "no Trigger decision arose in 12 games");
     }
 
     /// The battle narration is the only place the UI says what the defender
