@@ -444,7 +444,7 @@ fn fetch_images(
                 let n = done.fetch_add(1, Ordering::Relaxed) + 1;
                 // Throttled: smooth enough for a bar without thousands of
                 // updates.
-                if n % 10 == 0 || n == total {
+                if n.is_multiple_of(10) || n == total {
                     progress(Progress::Counter {
                         phase: "images",
                         current: n,
