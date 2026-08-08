@@ -405,6 +405,49 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
 .card.inert:hover { opacity: 1; }
 .card.selected { outline-color: var(--accent-2); }
 
+/* ---- whose turn it is ----
+
+   Front and centre, once, then gone. Sits *below* the overlays: a modal is
+   always a question waiting on the player and must never be covered by an
+   announcement they cannot dismiss. */
+
+#turn-banner {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) scale(0.96);
+  padding: 22px 60px;
+  border-radius: 16px;
+  background: rgba(8, 12, 18, 0.9);
+  border: 1px solid var(--line);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.65);
+  text-align: center;
+  z-index: 45;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.22s, transform 0.22s;
+}
+#turn-banner.shown { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+#turn-banner.yours { border-color: var(--accent-2); }
+#turn-banner.theirs { border-color: var(--line); }
+
+.turn-who {
+  font-size: 34px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  text-transform: capitalize;
+  line-height: 1.1;
+}
+#turn-banner.yours .turn-who { color: var(--accent-2); }
+#turn-banner.theirs .turn-who { color: var(--muted); }
+.turn-no {
+  margin-top: 4px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--muted);
+}
+
 /* ---- the result of a battle ----
 
    Its own overlay rather than a line in the modal: the engine clears the

@@ -809,6 +809,40 @@ function renderBeats(snap) {
   box.scrollTop = box.scrollHeight;
 }
 
+// ---- whose turn it is -------------------------------------------------------
+//
+// The turn label in the top bar changes without anyone looking at it. A turn
+// passing is the largest thing that happens in the game and deserves to be
+// unmissable once, rather than permanently.
+
+const TURN_HOLD = 1500;
+let lastTurn = null;
+let turnTimer = null;
+
+function announceTurn(snap) {
+  const turn = snap.view.turn;
+  // Turn 0 is setup, which nobody owns.
+  if (turn < 1 || turn === lastTurn) return;
+  lastTurn = turn;
+
+  const box = $("turn-banner");
+  clearTimeout(turnTimer);
+  box.className = snap.turn_label.startsWith("Your") ? "yours" : "theirs";
+  box.innerHTML = `
+    <div class="turn-who">${snap.turn_label}</div>
+    <div class="turn-no">Turn ${turn}</div>
+  `;
+  box.hidden = false;
+  requestAnimationFrame(() => box.classList.add("shown"));
+
+  turnTimer = setTimeout(() => {
+    box.classList.remove("shown");
+    turnTimer = setTimeout(() => {
+      box.hidden = true;
+    }, 260);
+  }, TURN_HOLD);
+}
+
 // ---- the Life card that came off ---------------------------------------------
 //
 // Taking damage offers "Activate [Trigger]" or "Take into hand" — a choice
@@ -989,6 +1023,7 @@ function render(snap) {
   if (view.battle) renderBeats(snap);
   renderCounterTray(snap);
   renderTriggerTray(snap);
+  announceTurn(snap);
   announceResult(snap.battle_result ?? null);
   renderChoose(snap);
 
@@ -1089,6 +1124,8 @@ async function start() {
     });
     catalogue = new Map(result.catalogue.map((c) => [c.number, c]));
     artCache.clear();
+    // A new game starts at turn 1 again, which is a change worth announcing.
+    lastTurn = null;
     lastSnapshot = result.snapshot;
     $("setup").hidden = true;
     $("result").hidden = true;
