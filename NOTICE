@@ -20,7 +20,11 @@ That distinction is easy to miss here, because the application downloads
 copyrighted material at runtime. It is worth stating plainly:
 
   * No card text, card images, or other Bandai material is contained in this
-    repository, in any release artefact, or in any compiled binary.
+    repository, in any release artefact, or in any compiled binary, with one
+    exception: README.md embeds a single screenshot of the running client
+    (docs/screenshot.png), which necessarily shows card art fetched at
+    runtime. It is included to illustrate the software, and is not offered
+    as card data or as a source of artwork.
 
   * On first run the application fetches card data and images from the
     official One Piece Card Game card list, by way of a community-maintained

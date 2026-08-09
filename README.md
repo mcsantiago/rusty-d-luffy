@@ -3,6 +3,15 @@
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![Card coverage: 3/59 sets scripted](https://img.shields.io/badge/card_sets-3%2F59_scripted-orange)](#coverage-of-the-source)
 
+<p align="center">
+  <img src="docs/screenshot.png" alt="The desktop client on turn 5. Each player's zones are laid out facing each other across the middle of the table: leader, character area, stage, life, deck and trash, with the DON!! cost areas furthest apart at the top and bottom. Three characters are in play for the near player, one for the far player, each showing its current power. The player's hand runs along the bottom edge and a turn-by-turn game log fills the right-hand column." width="900">
+</p>
+
+<p align="center">
+  <em>The desktop client on turn 5 — both boards, the hand, and the turn log.
+  Card art is fetched at runtime and is not part of this repository.</em>
+</p>
+
 > Unofficial fan project. Not affiliated with or endorsed by Bandai, Toei
 > Animation, Shueisha, or Eiichiro Oda. Source code is AGPL-3.0; third-party
 > names, trademarks, card data and artwork remain the property of their
