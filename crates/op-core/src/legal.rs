@@ -93,7 +93,14 @@ pub fn legal_actions(game: &Game) -> Vec<Action> {
                     {
                         continue;
                     }
-                    if !derive::conditions_hold(state, game.db(), &[], card, &effect.conditions) {
+                    if !derive::conditions_hold(
+                        state,
+                        game.db(),
+                        &[],
+                        card,
+                        None,
+                        &effect.conditions,
+                    ) {
                         continue;
                     }
                     if !game.can_pay(player, card, &effect.cost) {

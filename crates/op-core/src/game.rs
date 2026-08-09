@@ -567,7 +567,7 @@ impl Game {
             ));
         }
         // 8-4-1-1: conditions must be met before activation.
-        if !derive::conditions_hold(&self.state, &self.db, &[], card, &effect.conditions) {
+        if !derive::conditions_hold(&self.state, &self.db, &[], card, None, &effect.conditions) {
             return Err(IllegalAction::Illegal(
                 "the effect's conditions are not met".into(),
             ));
@@ -1611,6 +1611,17 @@ impl Game {
                     self.state.stack.frames[idx].bind(&key, Vec::new());
                     return OpOutcome::Advance;
                 }
+                // No discretion left, so do not stage a decision: once the
+                // floor reaches the whole pool the only legal answer is every
+                // candidate. "K.O. **all** Characters with a cost of 1 or less"
+                // (ST08-005) is not a choice, and offering it as one would put a
+                // pointless subset enumeration in front of the player and the
+                // search alike.
+                let floor = (select.at_least as usize).min(options.len());
+                if floor == options.len() {
+                    self.state.stack.frames[idx].bind(&key, options);
+                    return OpOutcome::Advance;
+                }
                 self.state.pending = Some(Pending::Choose {
                     player: frame.controller,
                     key,
@@ -1619,48 +1630,6 @@ impl Game {
                     at_least: select.at_least,
                 });
                 OpOutcome::Suspend
-            }
-
-            Op::ChooseFrom { key, from, up_to } => {
-                if frame.has_binding(&key) {
-                    return OpOutcome::Advance;
-                }
-                // Only cards still where the effect can act on them;
-                // 8-1-3-1-3 drops the rest.
-                let options: Vec<CardInstanceId> = frame
-                    .bound(&from)
-                    .iter()
-                    .copied()
-                    .filter(|&c| self.state.card(c).zone.is_field())
-                    .collect();
-                if options.is_empty() {
-                    events.push(GameEvent::NoLegalTargets {
-                        source: frame.source,
-                        controller: frame.controller,
-                    });
-                    self.state.stack.frames[idx].bind(&key, Vec::new());
-                    return OpOutcome::Advance;
-                }
-                self.state.pending = Some(Pending::Choose {
-                    player: frame.controller,
-                    key,
-                    options,
-                    up_to,
-                    at_least: 0,
-                });
-                OpOutcome::Suspend
-            }
-
-            Op::SelectAll { key, select } => {
-                let options = self.selector_options(frame, &select);
-                if options.is_empty() {
-                    events.push(GameEvent::NoLegalTargets {
-                        source: frame.source,
-                        controller: frame.controller,
-                    });
-                }
-                self.state.stack.frames[idx].bind(&key, options);
-                OpOutcome::Advance
             }
 
             Op::Modify {
@@ -1951,6 +1920,7 @@ impl Game {
                     &self.db,
                     &[],
                     frame.source,
+                    Some(frame),
                     std::slice::from_ref(&cond),
                 );
                 let _ = derived;
@@ -1959,16 +1929,6 @@ impl Game {
                 } else {
                     // 8-3-3: nothing after the "if" clause resolves.
                     OpOutcome::Abort
-                }
-            }
-
-            Op::RequireBound { key } => {
-                if frame.bound(&key).is_empty() {
-                    // "If you do" — the player declined the optional half, so
-                    // the consequence does not happen either.
-                    OpOutcome::Abort
-                } else {
-                    OpOutcome::Advance
                 }
             }
         }
@@ -2070,6 +2030,29 @@ impl Game {
         select: &crate::effect::Selector,
     ) -> Vec<CardInstanceId> {
         let derived = self.derived();
+        let keep = |me: &Self, c: CardInstanceId| {
+            derive::matches_filters(
+                &me.state,
+                &me.db,
+                &derived,
+                frame.source,
+                c,
+                &select.filters,
+            )
+        };
+
+        // A pool carried by the frame, for candidates the state can no longer
+        // re-derive. Only cards still where the effect can act on them:
+        // 8-1-3-1-3 drops the rest.
+        if let Some(from) = &select.from {
+            return frame
+                .bound(from)
+                .iter()
+                .copied()
+                .filter(|&c| self.state.card(c).zone.is_field() && keep(self, c))
+                .collect();
+        }
+
         let mut pool: Vec<CardInstanceId> = Vec::new();
         for owner in self.players_of(frame.controller, select.owner) {
             match select.zone {
@@ -2079,18 +2062,7 @@ impl Game {
                 other => pool.extend(self.state.player(owner).zone(other).iter().copied()),
             }
         }
-        pool.into_iter()
-            .filter(|&c| {
-                derive::matches_filters(
-                    &self.state,
-                    &self.db,
-                    &derived,
-                    frame.source,
-                    c,
-                    &select.filters,
-                )
-            })
-            .collect()
+        pool.into_iter().filter(|&c| keep(self, c)).collect()
     }
 
     /// Pushes any auto effects on `card` whose timing has just been met
@@ -2131,7 +2103,8 @@ impl Game {
             {
                 continue;
             }
-            if !derive::conditions_hold(&self.state, &self.db, &[], card, &effect.conditions) {
+            if !derive::conditions_hold(&self.state, &self.db, &[], card, None, &effect.conditions)
+            {
                 continue;
             }
             // 8-3-1-3: a cost that cannot be paid in full cannot be paid at all.

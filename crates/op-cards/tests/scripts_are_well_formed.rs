@@ -42,6 +42,7 @@ fn the_validator_rejects_a_script_with_a_mismatched_key() {
                     select: Selector {
                         zone: Zone::Character,
                         owner: Who::Opponent,
+                        from: None,
                         up_to: 1,
                         at_least: 0,
                         filters: Vec::new(),

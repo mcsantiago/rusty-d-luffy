@@ -128,7 +128,7 @@ pub fn derive_all(state: &GameState, db: &CardDb, scripts: &dyn ScriptSource) ->
                     continue;
                 }
                 for effect in &scripts.script(card.def).permanent {
-                    if !conditions_hold(state, db, &table, source_id, &effect.conditions) {
+                    if !conditions_hold(state, db, &table, source_id, None, &effect.conditions) {
                         continue;
                     }
                     for target in targets_of(state, db, source_id, &effect.scope) {
@@ -197,15 +197,21 @@ fn targets_of(
 ///
 /// `table` is the partially-derived characteristics table, so conditions that
 /// read power see the layers resolved so far — which is what 8-4-6 asks for.
+///
+/// `frame` is the effect being resolved, where there is one. Permanents and an
+/// auto effect's activation conditions are checked with no frame in hand, so a
+/// condition that reads a binding is false for them — see [`Condition::Bound`].
 pub fn conditions_hold(
     state: &GameState,
     db: &CardDb,
     _table: &[Characteristics],
     source: CardInstanceId,
+    frame: Option<&crate::effect::EffectFrame>,
     conditions: &[Condition],
 ) -> bool {
     let card = state.card(source);
     conditions.iter().all(|c| match c {
+        Condition::Bound(key) => frame.is_some_and(|f| !f.bound(key).is_empty()),
         Condition::DonAttached(n) => card.attached_don.len() >= *n as usize,
         Condition::YourTurn => state.turn_player == card.controller,
         Condition::OpponentsTurn => state.turn_player != card.controller,

@@ -10,7 +10,7 @@
 //! divergence is worth a comment naming the rule involved.
 
 use op_core::card::{Category, Color, Keyword};
-use op_core::effect::{Condition, Duration, EffectOp, Filter, Selector, Who, SELF_BINDING};
+use op_core::effect::{Condition, Duration, EffectOp, Filter, Selector, Who, ALL, SELF_BINDING};
 
 // Re-exported so a card script only ever needs `use crate::dsl::*`.
 pub use op_core::effect::Duration::{ThisBattle, ThisTurn};
@@ -28,6 +28,7 @@ pub fn your_battlers(up_to: u8) -> Selector {
     Selector {
         zone: Zone::Leader,
         owner: Who::You,
+        from: None,
         up_to,
         at_least: 0,
         filters: Vec::new(),
@@ -38,6 +39,7 @@ pub fn your_characters(up_to: u8) -> Selector {
     Selector {
         zone: Zone::Character,
         owner: Who::You,
+        from: None,
         up_to,
         at_least: 0,
         filters: Vec::new(),
@@ -48,6 +50,7 @@ pub fn opponent_characters(up_to: u8) -> Selector {
     Selector {
         zone: Zone::Character,
         owner: Who::Opponent,
+        from: None,
         up_to,
         at_least: 0,
         filters: Vec::new(),
@@ -61,6 +64,7 @@ pub fn all_characters() -> Selector {
     Selector {
         zone: Zone::Character,
         owner: Who::Both,
+        from: None,
         up_to: 0,
         at_least: 0,
         filters: Vec::new(),
@@ -71,6 +75,7 @@ pub fn your_trash(up_to: u8) -> Selector {
     Selector {
         zone: Zone::Trash,
         owner: Who::You,
+        from: None,
         up_to,
         at_least: 0,
         filters: Vec::new(),
@@ -81,6 +86,7 @@ pub fn your_don(up_to: u8) -> Selector {
     Selector {
         zone: Zone::Cost,
         owner: Who::You,
+        from: None,
         up_to,
         at_least: 0,
         filters: Vec::new(),
@@ -91,6 +97,7 @@ pub fn opponent_don(up_to: u8) -> Selector {
     Selector {
         zone: Zone::Cost,
         owner: Who::Opponent,
+        from: None,
         up_to,
         at_least: 0,
         filters: Vec::new(),
@@ -101,6 +108,7 @@ pub fn your_hand(up_to: u8) -> Selector {
     Selector {
         zone: Zone::Hand,
         owner: Who::You,
+        from: None,
         up_to,
         at_least: 0,
         filters: Vec::new(),
@@ -173,8 +181,13 @@ pub fn choose(key: &str, select: Selector) -> EffectOp {
 
 /// Binds everything matching, with no question asked — "**all** Characters
 /// with a cost of 1 or less".
-pub fn select_all(key: &str, select: Selector) -> EffectOp {
-    EffectOp::SelectAll {
+///
+/// A `choose` whose floor is the whole pool: the only legal answer is every
+/// candidate, so the engine binds without staging a decision.
+pub fn select_all(key: &str, mut select: Selector) -> EffectOp {
+    select.up_to = ALL;
+    select.at_least = ALL;
+    EffectOp::Choose {
         key: key.to_string(),
         select,
     }
@@ -182,11 +195,19 @@ pub fn select_all(key: &str, select: Selector) -> EffectOp {
 
 /// "Up to `up_to` of the cards bound under `from`." Used where the pool cannot
 /// be re-derived from the board at choice time — see [`BATTLED`].
+///
+/// A `choose` whose pool is a binding rather than a zone query.
 pub fn choose_from(key: &str, from: &str, up_to: u8) -> EffectOp {
-    EffectOp::ChooseFrom {
+    EffectOp::Choose {
         key: key.to_string(),
-        from: from.to_string(),
-        up_to,
+        select: Selector {
+            zone: Zone::Character,
+            owner: Who::You,
+            from: Some(from.to_string()),
+            up_to,
+            at_least: 0,
+            filters: Vec::new(),
+        },
     }
 }
 
@@ -194,8 +215,8 @@ pub fn choose_from(key: &str, from: &str, up_to: u8) -> EffectOp {
 /// player took the optional half, which is a `choose` they may answer with
 /// nothing.
 pub fn require_bound(key: &str) -> EffectOp {
-    EffectOp::RequireBound {
-        key: key.to_string(),
+    EffectOp::RequireIf {
+        cond: Condition::Bound(key.to_string()),
     }
 }
 

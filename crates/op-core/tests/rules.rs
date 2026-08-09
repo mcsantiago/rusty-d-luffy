@@ -401,6 +401,155 @@ fn a_rested_don_source_gives_as_many_as_are_rested_up_to_n() {
     assert_eq!(game.state.card(source).attached_don, vec![don[1]]);
 }
 
+/// 8-4-4-1 lets a player choose fewer only where the text offers a choice.
+/// A selector whose floor is the whole pool offers none — "K.O. **all**
+/// Characters with a cost of 1 or less" is an instruction — so the engine binds
+/// every candidate without staging a decision.
+///
+/// This pins the *mechanism*, not the outcome: a version that parked on
+/// `Pending::Choose` with a single legal subset would K.O. the same cards and
+/// pass any board-level assertion, while handing the search a pointless subset
+/// enumeration and the player a question with one answer.
+#[test]
+fn rule_8_4_4_1_a_choice_with_no_discretion_is_not_offered_as_one() {
+    use op_core::effect::{EffectOp, Selector, Who, ALL};
+
+    let cards = TestCards::new();
+    let ko_every_character = op_core::script::CardScript {
+        activated: vec![op_core::script::ActivatedEffect {
+            conditions: vec![],
+            cost: op_core::script::ActivationCost::default(),
+            ops: vec![
+                EffectOp::Choose {
+                    key: "k".to_string(),
+                    select: Selector {
+                        zone: Zone::Character,
+                        owner: Who::Opponent,
+                        from: None,
+                        up_to: ALL,
+                        at_least: ALL,
+                        filters: vec![],
+                    },
+                },
+                EffectOp::Ko {
+                    key: "k".to_string(),
+                },
+            ],
+            slot: 0,
+            once_per_turn: false,
+        }],
+        ..Default::default()
+    };
+    let scripts = TestScripts::default().with(cards.def("CHR-5K"), ko_every_character);
+    let (mut game, _) = game_with(
+        &cards,
+        scripts,
+        7,
+        ("LDR-001", deck_of("CHR-5K", 30)),
+        ("LDR-002", deck_of("CHR-5K", 30)),
+    );
+    to_main(&mut game);
+
+    let source = put_in_play(&mut game, PlayerId::P0, "CHR-5K");
+    let victims = [
+        put_in_play(&mut game, PlayerId::P1, "CHR-5K"),
+        put_in_play(&mut game, PlayerId::P1, "CHR-5K"),
+    ];
+
+    let out = game
+        .step(Action::ActivateEffect {
+            card: source,
+            slot: 0,
+            discard: vec![],
+        })
+        .unwrap();
+
+    assert!(
+        !matches!(out.pending, Some(Pending::Choose { .. })),
+        "a choice with one legal answer must not be staged as a decision"
+    );
+    for victim in victims {
+        assert_eq!(
+            game.state.card(victim).zone,
+            Zone::Trash,
+            "every candidate should have been taken"
+        );
+    }
+}
+
+/// The "If you do," half of "you may X. If you do, Y." (8-3-3): a condition
+/// that reads the frame's own bindings, so declining the optional half stops
+/// the consequence. Outside a resolving effect there is no frame, and it reads
+/// false rather than panicking.
+#[test]
+fn rule_8_3_3_a_condition_can_read_whether_the_player_took_the_optional_half() {
+    use op_core::effect::{Condition, EffectOp, Selector, Who};
+
+    let cards = TestCards::new();
+    let may_ko_then_draw = op_core::script::CardScript {
+        activated: vec![op_core::script::ActivatedEffect {
+            conditions: vec![],
+            cost: op_core::script::ActivationCost::default(),
+            ops: vec![
+                // "You may K.O. up to 1 of your opponent's Characters."
+                EffectOp::Choose {
+                    key: "k".to_string(),
+                    select: Selector {
+                        zone: Zone::Character,
+                        owner: Who::Opponent,
+                        from: None,
+                        up_to: 1,
+                        at_least: 0,
+                        filters: vec![],
+                    },
+                },
+                EffectOp::Ko {
+                    key: "k".to_string(),
+                },
+                // "If you do, draw 1."
+                EffectOp::RequireIf {
+                    cond: Condition::Bound("k".to_string()),
+                },
+                EffectOp::Draw {
+                    player: Who::You,
+                    n: 1,
+                },
+            ],
+            slot: 0,
+            once_per_turn: false,
+        }],
+        ..Default::default()
+    };
+    let scripts = TestScripts::default().with(cards.def("CHR-5K"), may_ko_then_draw);
+    let (mut game, _) = game_with(
+        &cards,
+        scripts,
+        7,
+        ("LDR-001", deck_of("CHR-5K", 30)),
+        ("LDR-002", deck_of("CHR-5K", 30)),
+    );
+    to_main(&mut game);
+
+    let source = put_in_play(&mut game, PlayerId::P0, "CHR-5K");
+    put_in_play(&mut game, PlayerId::P1, "CHR-5K");
+
+    let hand_before = game.state.player(PlayerId::P0).hand.len();
+    game.step(Action::ActivateEffect {
+        card: source,
+        slot: 0,
+        discard: vec![],
+    })
+    .unwrap();
+
+    // Decline: bind nothing, so the draw must not happen.
+    game.step(Action::Choose { cards: vec![] }).unwrap();
+    assert_eq!(
+        game.state.player(PlayerId::P0).hand.len(),
+        hand_before,
+        "declining the optional half must stop the consequence"
+    );
+}
+
 // ---- battle ----------------------------------------------------------------
 
 /// Declines every block and counter offered, accumulating the events, and

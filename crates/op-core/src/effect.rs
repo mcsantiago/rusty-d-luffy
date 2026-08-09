@@ -148,23 +148,6 @@ impl DonSource {
 pub enum EffectOp {
     /// Ask the controller to pick cards matching `select`, binding the result.
     Choose { key: String, select: Selector },
-    /// Bind *every* card matching `select`, with no decision to make. "K.O.
-    /// **all** Characters with a cost of 1 or less" (ST08-005) is not a choice,
-    /// and offering it as one would put a pointless subset enumeration in front
-    /// of both the player and the search.
-    SelectAll { key: String, select: Selector },
-    /// Ask the controller to pick up to `up_to` of the cards already bound
-    /// under `from`, binding the answer under `key`.
-    ///
-    /// Exists because some pools cannot be re-derived from the state at choice
-    /// time. `[BATTLED]` is the case in hand: the battle is over by the time an
-    /// `EndOfBattle` effect resolves, so the participants have to travel with
-    /// the frame (ST08-013).
-    ChooseFrom {
-        key: String,
-        from: String,
-        up_to: u8,
-    },
     /// Grant a modifier to every card bound under `key`.
     Modify {
         key: String,
@@ -207,10 +190,6 @@ pub enum EffectOp {
     },
     /// Stop resolving unless the condition holds (8-3-3 "if" clauses).
     RequireIf { cond: Condition },
-    /// Stop resolving unless `key` bound at least one card — the "If you do,"
-    /// half of "you may X. If you do, Y." (ST08-013), where the optionality of
-    /// X is a `Choose` the player may answer with nothing.
-    RequireBound { key: String },
     /// Add `n` DON!! cards from the DON!! deck to the cost area (ST04-008 and
     /// friends). `rested` decides which way up they arrive; "set it as active"
     /// makes the DON!! spendable this turn, which is the whole point of the
@@ -235,8 +214,6 @@ impl EffectOp {
     pub fn name(&self) -> &'static str {
         match self {
             EffectOp::Choose { .. } => "Choose",
-            EffectOp::SelectAll { .. } => "SelectAll",
-            EffectOp::ChooseFrom { .. } => "ChooseFrom",
             EffectOp::Modify { .. } => "Modify",
             EffectOp::Ko { .. } => "Ko",
             EffectOp::Rest { .. } => "Rest",
@@ -250,7 +227,6 @@ impl EffectOp {
             EffectOp::AddDon { .. } => "AddDon",
             EffectOp::TrashLife { .. } => "TrashLife",
             EffectOp::TrashIfInLimbo => "TrashIfInLimbo",
-            EffectOp::RequireBound { .. } => "RequireBound",
         }
     }
 
@@ -269,12 +245,10 @@ impl EffectOp {
             | EffectOp::SetActive { key }
             | EffectOp::GiveDon { key, .. }
             | EffectOp::MoveTo { key, .. }
-            | EffectOp::RequireBound { key }
-            | EffectOp::ChooseFrom { from: key, .. }
             | EffectOp::PlayBound { key } => Some(key),
-            EffectOp::Choose { .. }
-            | EffectOp::SelectAll { .. }
-            | EffectOp::DigTop { .. }
+            // A selector whose pool is a binding reads that key.
+            EffectOp::Choose { select, .. } => select.from.as_deref(),
+            EffectOp::DigTop { .. }
             | EffectOp::Draw { .. }
             | EffectOp::AddDon { .. }
             | EffectOp::TrashLife { .. }
@@ -286,10 +260,7 @@ impl EffectOp {
     /// The binding key this op fills in, if any.
     pub fn binds(&self) -> Option<&str> {
         match self {
-            EffectOp::Choose { key, .. }
-            | EffectOp::SelectAll { key, .. }
-            | EffectOp::ChooseFrom { key, .. }
-            | EffectOp::DigTop { key, .. } => Some(key),
+            EffectOp::Choose { key, .. } | EffectOp::DigTop { key, .. } => Some(key),
             EffectOp::Modify { .. }
             | EffectOp::Ko { .. }
             | EffectOp::Rest { .. }
@@ -301,7 +272,6 @@ impl EffectOp {
             | EffectOp::AddDon { .. }
             | EffectOp::TrashLife { .. }
             | EffectOp::RequireIf { .. }
-            | EffectOp::RequireBound { .. }
             | EffectOp::TrashIfInLimbo => None,
         }
     }
@@ -317,11 +287,30 @@ pub enum Who {
     Both,
 }
 
+/// `up_to`/`at_least` value meaning "however many there are".
+///
+/// Both are capped at the size of the pool, so this reads as "all of them".
+/// Setting both to `ALL` leaves exactly one legal answer — every candidate — and
+/// [`EffectOp::Choose`] then binds without asking, which is what "K.O. **all**
+/// Characters with a cost of 1 or less" (ST08-005) means.
+pub const ALL: u8 = u8::MAX;
+
 /// A filtered request for cards, resolved against the state at choice time.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Selector {
     pub zone: Zone,
     pub owner: Who,
+    /// Draw the pool from a binding instead of a zone query.
+    ///
+    /// `None` is the ordinary case: `zone` and `owner` name the pool. `Some(key)`
+    /// takes the cards already bound under `key`, keeping only those still on
+    /// the field (8-1-3-1-3), and ignores `zone`/`owner`.
+    ///
+    /// Exists because some pools cannot be re-derived from the state when the
+    /// choice is made: `[BATTLED]` is the case in hand, since the battle is over
+    /// by the time an `EndOfBattle` effect resolves, so the participants have to
+    /// travel with the frame (ST08-013).
+    pub from: Option<String>,
     /// `Some(n)` means "up to n"; the player may always choose fewer, including
     /// zero, when the text says "up to" (8-4-4-1).
     pub up_to: u8,
@@ -356,6 +345,14 @@ pub enum Filter {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Condition {
+    /// At least one card is bound under `key` in the resolving frame — the
+    /// "If you do," half of "you may X. If you do, Y." (ST08-013), where the
+    /// optionality of X is a `Choose` the player may answer with nothing.
+    ///
+    /// Only meaningful inside a resolving effect. A permanent or an auto
+    /// effect's activation conditions are checked with no frame in hand, and
+    /// this reads false there.
+    Bound(String),
     /// `[DON!! xN]` — at least N DON!! given to the source card (10-2-9).
     DonAttached(u8),
     /// `[Your Turn]` (10-2-11).
