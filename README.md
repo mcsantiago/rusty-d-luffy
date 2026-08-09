@@ -264,8 +264,6 @@ rollback needed.
 
 These are deliberate and localised; each is commented at its site.
 
-- Playing into a full Character area is rejected rather than offering the
-  trash-to-make-room choice of 3-7-6-1.
 - `DigTop` returns unchosen cards to the bottom of the deck in draw order; the
   card text permits any order, but the ordering is unobservable and enumerating
   permutations would inflate the action space for search and RL.

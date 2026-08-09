@@ -184,26 +184,7 @@ pub fn legal_actions(game: &Game) -> Vec<Action> {
             up_to,
             at_least,
             ..
-        } => {
-            // A mandatory choice with fewer legal cards than it asks for takes
-            // as many as exist, rather than leaving the player no legal answer.
-            let floor = (*at_least as usize).min(options.len());
-            let mut out: Vec<Action> = subsets(options, *up_to as usize)
-                .into_iter()
-                .filter(|cards| cards.len() >= floor)
-                .map(|cards| Action::Choose { cards })
-                .collect();
-            // `subsets` truncates by dropping the *largest* subsets, which are
-            // exactly the ones a non-zero floor keeps — so a wide enough choice
-            // could filter down to nothing and stall the game. Unreachable for
-            // any printed card, and cheap to make impossible.
-            if out.is_empty() {
-                out.push(Action::Choose {
-                    cards: options.iter().copied().take(floor).collect(),
-                });
-            }
-            out
-        }
+        } => choose_actions(options, *up_to, *at_least),
     }
 }
 
@@ -219,6 +200,31 @@ fn subsets_of_size(options: &[CardInstanceId], n: usize) -> Vec<Vec<CardInstance
         .into_iter()
         .filter(|s| s.len() == n)
         .collect()
+}
+
+/// Every legal answer to a `Choose`.
+///
+/// Split out of `legal_actions` so the floor and the truncation can be put
+/// against each other without standing up a whole `Game` to do it.
+fn choose_actions(options: &[CardInstanceId], up_to: u8, at_least: u8) -> Vec<Action> {
+    // A mandatory choice with fewer legal cards than it asks for takes as many
+    // as exist, rather than leaving the player no legal answer.
+    let floor = (at_least as usize).min(options.len());
+    let mut out: Vec<Action> = subsets(options, up_to as usize)
+        .into_iter()
+        .filter(|cards| cards.len() >= floor)
+        .map(|cards| Action::Choose { cards })
+        .collect();
+    // `subsets` truncates by dropping the *largest* subsets, which are exactly
+    // the ones a non-zero floor keeps — so a wide enough choice could filter
+    // down to nothing and stall the game. Unreachable for any printed card, and
+    // cheap to make impossible.
+    if out.is_empty() {
+        out.push(Action::Choose {
+            cards: options.iter().copied().take(floor).collect(),
+        });
+    }
+    out
 }
 
 /// All subsets of `options` with at most `max` elements, smallest first.
@@ -284,14 +290,41 @@ mod tests {
     /// engine's own `advance` loop relies on it.
     #[test]
     fn a_mandatory_choice_always_has_a_legal_answer() {
-        // Wide enough that `subsets` truncates, and every surviving subset
-        // would be filtered out by the floor.
+        // Wide enough that `subsets` truncates before reaching any subset the
+        // floor would keep, which is the case the fallback exists for.
         let options = ids(400);
-        let floor = 2usize;
-        let survivors = subsets(&options, 2)
-            .into_iter()
-            .filter(|s| s.len() >= floor)
-            .count();
-        assert_eq!(survivors, 0, "the truncation this guards against");
+        assert!(
+            subsets(&options, 2).iter().all(|s| s.len() < 2),
+            "precondition: truncation should leave nothing the floor accepts"
+        );
+
+        let out = choose_actions(&options, 2, 2);
+        assert!(
+            !out.is_empty(),
+            "a mandatory choice with no legal answer stalls the game"
+        );
+        for action in &out {
+            let Action::Choose { cards } = action else {
+                panic!("expected a Choose, got {action:?}");
+            };
+            assert_eq!(cards.len(), 2, "the answer must satisfy the floor");
+        }
+    }
+
+    /// The floor is what makes a choice mandatory: "trash 1 card from your
+    /// hand" must not offer trashing none.
+    #[test]
+    fn a_floor_removes_the_answers_below_it() {
+        let out = choose_actions(&ids(4), 2, 1);
+        assert!(!out.is_empty());
+        for action in &out {
+            let Action::Choose { cards } = action else {
+                panic!("expected a Choose, got {action:?}");
+            };
+            assert!(!cards.is_empty(), "a floor of 1 must not offer none");
+        }
+        // And without one, declining is still on the table (8-4-4-1).
+        let offered = choose_actions(&ids(4), 2, 0);
+        assert!(matches!(&offered[0], Action::Choose { cards } if cards.is_empty()));
     }
 }
