@@ -87,13 +87,9 @@ jobs:
             librsvg2-dev libayatana-appindicator3-dev libxdo-dev \
             build-essential curl file patchelf
 
-      # The card-level tests skip themselves without data/, so fetching is what
-      # makes them meaningful. Card data only — the art is ~750 MB and no test
-      # reads a single image.
-      # The pack list comes from the built-in decks rather than being typed
-      # here, so a newly scripted set is fetched because it is playable. Typing
-      # it is what left ST-04 and ST-08 without data, failing their tests with
-      # `UnknownCard` rather than skipping them.
+      # Card data only — the art is ~750 MB and no test reads an image. The pack
+      # list comes from the built-in decks, so a newly scripted set is fetched
+      # because it is playable rather than because someone edited this file.
       - name: Fetch card data
         # Explicit, because Windows runners default to PowerShell and the
         # command substitution below is bash.
