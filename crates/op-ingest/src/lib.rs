@@ -38,21 +38,36 @@ use serde::Deserialize;
 /// rebuild.
 pub const SOURCE_REF: &str = "2a48b092cf4c77acbe22367b8334bbc75102c702";
 
+/// Environment variable that overrides [`SOURCE_REF`].
+const SOURCE_REF_ENV: &str = "OPSIM_SOURCE_REF";
+
+/// The revision an override selects, or the pin when there is none.
+///
+/// Kept separate from the environment so it can be exercised without writing a
+/// process-global variable: two tests that disagree about what the variable
+/// should say cannot both hold it at once, and the harness runs them on
+/// parallel threads.
+fn resolve_source_ref(override_ref: Option<&str>) -> &str {
+    override_ref.unwrap_or(SOURCE_REF)
+}
+
 /// The revision actually in effect, [`SOURCE_REF`] unless overridden.
 ///
 /// Worth recording alongside anything derived from card data: a session log
 /// replayed against a different revision can diverge for reasons that are not
 /// the engine's fault.
 pub fn source_ref() -> String {
-    std::env::var("OPSIM_SOURCE_REF").unwrap_or_else(|_| SOURCE_REF.to_string())
+    resolve_source_ref(std::env::var(SOURCE_REF_ENV).ok().as_deref()).to_string()
 }
 
-/// Upstream root for the pinned revision.
+/// Upstream root for a given revision.
+pub fn source_root_for(git_ref: &str) -> String {
+    format!("https://raw.githubusercontent.com/buhbbl/punk-records/{git_ref}/english")
+}
+
+/// Upstream root for the revision in effect.
 pub fn source_root() -> String {
-    format!(
-        "https://raw.githubusercontent.com/buhbbl/punk-records/{}/english",
-        source_ref()
-    )
+    source_root_for(&source_ref())
 }
 
 const RETRIES: u32 = 4;
@@ -564,14 +579,20 @@ mod tests {
             SOURCE_REF.chars().all(|c| c.is_ascii_hexdigit()),
             "expected hex, got {SOURCE_REF}"
         );
-        assert!(source_root().contains(SOURCE_REF));
+        assert!(source_root_for(SOURCE_REF).contains(SOURCE_REF));
+    }
+
+    /// Absent an override, the pin is what everything downstream fetches from.
+    #[test]
+    fn the_pin_is_what_applies_when_nothing_overrides_it() {
+        assert_eq!(resolve_source_ref(None), SOURCE_REF);
     }
 
     #[test]
     fn the_source_ref_can_be_overridden_without_a_rebuild() {
-        std::env::set_var("OPSIM_SOURCE_REF", "main");
-        assert!(source_root().ends_with("/main/english"));
-        std::env::remove_var("OPSIM_SOURCE_REF");
+        let overridden = source_root_for(resolve_source_ref(Some("main")));
+        assert!(overridden.ends_with("/main/english"));
+        assert!(!overridden.contains(SOURCE_REF));
     }
 
     #[test]
