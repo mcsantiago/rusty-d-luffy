@@ -20,6 +20,7 @@ cargo run -p op-cards --bin dump-scripts    # every script as JSON
 
 python3 tools/rules/fetch_rules.py         # Comprehensive Rules into data/rules/
 cargo run -p op-ingest --bin op-fetch -- --help
+cargo run -p op-cli --bin op-replay -- <LOG>  # replay a session log
 ```
 
 Card data is fetched on first run by either client. Tests that need it skip
@@ -56,7 +57,15 @@ anyone holding the decklist. When in doubt, send nothing.
 
 The session debug log is the deliberate exception: it records `GameEvent`, so
 it holds both hands. It is local-only and must never be surfaced to a player
-mid-game.
+mid-game — and neither is `op-replay`, which reads one.
+
+**A session log must stay replayable.** `op-replay` rebuilds a game from the
+header and re-steps the recorded actions, checking the events and the state
+hash at each one. Anything that changes what setup consumes belongs in the
+header, or old logs stop reproducing. The subtle one: ids are assigned by
+walking the decklist at setup, so the header stores the decklist *sequence*,
+never a tally — regrouping it silently renumbers every card the recorded
+actions refer to.
 
 **Determinism.** A game is a pure function of `(GameConfig, seed, [Action])`.
 All randomness goes through `GameState::rng`; rules paths use ordered

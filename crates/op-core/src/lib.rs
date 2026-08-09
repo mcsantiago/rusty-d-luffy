@@ -42,7 +42,7 @@ pub use event::{CardRef, GameEvent, PlayerEvent};
 pub use game::{DeckList, Game, GameConfig, PlayerOutcome, SetupError, StepOutcome};
 pub use ids::{CardDefId, CardInstanceId, PlayerId};
 pub use legal::legal_actions;
-pub use replay::SessionLog;
+pub use replay::{Divergence, SessionLog, SessionRecord, Verified};
 pub use script::{CardScript, NoScripts, ScriptSource};
 pub use state::{BattleStep, GameOver, GameState, Phase};
 pub use validate::{validate_script, Diagnostic};

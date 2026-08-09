@@ -4,19 +4,20 @@
 //!
 //! Card data is fetched automatically on first run.
 
-mod decks;
 mod render;
 
 use std::io::{BufRead, Write};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
 use op_ai::{Agent, HeuristicAgent, IsmctsAgent, IsmctsConfig};
 use op_cards::Cards;
+use op_cli::{data, decks};
 use op_core::card::CardDb;
 use op_core::script::ScriptSource;
 use op_core::view::PlayerView;
-use op_core::{legal_actions, DeckList, Game, GameConfig, PlayerId};
+use op_core::{legal_actions, DeckList, Game, GameConfig, PlayerId, SessionLog};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 
@@ -28,9 +29,11 @@ struct Options {
     difficulty: Difficulty,
     /// Run an AI-vs-AI game instead of prompting, for watching or profiling.
     autoplay: bool,
+    /// Override for where the session log goes.
+    log_dir: Option<PathBuf>,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 enum Difficulty {
     /// One-ply greedy.
     Easy,
@@ -66,24 +69,7 @@ fn main() -> Result<()> {
         None => return Ok(()),
     };
 
-    let data_dir = data_dir();
-    let cards = data_dir.join("cards");
-    if !op_ingest::is_populated(&cards) {
-        println!("No card data yet — fetching (this happens once)...");
-        let plan = op_ingest::Plan {
-            packs: Vec::new(),
-            images: false, // the terminal client draws text, not art
-            refresh: false,
-            jobs: 4,
-        };
-        op_ingest::run(&data_dir, &plan, &|p| {
-            if let op_ingest::Progress::Message(m) = p {
-                println!("  {m}");
-            }
-        })
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
-    }
-    let db = CardDb::load_dir(&cards).with_context(|| "loading card data")?;
+    let db = data::load_db(&data::data_dir())?;
     let cards = Cards::new(&db);
 
     report_unscripted(&db, &cards, &options);
@@ -102,8 +88,35 @@ fn main() -> Result<()> {
         decks: [options.you.clone(), options.opponent.clone()],
         allow_illegal_decks: false,
     };
+    // Cloned for the log, but written only once setup succeeds — a rejected
+    // decklist should not leave a log behind for a game that never started.
+    let logged = config.clone();
     let (mut game, opening) = Game::new(config, db, scripts)
         .map_err(|e| anyhow::anyhow!("could not start the game: {e}"))?;
+
+    // Best-effort, exactly as in the desktop client: a session that cannot
+    // write a log still plays. Autoplay runs are the ones this matters for —
+    // they are long, unattended, and nobody is watching when they break.
+    let mut debug = data::debug_dir(options.log_dir.as_deref()).and_then(|dir| {
+        SessionLog::create(
+            dir,
+            &logged,
+            Some(&op_ingest::source_ref()),
+            vec![
+                format!("difficulty={:?}", options.difficulty),
+                format!("autoplay={}", options.autoplay),
+                "client=cli".into(),
+            ],
+        )
+        .map_err(|e| eprintln!("session log disabled: {e}"))
+        .ok()
+    });
+    if let Some(log) = &debug {
+        eprintln!("session log: {}", log.path().display());
+    }
+    if let Some(log) = &mut debug {
+        log.record(None, &opening.events, &game.state, game.db());
+    }
 
     let human = PlayerId::P0;
     let mut ai = options.difficulty.agent(options.seed ^ 0x5EED);
@@ -154,10 +167,13 @@ fn main() -> Result<()> {
             action
         };
 
-        events = game
-            .step(action)
-            .map_err(|e| anyhow::anyhow!("illegal action: {e}"))?
-            .events;
+        let outcome = game
+            .step(action.clone())
+            .map_err(|e| anyhow::anyhow!("illegal action: {e}"))?;
+        if let Some(log) = &mut debug {
+            log.record(Some(&action), &outcome.events, &game.state, game.db());
+        }
+        events = outcome.events;
     }
 
     let view = PlayerView::project(&game.state, game.db(), &game.derived(), human);
@@ -265,6 +281,7 @@ fn parse_args() -> Result<Option<Options>> {
     let mut you_first = true;
     let mut difficulty = Difficulty::Normal;
     let mut autoplay = false;
+    let mut log_dir = None;
 
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -288,6 +305,7 @@ fn parse_args() -> Result<Option<Options>> {
             "--easy" => difficulty = Difficulty::Easy,
             "--hard" => difficulty = Difficulty::Hard,
             "--autoplay" => autoplay = true,
+            "--log" => log_dir = Some(PathBuf::from(args.next().context("--log needs a value")?)),
             other => bail!("unknown argument {other}; try --help"),
         }
     }
@@ -299,22 +317,8 @@ fn parse_args() -> Result<Option<Options>> {
         you_first,
         difficulty,
         autoplay,
+        log_dir,
     }))
-}
-
-/// A checkout's `data/` wins when present; otherwise the per-user data
-/// directory, shared with the desktop client so they do not fetch twice.
-fn data_dir() -> std::path::PathBuf {
-    if let Some(dir) = std::env::var_os("OPSIM_DATA_DIR") {
-        return std::path::PathBuf::from(dir);
-    }
-    let checkout = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
-    if checkout.join("cards").is_dir() {
-        if let Ok(dir) = checkout.canonicalize() {
-            return dir;
-        }
-    }
-    op_ingest::default_data_dir("dev.onepiecesim.desktop")
 }
 
 fn resolve_deck(spec: &str) -> Result<DeckList> {
@@ -339,7 +343,13 @@ OPTIONS:
     --hard                   ISMCTS with a large search budget
     --autoplay               watch the AI play itself
     --seed <N>               fixed seed, for a reproducible game
+    --log <DIR>              where to write this session's log
     -h, --help               show this help
+
+Every session writes a replayable log to <data>/debug; set
+OPSIM_DEBUG_DIR to move it, or to empty to turn it off. Check one
+with:
+    cargo run -p op-cli --bin op-replay -- <LOG>
 
 Built-in decks: {}
 
