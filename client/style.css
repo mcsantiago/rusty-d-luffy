@@ -601,42 +601,6 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
 .card.inert:hover { opacity: 1; }
 .card.selected { outline-color: var(--accent-2); }
 
-/* ---- a Life card arriving ----
-
-   Shown once on its way to the hand. The travel distance is set in script,
-   because the hand it is heading for moves as it fills. */
-
-/* Placed in script — it starts in the corner right of the hand and below the
-   trash, both of which move as the board fills. */
-.life-fly {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 150px;
-  padding: 12px;
-  border-radius: 14px;
-  text-align: center;
-  background: rgba(8, 12, 18, 0.94);
-  border: 1px solid var(--accent);
-  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.7);
-  transform-origin: 50% 50%;
-  transform: scale(0.88);
-  opacity: 0;
-  transition: opacity 0.3s, transform 0.65s cubic-bezier(0.4, 0, 0.2, 1);
-  z-index: 46;
-  pointer-events: none;
-}
-.life-fly.shown { opacity: 1; transform: scale(1); }
-.life-fly img { width: 100%; border-radius: 8px; display: block; margin-bottom: 10px; }
-.life-fly-name { font-weight: 700; font-size: 14px; }
-.life-fly-note {
-  margin-top: 3px;
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: var(--muted);
-}
-
 /* ---- whose turn it is ----
 
    Front and centre, once, then gone. Sits *below* the overlays: a modal is

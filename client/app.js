@@ -47,6 +47,10 @@ let lastHandIds = new Set();
  *  the front, which would make one appear on each side; hand order carries no
  *  rules meaning, so which end a card joins is the UI's to choose. */
 let handOrder = [];
+/** Top card of each trash last render, to spot one that just landed. */
+const lastTrashTop = new Map();
+/** Why each trash's top card went there, for the pile's tooltip. */
+const lastCause = new Map();
 /** The cards in the battle currently being resolved, if any. */
 let battleAttacker = null;
 let battleDefender = null;
@@ -388,13 +392,25 @@ function renderTrash(side, prefix, label) {
 
   const pile = document.createElement("div");
   pile.className = "trash-pile" + (side.trash.length === 0 ? " empty" : "");
-  pile.title = `${label} trash — ${side.trash.length} card(s)`;
+
+  // Why the top card is there. The pile is the only place left that can say
+  // so, now that nothing flies across the board carrying the reason.
+  const cause = lastCause.get(prefix);
+  pile.title =
+    `${label} trash — ${side.trash.length} card(s)` +
+    (cause ? `\nmost recent: ${cause}` : "");
 
   if (side.trash.length > 0) {
     // Index 0 is the most recent card in (3-5-2), so it is the face-up top.
-    pile.appendChild(cardEl(side.trash[0], { small: true, plain: true }));
+    const top = side.trash[0];
+    const isNew = lastTrashTop.get(prefix) !== top.id;
+    lastTrashTop.set(prefix, top.id);
+    pile.appendChild(
+      cardEl(top, { small: true, plain: true, arriving: isNew ? 1 : 0 }),
+    );
     pile.addEventListener("click", () => openTrash(side, label));
   } else {
+    lastTrashTop.set(prefix, null);
     pile.innerHTML = `<div class="trash-empty">trash</div>`;
   }
 
@@ -887,123 +903,39 @@ function renderBeats(snap) {
 
 // ---- a card going to the trash ----------------------------------------------
 //
-// A card leaving the board or your hand for a trash pile has nowhere on screen
-// to say so — the pile just gains one. Shown once on its way there.
+// The pile just gains one, with nothing to say a card moved. Its new top card
+// grows into place, the same way an arrival in hand does, and the reason it is
+// there — "K.O.'d by Killer" — becomes the pile's tooltip. Nothing carries the
+// reason across the board any more, so this is the only place it can live.
 
-const FLY_HOLD = 1000;
-const FLY_TRAVEL = 700;
+/** How long a card takes to grow into place, from the CSS. */
+const GROW_MS = 450;
 
+let trashSeenFor = null;
+let growUntil = 0;
 
-const FLY_STEP = 450;
+const animating = () => Date.now() < growUntil;
 
-let flySeenFor = null;
-let flyQueue = [];
-let flyPump = null;
-/** When the queue will have finished. Modals that would open in the meantime
- *  wait for it, so cause is seen before effect: a card K.O.'d by an [On Play]
- *  before an attack must be watched dying, not discovered afterwards. */
-let flyUntil = 0;
-
-const animating = () => Date.now() < flyUntil;
-
-/** Queues everything trashed since the last decision. An AI turn is a single
- *  snapshot, so several can land at once; the pump plays them one at a time
- *  rather than stacking them on the same spot. */
-function flyCards(snap) {
+function noteTrashArrivals(snap) {
   // Guarded by snapshot identity: one snapshot can be rendered more than once
-  // and the cards must not fly twice.
-  if (snap === flySeenFor) return;
-  flySeenFor = snap;
-
-  // Anything still waiting belongs to a decision the player has already moved
-  // past. Playing it now attaches it to whatever is on screen instead: a card
-  // K.O.'d by an [On Play] before an attack was held behind the battle modal
-  // and landed after the battle resolved, reading as its consequence.
-  flyQueue = [];
+  // and must not restart the hold each time.
+  if (snap === trashSeenFor) return;
+  trashSeenFor = snap;
 
   for (const entry of snap.to_trash) {
-    flyQueue.push({
-      ...entry,
-      how: "trash",
-      to: entry.yours ? "you-trash" : "opp-trash",
-    });
+    const info = catalogue.get(entry.number);
+    lastCause.set(
+      entry.yours ? "you" : "opp",
+      `${info ? info.name : entry.number} — ${entry.cause}`,
+    );
   }
-  if (!flyQueue.length) return;
+  if (!snap.to_trash.length) return;
 
-  // Held for as long as the queue will take, then the board is re-rendered so
-  // whatever modal was waiting opens.
-  const span = (flyQueue.length - 1) * FLY_STEP + FLY_HOLD + FLY_TRAVEL;
-  flyUntil = Date.now() + span;
-  setTimeout(() => lastSnapshot && render(lastSnapshot), span + 30);
-  pumpFly();
-}
-
-function pumpFly() {
-  if (flyPump) return;
-  const step = () => {
-    if (!flyQueue.length) {
-      flyPump = null;
-      return;
-    }
-    flyOne(flyQueue.shift());
-    flyPump = setTimeout(step, FLY_STEP);
-  };
-  flyPump = setTimeout(step, 0);
-}
-
-async function flyOne(entry) {
-  const number = entry.number;
-  const info = catalogue.get(number);
-  const uri = await art(number);
-
-  const el = document.createElement("div");
-  el.className = "life-fly";
-  el.innerHTML = `
-    ${uri ? `<img src="${uri}" alt="${number}" />` : ""}
-    <div class="life-fly-name">${info ? info.name : number}</div>
-    <div class="life-fly-note">${entry.cause ?? ""}</div>
-  `;
-  document.body.appendChild(el);
-
-  // Everything here is measured rather than declared in CSS: the hand grows as
-  // it fills and the trash piles sit at opposite ends of the board, so neither
-  // the place it starts nor the pile it flies to has a fixed position.
-  const box = el.getBoundingClientRect();
-  const margin = 12;
-  let left;
-  let top;
-
-  if (entry.yours === false) {
-    // The opponent's cards start from the middle of their own half, which is
-    // where the player was looking when it happened. Starting them by your
-    // hand would suggest they came from it.
-    const side = $("opponent-side").getBoundingClientRect();
-    left = side.left + side.width / 2 - box.width / 2;
-    top = side.top + side.height / 2 - box.height / 2;
-  } else {
-    // Right-aligned to the hand grid and below the trash: the hand fills from
-    // the left, so this corner stays clear of the cards it is about.
-    const hand = $("hand").getBoundingClientRect();
-    const trash = $("you-trash").getBoundingClientRect();
-    left = hand.right - box.width;
-    top = trash.bottom + margin;
-  }
-
-  left = Math.max(margin, Math.min(left, window.innerWidth - box.width - margin));
-  top = Math.max(margin, Math.min(top, window.innerHeight - box.height - margin));
-  el.style.left = `${Math.round(left)}px`;
-  el.style.top = `${Math.round(top)}px`;
-
-  const target = ($(entry.to) ?? $("hand")).getBoundingClientRect();
-  const dx = target.left + target.width / 2 - (left + box.width / 2);
-  const dy = target.top + target.height / 2 - (top + box.height / 2);
-
-  requestAnimationFrame(() => el.classList.add("shown"));
-  setTimeout(() => {
-    el.style.transform = `translate(${dx}px, ${dy}px) scale(0.22)`;
-    el.style.opacity = "0";
-    setTimeout(() => el.remove(), FLY_TRAVEL);
-  }, FLY_HOLD);
+  // Modals wait for it, so cause is seen before effect: a card K.O.'d by an
+  // [On Play] before an attack must be watched landing, not discovered once
+  // the battle it had nothing to do with has resolved.
+  growUntil = Date.now() + GROW_MS;
+  setTimeout(() => lastSnapshot && render(lastSnapshot), GROW_MS + 30);
 }
 
 // ---- whose turn it is -------------------------------------------------------
@@ -1232,7 +1164,7 @@ function render(snap) {
   if (view.battle) renderBeats(snap);
   renderCounterTray(snap);
   renderTriggerTray(snap);
-  flyCards(snap);
+  noteTrashArrivals(snap);
   announceTurn(snap);
   announceResult(snap.battle_result ?? null);
   renderChoose(snap);
