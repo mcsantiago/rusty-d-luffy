@@ -258,7 +258,8 @@ terminal.
 Not yet built: PyO3 bindings and the Gymnasium environment, and the authoritative
 multiplayer server and web client. Both sit on top of the existing kernel — the
 turn-based ruleset means lockstep on actions is sufficient for netcode, with no
-rollback needed.
+rollback needed. The multiplayer half now has a design:
+[docs/multiplayer.md](docs/multiplayer.md).
 
 ### Known simplifications
 

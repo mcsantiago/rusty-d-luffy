@@ -193,6 +193,13 @@ assumptions do not hold.
   a much larger surface.
 - **Exposure.** Private (LAN or Tailscale/WireGuard) versus public ingress
   changes the TLS, rate-limiting and abuse story entirely.
+- **Which client goes first.** This document assumes `op-desktop`, because it
+  already renders a board and already has the session-shaped interface to hide
+  a backend behind. The README's status section instead promises "the
+  authoritative multiplayer server and web client." Nothing here rules a web
+  client out — the server is transport-first and the front end under `client/`
+  is already HTML — but the two documents currently name different targets, and
+  one of them should give.
 - **Spectators.** `PlayerView::project` takes a seat; a neutral view that hides
   both hands is not currently expressible. Related to #47, which has the same
   question in the form of "replay as one seat rather than omnisciently."
