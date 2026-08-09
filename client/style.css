@@ -11,8 +11,14 @@
   --accent: #d9484b;
   --accent-2: #f0b429;
   --good: #4ea36b;
-  --card-w: 92px;
-  --card-h: 128px;
+  /* One card size for the whole board, scaled to the window. Every zone
+     derives from these rather than hardcoding its own, so nothing drifts.
+     The 1.4 ratio is the physical card's. */
+  --card-w: clamp(56px, 5.6vw, 92px);
+  --card-h: calc(var(--card-w) * 1.4);
+  --card-gap: clamp(4px, 0.55vw, 10px);
+  --zone-pad: clamp(4px, 0.5vw, 9px);
+  --zone-radius: 10px;
 }
 
 * { box-sizing: border-box; }
@@ -147,8 +153,6 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
     radial-gradient(ellipse at 50% 40%, #1d2b3a 0%, var(--felt) 70%);
 }
 
-.side { display: flex; flex-direction: column; gap: 8px; }
-
 .side-meta {
   display: flex;
   align-items: center;
@@ -167,16 +171,152 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
 
 .pips { color: var(--accent); letter-spacing: 2px; }
 
-.row { display: flex; align-items: flex-start; gap: 18px; min-height: var(--card-h); }
-/* Centred in the space between the Leader and the Stage, so a board fills
-   outwards from the middle rather than growing off to one side. */
-.characters { display: flex; gap: 10px; flex: 1; flex-wrap: wrap; justify-content: center; }
-.leader-slot, .stage-slot { flex: 0 0 auto; }
+/* ---- the playmat ----
+
+   A named grid per player rather than a stack of rows, so every zone has a
+   fixed home that does not move as the board fills. The two mats are mirrored
+   about the divider: Character areas nearest it, cost areas furthest apart.
+
+       you                       opponent
+   +----+-------------+----+  +----+-------------+----+
+   |life| characters  |deck|  |dond|  cost area  |tras|
+   |life|leader stage |tras|  |life|leader stage |deck|
+   |dond|  cost area  |tras|  |life| characters  |deck|
+   +----+-------------+----+  +----+-------------+----+                     */
+
+.mat {
+  display: grid;
+  gap: var(--card-gap);
+  grid-template-columns:
+    calc(var(--card-w) * 0.78)
+    minmax(0, 1fr)
+    minmax(0, 1fr)
+    calc(var(--card-w) * 0.9);
+  align-items: stretch;
+}
+
+.mat.you {
+  grid-template-areas:
+    "life    characters characters deck"
+    "life    leader     stage      trash"
+    "dondeck cost       cost       trash";
+}
+
+/* Reversed, not rotated: the opponent's cost area is the far edge of the
+   table and their Characters the near one. */
+.mat.opponent {
+  grid-template-areas:
+    "dondeck cost       cost       trash"
+    "life    leader     stage      deck"
+    "life    characters characters deck";
+}
+
+.z-life { grid-area: life; }
+.z-characters { grid-area: characters; }
+.z-leader { grid-area: leader; }
+.z-stage { grid-area: stage; }
+.z-deck { grid-area: deck; }
+.z-trash { grid-area: trash; }
+.z-cost { grid-area: cost; }
+.z-dondeck { grid-area: dondeck; }
+
+.zone {
+  position: relative;
+  padding: var(--zone-pad);
+  padding-top: calc(var(--zone-pad) + 11px);
+  border-radius: var(--zone-radius);
+  border: 1px solid rgba(42, 58, 77, 0.55);
+  background: rgba(8, 12, 18, 0.18);
+  min-width: 0;
+}
+
+/* Labelled the way the mat is printed. From ::before rather than a child, so
+   the renderers' innerHTML rebuilds cannot wipe it. */
+.zone::before {
+  content: attr(data-label);
+  position: absolute;
+  top: 3px;
+  left: 8px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #4a5f78;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+/* The battlefield, and the only zone that should grow. */
+.z-characters { min-height: calc(var(--card-h) + 18px); }
+.characters {
+  display: flex;
+  gap: var(--card-gap);
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--card-h);
+  height: 100%;
+}
+
+/* Leader and Stage meet at the middle: the Leader ends its column and the
+   Stage starts the next, so they sit together whatever the window width. */
+.z-leader { display: flex; justify-content: flex-end; align-items: center; }
+.z-stage { display: flex; justify-content: flex-start; align-items: center; }
+.leader-slot, .stage-slot, .deck-slot, .trash-slot, .don-deck-slot { flex: 0 0 auto; }
+
+/* An empty Stage still holds its place, or the Leader would slide sideways
+   the moment one is played. */
+.stage-slot:empty {
+  width: var(--card-w);
+  height: calc(var(--card-h) * 0.78);
+  border: 1px dashed rgba(60, 79, 102, 0.5);
+  border-radius: 7px;
+}
+
+.z-deck, .z-trash {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Life is secret to both players (3-1-4), so there is nothing to draw but
+   backs. Overlapped upwards into a pile rather than absolutely placed, so the
+   stack sizes itself and never escapes its zone. */
+.z-life { display: flex; align-items: center; justify-content: center; }
+.life-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: calc(var(--card-w) * 0.68);
+}
+.life-stack.none { opacity: 0.3; }
+.life-card {
+  width: calc(var(--card-w) * 0.68);
+  height: calc(var(--card-w) * 0.68 * 1.4);
+  flex: 0 0 auto;
+  margin-top: calc(var(--card-w) * -0.68 * 1.4 + 15px);
+}
+.life-card:first-child { margin-top: 0; }
+
+/* Room for ten DON!! without a second row at full size, and controlled
+   overlap rather than overflow when there is not. */
+.z-cost { display: flex; align-items: center; }
+.don-row {
+  display: flex;
+  align-items: center;
+  gap: clamp(1px, 0.35vw, 5px);
+  flex-wrap: wrap;
+  justify-content: center;
+  width: 100%;
+  min-height: calc(var(--card-h) * 0.42);
+}
+
+.z-dondeck { display: flex; align-items: center; justify-content: center; }
 
 .divider {
   height: 1px;
   background: linear-gradient(90deg, transparent, var(--line), transparent);
-  margin: 16px 0;
+  margin: 10px 0;
 }
 
 .empty {
@@ -184,10 +324,10 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
   font-size: 12px;
   font-style: italic;
   align-self: center;
-  padding: 8px 0;
+  padding: 4px 0;
 }
 
-#hand-area { margin-top: 18px; }
+#hand-area { margin-top: 12px; }
 .hand-label {
   font-size: 11px;
   text-transform: uppercase;
@@ -196,7 +336,7 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
   margin-bottom: 6px;
   text-align: center;
 }
-.hand { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+.hand { display: flex; gap: var(--card-gap); flex-wrap: wrap; justify-content: center; }
 
 /* ---- cards ---- */
 
@@ -227,7 +367,7 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
   animation: card-arrives 420ms cubic-bezier(0.2, 0, 0.2, 1) both;
   z-index: 6;
 }
-.card.small { width: 72px; height: 100px; }
+.card.small { width: calc(var(--card-w) * 0.78); height: calc(var(--card-w) * 0.78 * 1.4); }
 
 /* A card and the DON!! given to it. The rotation sits here so both turn
    together, the way they do on the table. */
@@ -793,8 +933,8 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
 }
 
 .don-card {
-  width: 34px;
-  height: 46px;
+  width: calc(var(--card-w) * 0.37);
+  height: calc(var(--card-w) * 0.5);
   border-radius: 5px;
   display: flex;
   flex-direction: column;
@@ -825,11 +965,11 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
   box-shadow: 0 0 0 4px rgba(232, 238, 246, 0.22);
 }
 
-/* Remaining DON!! deck, shown as a count rather than 10 more cards. */
+/* Remaining DON!! deck, shown as a count rather than 10 more cards. Its own
+   zone in the corner of the mat, not the tail of the cost area. */
 .don-deck {
-  width: 34px;
-  height: 46px;
-  margin-left: 8px;
+  width: calc(var(--card-w) * 0.55);
+  height: calc(var(--card-w) * 0.74);
   border-radius: 5px;
   display: grid;
   place-items: center;
@@ -1114,8 +1254,8 @@ button:disabled:hover { background: var(--felt); border-color: var(--line); }
 .trash-pile.empty:hover { transform: none; filter: none; }
 
 .trash-empty {
-  width: 72px;
-  height: 100px;
+  width: calc(var(--card-w) * 0.78);
+  height: calc(var(--card-w) * 0.78 * 1.4);
   display: grid;
   place-items: center;
   border: 1px dashed #3c4f66;

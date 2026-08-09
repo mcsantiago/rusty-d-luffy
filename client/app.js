@@ -370,11 +370,14 @@ function renderDon(side, prefix, deckCount) {
   const ordered = [...side.don].sort((a, b) => Number(a.rested) - Number(b.rested));
   for (const d of ordered) row.appendChild(donEl(d));
 
+  // The DON!! deck is its own zone on the mat, not the tail of the cost area.
+  const slot = $(`${prefix}-don-deck`);
+  slot.innerHTML = "";
   const remaining = document.createElement("div");
   remaining.className = "don-deck";
   remaining.title = "DON!! deck";
   remaining.textContent = deckCount;
-  row.appendChild(remaining);
+  slot.appendChild(remaining);
 }
 
 /// The trash is an open area (3-5-2) — either player may look through either
@@ -462,6 +465,51 @@ $("choose-confirm").addEventListener("click", () => {
 $("choose-none").addEventListener("click", () => {
   if (lastSnapshot) submitChoice([], lastSnapshot);
 });
+
+/** The Life area, as face-down cards.
+ *
+ * Contents are secret to *both* players (3-1-4), so there is nothing to draw
+ * but backs — which is also what the area looks like on a table. */
+function renderLife(side, prefix) {
+  const box = $(`${prefix}-life-cards`);
+  box.innerHTML = "";
+  box.classList.toggle("none", side.life_count === 0);
+
+  // Overlapped by CSS margin rather than absolute offsets, so the pile sizes
+  // itself and stays inside its zone however many cards are in it.
+  for (let i = 0; i < side.life_count; i++) {
+    const c = document.createElement("div");
+    c.className = "card facedown life-card";
+    c.style.zIndex = String(i);
+    c.innerHTML = `<div class="back"></div>`;
+    box.appendChild(c);
+  }
+}
+
+/** The deck, as a face-down pile with its count. */
+function renderDeck(side, prefix) {
+  const slot = $(`${prefix}-deck-pile`);
+  slot.innerHTML = "";
+
+  const pile = document.createElement("div");
+  pile.className = "pile" + (side.deck_count === 0 ? " empty" : "");
+  pile.title = `deck — ${side.deck_count} card(s)`;
+
+  if (side.deck_count > 0) {
+    const c = document.createElement("div");
+    c.className = "card small facedown";
+    c.innerHTML = `<div class="back"></div>`;
+    pile.appendChild(c);
+  } else {
+    pile.innerHTML = `<div class="trash-empty">deck</div>`;
+  }
+
+  const count = document.createElement("div");
+  count.className = "trash-count";
+  count.textContent = side.deck_count;
+  pile.appendChild(count);
+  slot.appendChild(pile);
+}
 
 function renderSide(view, side, prefix) {
   const yours = side === view.you;
@@ -1152,6 +1200,10 @@ function render(snap) {
 
   renderSide(view, view.opponent, "opp");
   renderSide(view, view.you, "you");
+  renderLife(view.opponent, "opp");
+  renderLife(view.you, "you");
+  renderDeck(view.opponent, "opp");
+  renderDeck(view.you, "you");
   renderTrash(view.opponent, "opp", "Opponent");
   renderTrash(view.you, "you", "Your");
   renderDon(view.opponent, "opp", view.opponent.don_deck);

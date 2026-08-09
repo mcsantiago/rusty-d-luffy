@@ -76,7 +76,12 @@
       </header>
 
       <section id="board">
-        <div class="side" id="opponent-side">
+        <!-- Two playmats, mirrored about the divider: each player's Character
+             area sits nearest it, so the lines face each other and the cost
+             areas are furthest apart, as they are across a table. Zone labels
+             come from data-label via ::before, so they survive the innerHTML
+             the renderers use to rebuild each zone. -->
+        <div class="mat opponent" id="opponent-side">
           <div class="side-meta">
             <span class="who">Opponent</span>
             <span class="stat" id="opp-life"></span>
@@ -84,24 +89,58 @@
             <span class="stat" id="opp-deck"></span>
             <span class="stat" id="opp-don"></span>
           </div>
-          <div class="row">
+          <div class="zone z-dondeck" data-label="DON!! Deck">
+            <div class="don-deck-slot" id="opp-don-deck"></div>
+          </div>
+          <div class="zone z-cost" data-label="Cost Area">
+            <div class="don-row" id="opp-don-row"></div>
+          </div>
+          <div class="zone z-life" data-label="Life">
+            <div class="life-stack" id="opp-life-cards"></div>
+          </div>
+          <div class="zone z-leader" data-label="Leader">
             <div class="leader-slot" id="opp-leader"></div>
-            <div class="characters" id="opp-characters"></div>
+          </div>
+          <div class="zone z-stage" data-label="Stage">
             <div class="stage-slot" id="opp-stage"></div>
+          </div>
+          <div class="zone z-trash" data-label="Trash">
             <div class="trash-slot" id="opp-trash"></div>
           </div>
-          <div class="don-row" id="opp-don-row"></div>
+          <div class="zone z-deck" data-label="Deck">
+            <div class="deck-slot" id="opp-deck-pile"></div>
+          </div>
+          <div class="zone z-characters" data-label="Character Area">
+            <div class="characters" id="opp-characters"></div>
+          </div>
         </div>
 
         <div class="divider"></div>
 
-        <div class="side" id="your-side">
-          <div class="don-row" id="you-don-row"></div>
-          <div class="row">
-            <div class="leader-slot" id="you-leader"></div>
+        <div class="mat you" id="your-side">
+          <div class="zone z-characters" data-label="Character Area">
             <div class="characters" id="you-characters"></div>
+          </div>
+          <div class="zone z-life" data-label="Life">
+            <div class="life-stack" id="you-life-cards"></div>
+          </div>
+          <div class="zone z-leader" data-label="Leader">
+            <div class="leader-slot" id="you-leader"></div>
+          </div>
+          <div class="zone z-stage" data-label="Stage">
             <div class="stage-slot" id="you-stage"></div>
+          </div>
+          <div class="zone z-deck" data-label="Deck">
+            <div class="deck-slot" id="you-deck-pile"></div>
+          </div>
+          <div class="zone z-trash" data-label="Trash">
             <div class="trash-slot" id="you-trash"></div>
+          </div>
+          <div class="zone z-dondeck" data-label="DON!! Deck">
+            <div class="don-deck-slot" id="you-don-deck"></div>
+          </div>
+          <div class="zone z-cost" data-label="Cost Area">
+            <div class="don-row" id="you-don-row"></div>
           </div>
           <div class="side-meta">
             <span class="who">You</span>
