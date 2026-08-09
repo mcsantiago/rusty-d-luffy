@@ -31,6 +31,28 @@ let catalogue = new Map();
 const artCache = new Map();
 /** Instance ids the hovered action refers to, for highlighting. */
 let highlighted = new Set();
+/** The card whose menu is open, or null. */
+let selected = null;
+/** Whether that menu was pinned by a click, which hover then cannot displace. */
+let pinned = false;
+/** Actions by subject id, plus the card-less remainder, from the last render. */
+let menus = new Map();
+let cardless = [];
+/** Whether a card with no menu is genuinely unable to act right now. */
+let cardsCanAct = false;
+/** Hand cards present at the last render, to spot the ones that just arrived. */
+let lastHandIds = new Set();
+/** The order the hand is drawn in, oldest first, so arrivals appear on the
+ *  right. The engine puts a draw at the back of the hand and a Life card at
+ *  the front, which would make one appear on each side; hand order carries no
+ *  rules meaning, so which end a card joins is the UI's to choose. */
+let handOrder = [];
+/** Life count per side last render, to spot cards that just left. */
+const lastLifeCount = new Map();
+/** Top card of each trash last render, to spot one that just landed. */
+const lastTrashTop = new Map();
+/** Why each trash's top card went there, for the pile's tooltip. */
+const lastCause = new Map();
 /** The cards in the battle currently being resolved, if any. */
 let battleAttacker = null;
 let battleDefender = null;
@@ -49,11 +71,39 @@ async function art(number) {
 
 // ---- rendering --------------------------------------------------------------
 
-/** Builds a card element. `card` is a VisibleCard from the engine. */
-function cardEl(card, { small = false, large = false } = {}) {
+/** Builds a card element. `card` is a VisibleCard from the engine.
+ *
+ * `yours` marks a card you control, which is the only kind that can look
+ * inert: the opponent's board offers you nothing by definition, and dimming
+ * all of it would say something about their position that it does not mean.
+ *
+ * `plain` drops the menu. Used inside overlays, which are painted above it,
+ * and for the trash pile, whose own click opens the pile.
+ *
+ * `preview` drops the hover panel too. The battle modal shows the cards it is
+ * about at full size already, so a second copy of one in the corner is noise.
+ */
+function cardEl(
+  card,
+  {
+    small = false,
+    large = false,
+    yours = false,
+    plain = false,
+    preview = true,
+    arriving = 0,
+  } = {},
+) {
   const el = document.createElement("div");
   el.className = "card" + (small ? " small" : "") + (large ? " large" : "");
   el.dataset.id = String(card.id);
+  // A card that was not in hand last render grows into place, so a draw or a
+  // Life card taken is visible as an arrival rather than the hand just being
+  // one wider than it was.
+  if (arriving) {
+    el.classList.add("arriving");
+    el.style.animationDelay = `${(arriving - 1) * 90}ms`;
+  }
   if (card.rested) el.classList.add("rested");
   if (highlighted.has(card.id)) el.classList.add("highlight");
   // A battle is easy to lose track of once the log has scrolled, and the
@@ -90,8 +140,30 @@ function cardEl(card, { small = false, large = false } = {}) {
     el.classList.add("has-art");
   });
 
-  el.addEventListener("mouseenter", () => showPreview(card.number));
-  el.addEventListener("mouseleave", hidePreview);
+  if (plain) {
+    // No menu here, so the old hover panel is still how these are read —
+    // except where the surrounding overlay is already showing the card.
+    if (preview) {
+      el.addEventListener("mouseenter", () => showPreview(card.number));
+      el.addEventListener("mouseleave", hidePreview);
+    }
+    return el;
+  }
+
+  // Keyed to the decision, not to whether any card happens to have a menu:
+  // with no DON!! left, nothing is playable and every card should dim, which
+  // is exactly when a "some card has a menu" test switches the dimming off.
+  if (cardsCanAct && yours && !menus.has(card.id)) {
+    el.classList.add("inert");
+  }
+  if (card.id === selected) el.classList.add("selected");
+
+  el.addEventListener("mouseenter", () => hoverMenu(card, el, yours));
+  el.addEventListener("mouseleave", unhoverMenu);
+  el.addEventListener("click", (e) => {
+    e.stopPropagation();
+    pinMenu(card, el, yours);
+  });
   return el;
 }
 
@@ -116,6 +188,144 @@ async function showPreview(number) {
 function hidePreview() {
   $("preview").hidden = true;
 }
+
+// ---- card menu --------------------------------------------------------------
+//
+// Hovering a card shows its full-size view and the actions that start from it;
+// clicking pins that, so it can be read without holding the mouse still. The
+// flat list is still in the sidebar, so nothing here is the only route to a
+// legal action.
+//
+// Both edges are delayed. Opening waits so that sweeping the cursor across a
+// row does not fire a menu per card; closing waits because the cursor has to
+// cross a gap to reach the menu, and a menu that vanishes on the way is one
+// you cannot click.
+
+const OPEN_DELAY = 90;
+const CLOSE_DELAY = 180;
+let openTimer = null;
+let closeTimer = null;
+
+function hoverMenu(card, el, yours) {
+  clearTimeout(closeTimer);
+  if (pinned || selected === card.id) return;
+  clearTimeout(openTimer);
+  openTimer = setTimeout(() => showMenu(card, el, yours), OPEN_DELAY);
+}
+
+function unhoverMenu() {
+  clearTimeout(openTimer);
+  if (pinned) return;
+  closeTimer = setTimeout(closeMenu, CLOSE_DELAY);
+}
+
+/** A click pins the menu where hover would have let it go. Clicking the
+ *  pinned card again releases it. */
+function pinMenu(card, el, yours) {
+  clearTimeout(openTimer);
+  clearTimeout(closeTimer);
+  if (pinned && selected === card.id) {
+    closeMenu();
+    return;
+  }
+  pinned = true;
+  showMenu(card, el, yours);
+}
+
+function showMenu(card, el, yours) {
+  selected = card.id;
+  for (const c of document.querySelectorAll(".card.selected")) {
+    c.classList.remove("selected");
+  }
+  el.classList.add("selected");
+  openMenu(card, el, yours);
+}
+
+function closeMenu() {
+  clearTimeout(openTimer);
+  clearTimeout(closeTimer);
+  selected = null;
+  pinned = false;
+  $("card-menu").hidden = true;
+  $("card-menu").classList.remove("pinned");
+  for (const c of document.querySelectorAll(".card.selected")) {
+    c.classList.remove("selected");
+  }
+}
+
+async function openMenu(card, el, yours) {
+  const menu = $("card-menu");
+  const info = card.number ? catalogue.get(card.number) : null;
+  const options = menus.get(card.id) ?? [];
+  const uri = await art(card.number);
+
+  // The click may have been superseded while the art resolved.
+  if (selected !== card.id) return;
+
+  menu.innerHTML = `
+    <div class="menu-card">
+      ${uri ? `<img src="${uri}" alt="${card.number}" />` : ""}
+      <div class="menu-name">${info ? info.name : (card.number ?? "Face-down")}</div>
+      <div class="menu-meta">${
+        info
+          ? `${info.category} · cost ${info.cost}${
+              card.power != null ? ` · ${card.power} now` : ""
+            }`
+          : ""
+      }</div>
+      ${info && info.effect ? `<div class="peffect">${info.effect.replaceAll("<br>", "<br/>")}</div>` : ""}
+      ${info && info.trigger ? `<div class="ptrigger">${info.trigger}</div>` : ""}
+    </div>
+    <div class="menu-actions"></div>
+  `;
+
+  const list = menu.querySelector(".menu-actions");
+  // "Nothing from here" is worth saying about your own card and not about the
+  // opponent's, where it is never news. Theirs is a preview and nothing more.
+  if (options.length === 0 && yours) {
+    list.innerHTML = `<div class="menu-none">No actions from this card</div>`;
+  }
+  fillOptions(list, options);
+  list.hidden = options.length === 0 && !yours;
+
+  menu.classList.toggle("pinned", pinned);
+  menu.hidden = false;
+  place(menu, el);
+}
+
+/** Anchors the menu beside `el`, kept inside the window.
+ *
+ * Measured after unhiding, because a hidden element has no height and the
+ * hand row — where the menu must open upwards — is exactly where getting that
+ * wrong pushes it off the bottom of the screen.
+ */
+function place(menu, el) {
+  const card = el.getBoundingClientRect();
+  const box = menu.getBoundingClientRect();
+  const margin = 8;
+
+  let left = card.left + card.width / 2 - box.width / 2;
+  left = Math.max(margin, Math.min(left, window.innerWidth - box.width - margin));
+
+  // Prefer above the card, which is where the hand is looked at from; fall
+  // back to below when the card is near the top of the board.
+  let top = card.top - box.height - margin;
+  if (top < margin) top = Math.min(card.bottom + margin, window.innerHeight - box.height - margin);
+
+  menu.style.left = `${Math.round(left)}px`;
+  menu.style.top = `${Math.round(Math.max(margin, top))}px`;
+}
+
+// Clicking the pinned card or its text is not a dismissal; only the option
+// buttons inside close the menu, and they do it themselves.
+$("card-menu").addEventListener("click", (e) => e.stopPropagation());
+// The cursor leaving the card to reach the menu must not close it.
+$("card-menu").addEventListener("mouseenter", () => clearTimeout(closeTimer));
+$("card-menu").addEventListener("mouseleave", unhoverMenu);
+document.addEventListener("click", closeMenu);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closeMenu();
+});
 
 /** A card plus any DON!! given to it.
  *
@@ -166,11 +376,14 @@ function renderDon(side, prefix, deckCount) {
   const ordered = [...side.don].sort((a, b) => Number(a.rested) - Number(b.rested));
   for (const d of ordered) row.appendChild(donEl(d));
 
+  // The DON!! deck is its own zone on the mat, not the tail of the cost area.
+  const slot = $(`${prefix}-don-deck`);
+  slot.innerHTML = "";
   const remaining = document.createElement("div");
   remaining.className = "don-deck";
   remaining.title = "DON!! deck";
   remaining.textContent = deckCount;
-  row.appendChild(remaining);
+  slot.appendChild(remaining);
 }
 
 /// The trash is an open area (3-5-2) — either player may look through either
@@ -181,13 +394,25 @@ function renderTrash(side, prefix, label) {
 
   const pile = document.createElement("div");
   pile.className = "trash-pile" + (side.trash.length === 0 ? " empty" : "");
-  pile.title = `${label} trash — ${side.trash.length} card(s)`;
+
+  // Why the top card is there. The pile is the only place left that can say
+  // so, now that nothing flies across the board carrying the reason.
+  const cause = lastCause.get(prefix);
+  pile.title =
+    `${label} trash — ${side.trash.length} card(s)` +
+    (cause ? `\nmost recent: ${cause}` : "");
 
   if (side.trash.length > 0) {
     // Index 0 is the most recent card in (3-5-2), so it is the face-up top.
-    pile.appendChild(cardEl(side.trash[0], { small: true }));
+    const top = side.trash[0];
+    const isNew = lastTrashTop.get(prefix) !== top.id;
+    lastTrashTop.set(prefix, top.id);
+    pile.appendChild(
+      cardEl(top, { small: true, plain: true, arriving: isNew ? 1 : 0 }),
+    );
     pile.addEventListener("click", () => openTrash(side, label));
   } else {
+    lastTrashTop.set(prefix, null);
     pile.innerHTML = `<div class="trash-empty">trash</div>`;
   }
 
@@ -204,7 +429,7 @@ function openTrash(side, label) {
     `${side.trash.length} card(s), most recent first`;
   const grid = $("trash-grid");
   grid.innerHTML = "";
-  for (const card of side.trash) grid.appendChild(cardEl(card));
+  for (const card of side.trash) grid.appendChild(cardEl(card, { plain: true }));
   $("trash-modal").hidden = false;
 }
 
@@ -252,25 +477,268 @@ $("trash-close").addEventListener("click", () => {
   $("trash-modal").hidden = true;
 });
 
+$("choose-confirm").addEventListener("click", () => {
+  if (lastSnapshot) submitChoice(picked, lastSnapshot);
+});
+$("choose-none").addEventListener("click", () => {
+  if (lastSnapshot) submitChoice([], lastSnapshot);
+});
+
+/** The Life area, as face-down cards.
+ *
+ * Contents are secret to *both* players (3-1-4), so there is nothing to draw
+ * but backs — which is also what the area looks like on a table. */
+function renderLife(side, prefix) {
+  const box = $(`${prefix}-life-cards`);
+  box.innerHTML = "";
+  box.classList.toggle("none", side.life_count === 0);
+
+  // Counted rather than identified: Life is a count in the view, so there are
+  // no ids to diff. A drop is the only signal that a card left, and it fires
+  // once because the count then stays put until the next one goes.
+  const before = lastLifeCount.get(prefix);
+  const lost = before == null ? 0 : Math.max(0, before - side.life_count);
+  lastLifeCount.set(prefix, side.life_count);
+
+  // Overlapped by CSS margin rather than absolute offsets, so the pile sizes
+  // itself and stays inside its zone however many cards are in it.
+  for (let i = 0; i < side.life_count; i++) {
+    const c = document.createElement("div");
+    c.className = "card facedown life-card";
+    c.style.zIndex = String(i);
+    c.innerHTML = `<div class="back"></div>`;
+    box.appendChild(c);
+  }
+
+  // The cards that just went, flashing where they were before fading. Left in
+  // the flow so the pile does not close the gap until they are gone.
+  for (let i = 0; i < lost; i++) {
+    const ghost = document.createElement("div");
+    ghost.className = "card facedown life-card leaving";
+    ghost.style.zIndex = String(side.life_count + i);
+    ghost.style.animationDelay = `${i * 160}ms`;
+    ghost.innerHTML = `<div class="back"></div>`;
+    ghost.addEventListener("animationend", () => ghost.remove());
+    box.appendChild(ghost);
+  }
+
+  // Counted like the deck and the trash, so the three piles read alike — and
+  // Life is the one whose number decides the game.
+  const count = document.createElement("div");
+  count.className = "trash-count life-count";
+  count.textContent = side.life_count;
+  box.appendChild(count);
+}
+
+/** The deck, as a face-down pile with its count. */
+function renderDeck(side, prefix) {
+  const slot = $(`${prefix}-deck-pile`);
+  slot.innerHTML = "";
+
+  const pile = document.createElement("div");
+  pile.className = "pile" + (side.deck_count === 0 ? " empty" : "");
+  pile.title = `deck — ${side.deck_count} card(s)`;
+
+  if (side.deck_count > 0) {
+    const c = document.createElement("div");
+    c.className = "card small facedown";
+    c.innerHTML = `<div class="back"></div>`;
+    pile.appendChild(c);
+  } else {
+    pile.innerHTML = `<div class="trash-empty">deck</div>`;
+  }
+
+  const count = document.createElement("div");
+  count.className = "trash-count";
+  count.textContent = side.deck_count;
+  pile.appendChild(count);
+  slot.appendChild(pile);
+}
+
 function renderSide(view, side, prefix) {
+  const yours = side === view.you;
+
   const leader = $(`${prefix}-leader`);
   leader.innerHTML = "";
-  if (side.leader) leader.appendChild(cardSlot(side.leader));
+  if (side.leader) leader.appendChild(cardSlot(side.leader, { yours }));
 
   const chars = $(`${prefix}-characters`);
   chars.innerHTML = "";
   if (side.characters.length === 0) {
     chars.innerHTML = `<div class="empty">no characters</div>`;
   }
-  for (const c of side.characters) chars.appendChild(cardSlot(c));
+  for (const c of side.characters) chars.appendChild(cardSlot(c, { yours }));
 
   const stage = $(`${prefix}-stage`);
   stage.innerHTML = "";
-  if (side.stage) stage.appendChild(cardSlot(side.stage, { small: true }));
+  if (side.stage) stage.appendChild(cardSlot(side.stage, { small: true, yours }));
 }
 
-function lifePips(n) {
-  return `<span class="pips">${"●".repeat(n)}${"○".repeat(Math.max(0, 5 - n))}</span> ${n}`;
+
+/** One action, as a button. Shared by the sidebar and the card menus so a
+ *  given action looks and behaves the same wherever it is offered. */
+function optionButton(opt) {
+  const b = document.createElement("button");
+  b.className = `opt ${opt.kind}`;
+  b.textContent = opt.label;
+  b.addEventListener("click", () => {
+    closeMenu();
+    choose(opt.index);
+  });
+  b.addEventListener("mouseenter", () => {
+    highlighted = new Set(opt.cards);
+    applyHighlight();
+  });
+  b.addEventListener("mouseleave", () => {
+    highlighted = new Set();
+    applyHighlight();
+  });
+  return b;
+}
+
+function fillOptions(container, options) {
+  for (const opt of options) container.appendChild(optionButton(opt));
+}
+
+/** Whether the full list is expanded. Kept across renders: a disclosure that
+ *  re-collapsed on every snapshot would be unusable during your own turn. */
+let allOpen = false;
+
+/** The actions that live on cards, flat and collapsed. A card menu is only
+ *  findable if you guess the right card, so this stays as the index of them.
+ *
+ *  Card-bound only: the card-less actions are already listed above it, and
+ *  showing the whole list here repeated every one of them. */
+function allActions(options) {
+  const box = document.createElement("details");
+  box.className = "all-actions";
+  box.open = allOpen;
+  box.innerHTML = `<summary>Card actions (${options.length})</summary>`;
+  box.addEventListener("toggle", () => {
+    allOpen = box.open;
+  });
+  const list = document.createElement("div");
+  list.className = "all-list";
+  fillOptions(list, options);
+  box.appendChild(list);
+  return box;
+}
+
+// ---- choosing targets -------------------------------------------------------
+//
+// The engine offers a Choose as one action per subset, which is a list of
+// combinations and unreadable past two candidates. This turns it back into
+// what the player is actually doing: picking cards.
+
+/** Cards picked so far, in click order. */
+let picked = [];
+
+const sameSet = (a, b) =>
+  a.length === b.length && [...a].sort().every((v, i) => v === [...b].sort()[i]);
+
+/** The card whose effect is asking, with its text.
+ *
+ * "Choose up to 1" says nothing about why, and by the time the prompt appears
+ * the source may be one of several cards that could have produced it. */
+async function renderChooseSource(number) {
+  const box = $("choose-source");
+  if (!number) {
+    box.hidden = true;
+    return;
+  }
+
+  const info = catalogue.get(number);
+  const uri = await art(number);
+  box.innerHTML = `
+    <div class="source-art">${uri ? `<img src="${uri}" alt="${number}" />` : number}</div>
+    <div class="source-text">
+      <div class="source-who">${info ? info.name : number} is asking</div>
+      ${info && info.effect ? `<div class="peffect">${info.effect.replaceAll("<br>", "<br/>")}</div>` : ""}
+      ${info && info.trigger ? `<div class="ptrigger">${info.trigger}</div>` : ""}
+    </div>
+  `;
+  box.hidden = false;
+}
+
+function renderChoose(snap) {
+  const modal = $("choose-modal");
+  if (snap.choose_up_to == null) {
+    modal.hidden = true;
+    picked = [];
+    return;
+  }
+
+  const upTo = snap.choose_up_to;
+  // Every candidate appears as a subset of one, so the singletons are the
+  // candidate list — in the engine's order, which is the board's order.
+  const candidates = [];
+  for (const opt of snap.options) {
+    if (opt.cards.length === 1 && !candidates.includes(opt.cards[0])) {
+      candidates.push(opt.cards[0]);
+    }
+  }
+
+  const index = cardIndex(snap.view);
+  $("choose-title").textContent = snap.question ?? "Choose";
+  renderChooseSource(snap.choose_source);
+  $("choose-sub").textContent =
+    upTo === 1
+      ? "Pick a card."
+      : `Pick up to ${upTo} — ${picked.length} chosen.`;
+
+  const grid = $("choose-grid");
+  grid.innerHTML = "";
+  for (const id of candidates) {
+    const card = index.get(id);
+    const holder = document.createElement("div");
+    holder.className = "choose-option" + (picked.includes(id) ? " picked" : "");
+
+    if (card) {
+      holder.appendChild(cardEl(card, { plain: true }));
+    } else {
+      // A candidate the view does not hold — off-board, mid-effect. The
+      // engine's own label is the only description available for it.
+      const opt = snap.options.find((o) => o.cards.length === 1 && o.cards[0] === id);
+      holder.innerHTML = `<div class="choose-unknown">${opt ? opt.label : id}</div>`;
+    }
+
+    holder.appendChild(
+      Object.assign(document.createElement("div"), {
+        className: "choose-rank",
+        textContent: picked.includes(id) ? String(picked.indexOf(id) + 1) : "",
+      }),
+    );
+
+    holder.addEventListener("click", () => {
+      if (upTo === 1) {
+        submitChoice([id], snap);
+        return;
+      }
+      if (picked.includes(id)) picked = picked.filter((p) => p !== id);
+      else if (picked.length < upTo) picked.push(id);
+      renderChoose(snap);
+    });
+    grid.appendChild(holder);
+  }
+
+  // Declining is only on the table when the engine actually offers it.
+  const canDecline = snap.options.some((o) => o.cards.length === 0);
+  $("choose-none").hidden = !canDecline;
+  $("choose-confirm").hidden = upTo === 1;
+  $("choose-confirm").disabled = picked.length === 0;
+  modal.hidden = animating();
+}
+
+/** Submits a set of cards by finding the option that names exactly them. */
+function submitChoice(cards, snap) {
+  const opt = snap.options.find((o) => sameSet(o.cards, cards));
+  if (!opt) {
+    $("question").textContent = "That combination is not on offer";
+    return;
+  }
+  picked = [];
+  $("choose-modal").hidden = true;
+  choose(opt.index);
 }
 
 /** Every card on the board, by instance id, for looking up live power. */
@@ -280,6 +748,23 @@ function boardIndex(view) {
     for (const c of [side.leader, side.stage, ...side.characters]) {
       if (c) index.set(c.id, c);
     }
+  }
+  return index;
+}
+
+/** Whether `id` is a card the viewer controls, hand included. */
+function isYours(view, id) {
+  if (view.you.hand.some((c) => c.id === id)) return true;
+  const { leader, stage, characters } = view.you;
+  return [leader, stage, ...characters].some((c) => c && c.id === id);
+}
+
+/** Every card the viewer can click, for re-finding one across a re-render. */
+function cardIndex(view) {
+  const index = boardIndex(view);
+  for (const c of view.you.hand) index.set(c.id, c);
+  for (const side of [view.you, view.opponent]) {
+    for (const c of side.trash) index.set(c.id, c);
   }
   return index;
 }
@@ -317,30 +802,313 @@ function renderBattle(view) {
   // The full view. Power shown here is derived, so DON!! and counters are
   // already folded in — which is the whole point of showing it during the
   // Counter step.
-  modal.hidden = false;
+  //
+  // Held while something is flying: the K.O. that preceded this attack has to
+  // be seen happening, or it reads as the attack's doing.
+  modal.hidden = animating();
   $("battle-step").textContent = `${view.battle.step} step`;
 
   for (const [slot, card] of [["attacker", attacker], ["defender", defender]]) {
     const holder = $(`battle-${slot}`);
     holder.innerHTML = "";
-    if (card) holder.appendChild(cardEl(card, { large: true }));
+    if (card) holder.appendChild(cardEl(card, { large: true, plain: true, preview: false }));
     $(`battle-${slot}-name`).textContent = cardName(card);
     $(`battle-${slot}-power`).textContent =
       card && card.power != null ? card.power : "—";
   }
 
   // 7-1-4-1: the attacker wins ties, so ">=" is the line that matters.
+  //
+  // Stated as a projection until the engine has actually resolved the battle.
+  // The comparison is the reason to show this at all — it is what tells you
+  // whether a Counter is worth spending — but before the Damage Step it is a
+  // forecast of an unfinished battle, and calling it "attacker wins" while the
+  // defender still holds decisions asserts an outcome nobody has reached.
   const ap = attacker && attacker.power;
   const dp = defender && defender.power;
+  const resolved = beatsNow.some((b) => b.kind === "result");
   const verdict = $("battle-verdict");
   if (typeof ap === "number" && typeof dp === "number") {
     const wins = ap >= dp;
-    verdict.textContent = wins ? "attacker wins" : "attack repelled";
-    verdict.className = `verdict ${wins ? "bad" : "good"}`;
+    verdict.textContent = resolved
+      ? wins
+        ? "the attack lands"
+        : "the attack is repelled"
+      : wins
+        ? "as it stands, the attack lands"
+        : "as it stands, it is repelled";
+    verdict.className = `verdict ${wins ? "bad" : "good"}${resolved ? "" : " projected"}`;
   } else {
     verdict.textContent = "";
     verdict.className = "verdict";
   }
+}
+
+/** Beats from the snapshot currently being drawn. */
+let beatsNow = [];
+
+// ---- the result of a battle -------------------------------------------------
+//
+// Announced in its own overlay, not in the modal: the engine clears the battle
+// as soon as it resolves, so the modal has already closed by the time there is
+// a result to report.
+
+const RESULT_HOLD = 2000;
+let resultShown = null;
+let resultTimer = null;
+
+/** Announces how a battle ended, then fades. `text` is null between battles. */
+function announceResult(text) {
+  const box = $("battle-result");
+
+  // The result stays in the snapshot until the next attack, so re-renders in
+  // between must not restart the timer or it would never go away.
+  if (text === resultShown) return;
+  resultShown = text;
+  clearTimeout(resultTimer);
+
+  if (!text) {
+    box.hidden = true;
+    box.classList.remove("shown");
+    return;
+  }
+
+  box.textContent = text;
+  box.className = text.includes("repelled") ? "repelled" : "landed";
+  box.hidden = false;
+  // Next frame, so the transition has an initial state to move from.
+  requestAnimationFrame(() => box.classList.add("shown"));
+
+  resultTimer = setTimeout(() => {
+    box.classList.remove("shown");
+    // Hidden only once the fade has finished, so it cannot be tabbed to or
+    // caught mid-transition by the next render.
+    resultTimer = setTimeout(() => {
+      box.hidden = true;
+    }, 200);
+  }, RESULT_HOLD);
+}
+
+/** What the defender has done so far, as narration with the cards involved.
+ *
+ * The board shows the *result* of a block or a Counter — the target changes,
+ * the power goes up — but never says who did it or with what, and by the time
+ * the modal closes the cards are back in the trash. */
+function renderBeats(snap) {
+  const box = $("battle-beats");
+  box.innerHTML = "";
+  const index = cardIndex(snap.view);
+
+  for (const b of snap.battle_beats) {
+    const row = document.createElement("div");
+    row.className = `beat ${b.kind}`;
+
+    const card = b.card == null ? null : index.get(b.card);
+    if (card) {
+      row.appendChild(cardEl(card, { small: true, plain: true, preview: false }));
+    } else {
+      row.appendChild(
+        Object.assign(document.createElement("div"), { className: "beat-nocard" }),
+      );
+    }
+    row.appendChild(
+      Object.assign(document.createElement("div"), {
+        className: "beat-text",
+        textContent: b.text,
+      }),
+    );
+    box.appendChild(row);
+  }
+  box.scrollTop = box.scrollHeight;
+}
+
+// ---- a card going to the trash ----------------------------------------------
+//
+// The pile just gains one, with nothing to say a card moved. Its new top card
+// grows into place, the same way an arrival in hand does, and the reason it is
+// there — "K.O.'d by Killer" — becomes the pile's tooltip. Nothing carries the
+// reason across the board any more, so this is the only place it can live.
+
+/** How long a card takes to grow into place, from the CSS. */
+const GROW_MS = 450;
+
+let trashSeenFor = null;
+let growUntil = 0;
+
+const animating = () => Date.now() < growUntil;
+
+function noteTrashArrivals(snap) {
+  // Guarded by snapshot identity: one snapshot can be rendered more than once
+  // and must not restart the hold each time.
+  if (snap === trashSeenFor) return;
+  trashSeenFor = snap;
+
+  for (const entry of snap.to_trash) {
+    const info = catalogue.get(entry.number);
+    lastCause.set(
+      entry.yours ? "you" : "opp",
+      `${info ? info.name : entry.number} — ${entry.cause}`,
+    );
+  }
+  if (!snap.to_trash.length) return;
+
+  // Modals wait for it, so cause is seen before effect: a card K.O.'d by an
+  // [On Play] before an attack must be watched landing, not discovered once
+  // the battle it had nothing to do with has resolved.
+  growUntil = Date.now() + GROW_MS;
+  setTimeout(() => lastSnapshot && render(lastSnapshot), GROW_MS + 30);
+}
+
+// ---- whose turn it is -------------------------------------------------------
+//
+// The turn label in the top bar changes without anyone looking at it. A turn
+// passing is the largest thing that happens in the game and deserves to be
+// unmissable once, rather than permanently.
+
+const TURN_HOLD = 1500;
+let lastTurn = null;
+let turnTimer = null;
+
+function announceTurn(snap) {
+  const turn = snap.view.turn;
+  // Turn 0 is setup, which nobody owns.
+  if (turn < 1 || turn === lastTurn) return;
+  lastTurn = turn;
+
+  const box = $("turn-banner");
+  clearTimeout(turnTimer);
+  box.className = snap.turn_label.startsWith("Your") ? "yours" : "theirs";
+  box.innerHTML = `
+    <div class="turn-who">${snap.turn_label}</div>
+    <div class="turn-no">Turn ${turn}</div>
+  `;
+  box.hidden = false;
+  requestAnimationFrame(() => box.classList.add("shown"));
+
+  turnTimer = setTimeout(() => {
+    box.classList.remove("shown");
+    turnTimer = setTimeout(() => {
+      box.hidden = true;
+    }, 260);
+  }, TURN_HOLD);
+}
+
+// ---- the Life card that came off ---------------------------------------------
+//
+// Taking damage offers "Activate [Trigger]" or "Take into hand" — a choice
+// about a card the player has not seen. The card is theirs to see either way:
+// declining adds it to their hand unrevealed (10-1-5-2).
+
+async function renderTriggerTray(snap) {
+  const tray = $("trigger-tray");
+  const number = snap.trigger_card;
+  if (!number) {
+    tray.hidden = true;
+    return;
+  }
+
+  const info = catalogue.get(number);
+  const uri = await art(number);
+  if (snap !== lastSnapshot) return; // superseded while the art resolved
+
+  tray.innerHTML = `
+    <div class="trigger-head">This Life card has a [Trigger]</div>
+    <div class="trigger-body">
+      <div class="trigger-art">${uri ? `<img src="${uri}" alt="${number}" />` : number}</div>
+      <div class="trigger-text">
+        <div class="pname">${info ? info.name : number}</div>
+        <div class="pmeta">${
+          info
+            ? `${info.category} · cost ${info.cost}${info.power != null ? ` · ${info.power}` : ""}`
+            : number
+        }</div>
+        ${info && info.trigger ? `<div class="ptrigger">${info.trigger}</div>` : ""}
+        ${info && info.effect ? `<div class="peffect">${info.effect.replaceAll("<br>", "<br/>")}</div>` : ""}
+      </div>
+    </div>
+  `;
+  tray.hidden = false;
+}
+
+// ---- the Counter step -------------------------------------------------------
+//
+// The flat list named the cards involved and nothing more, which does not
+// identify *which* Zoro when two are in play, and the modal blurs the board it
+// is talking about. The cards are shown here instead, in the modal that is
+// asking about them.
+//
+// Only counters aimed at the card under attack are shown. Boosting a different
+// battler is legal and occasionally right, so those stay in the list below —
+// they are rare enough not to be worth a second selection step for.
+
+/** The Counter value a hand card is worth, from its printed details. */
+function counterValue(card) {
+  const info = card && card.number ? catalogue.get(card.number) : null;
+  return info && info.counter != null ? info.counter : null;
+}
+
+function renderCounterTray(snap) {
+  const tray = $("counter-tray");
+  const view = snap.view;
+  if (snap.pending_kind !== "counter" || !view.battle) {
+    tray.hidden = true;
+    return;
+  }
+
+  const defender = view.battle.target;
+  const index = cardIndex(view);
+  const target = index.get(defender);
+  const basePower = target && target.power != null ? target.power : null;
+
+  const options = snap.options.filter(
+    (o) => o.kind === "counter" && o.cards[1] === defender,
+  );
+
+  $("counter-prompt").textContent = options.length
+    ? `Play a Counter for ${cardName(target)}`
+    : `No Counter in hand for ${cardName(target)}`;
+
+  const hand = $("counter-hand");
+  hand.innerHTML = "";
+
+  const power = $("battle-defender-power");
+  const restore = () => {
+    power.textContent = basePower == null ? "—" : basePower;
+    power.classList.remove("boosted");
+  };
+
+  for (const opt of options) {
+    const card = index.get(opt.cards[0]);
+    if (!card) continue;
+
+    const holder = document.createElement("div");
+    holder.className = "counter-option";
+    holder.appendChild(cardEl(card, { small: true, plain: true, preview: false }));
+
+    // An Event played as a Counter has no printed Counter value; its worth is
+    // whatever its text does, so it is labelled rather than given a number.
+    const value = counterValue(card);
+    holder.appendChild(
+      Object.assign(document.createElement("div"), {
+        className: "counter-value",
+        textContent: value == null ? "[Counter]" : `+${value}`,
+      }),
+    );
+
+    holder.addEventListener("mouseenter", () => {
+      if (basePower == null || value == null) return;
+      power.textContent = basePower + value;
+      power.classList.add("boosted");
+    });
+    holder.addEventListener("mouseleave", restore);
+    holder.addEventListener("click", () => {
+      restore();
+      choose(opt.index);
+    });
+    hand.appendChild(holder);
+  }
+
+  tray.hidden = false;
 }
 
 function render(snap) {
@@ -348,22 +1116,46 @@ function render(snap) {
   battleAttacker = view.battle ? view.battle.attacker : null;
   battleDefender = view.battle ? view.battle.target : null;
 
+  // Grouped before anything is drawn: a card needs to know whether it has
+  // actions to decide whether it looks inert.
+  //
+  // A live battle keeps its decisions in the modal, which covers the board —
+  // so no card carries a menu while one is running.
+  // The Main Phase is the only decision whose actions belong to cards, so it
+  // is the only one where having none means a card cannot act. During a
+  // mulligan no card has actions and none should look inert.
+  cardsCanAct = snap.pending_kind === "main" && !view.battle;
+  beatsNow = snap.battle_beats ?? [];
+
+  menus = new Map();
+  cardless = [];
+  const carded = [];
+  for (const opt of snap.options) {
+    if (opt.subject == null || view.battle) {
+      cardless.push(opt);
+      continue;
+    }
+    carded.push(opt);
+    const list = menus.get(opt.subject);
+    if (list) list.push(opt);
+    else menus.set(opt.subject, [opt]);
+  }
+
   $("turn-label").textContent = snap.turn_label;
   $("session-id").textContent = snap.session_id ? `#${snap.session_id}` : "";
   $("session-id").title = "session id — matches the log filename";
   $("phase-label").textContent = `${view.phase} phase · turn ${view.turn}`;
 
-  $("opp-life").innerHTML = `life ${lifePips(view.opponent.life_count)}`;
-  $("opp-hand").textContent = `hand ${view.opponent.hand_count}`;
-  $("opp-deck").textContent = `deck ${view.opponent.deck_count}`;
-  $("opp-don").textContent = `${view.opponent.don_active} active DON!!`;
-
-  $("you-life").innerHTML = `life ${lifePips(view.you.life_count)}`;
-  $("you-deck").textContent = `deck ${view.you.deck_count}`;
-  $("you-don").textContent = `${view.you.don_active} active DON!!`;
+  // Everything else these used to spell out — life, deck, DON!! — is on the
+  // board now as the pile or the row itself. A hidden hand is the exception.
+  $("opp-hand").textContent = `opponent hand ${view.opponent.hand_count}`;
 
   renderSide(view, view.opponent, "opp");
   renderSide(view, view.you, "you");
+  renderLife(view.opponent, "opp");
+  renderLife(view.you, "you");
+  renderDeck(view.opponent, "opp");
+  renderDeck(view.you, "you");
   renderTrash(view.opponent, "opp", "Opponent");
   renderTrash(view.you, "you", "Your");
   renderDon(view.opponent, "opp", view.opponent.don_deck);
@@ -374,35 +1166,71 @@ function render(snap) {
   if (view.you.hand.length === 0) {
     hand.innerHTML = `<div class="empty">hand empty</div>`;
   }
-  for (const c of view.you.hand) hand.appendChild(cardSlot(c));
+  // Diffed by instance id rather than taken from the snapshot: several copies
+  // of a card are indistinguishable by number, and the id says which is new.
+  const byId = new Map(view.you.hand.map((c) => [c.id, c]));
+  handOrder = handOrder.filter((id) => byId.has(id));
+  for (const c of view.you.hand) {
+    if (!handOrder.includes(c.id)) handOrder.push(c.id);
+  }
+
+  let nth = 0;
+  for (const id of handOrder) {
+    const isNew = !lastHandIds.has(id);
+    hand.appendChild(cardSlot(byId.get(id), { yours: true, arriving: isNew ? ++nth : 0 }));
+  }
+  lastHandIds = new Set(handOrder);
+
+  // Before the modals: both gate themselves on `animating()`, and this is what
+  // opens that window. Called after them, it sets `growUntil` too late to be
+  // read this pass, so a snapshot carrying both a K.O. and a battle decision
+  // shows the modal over the very animation it is meant to wait for.
+  noteTrashArrivals(snap);
 
   renderBattle(view);
+  if (view.battle) renderBeats(snap);
+  renderCounterTray(snap);
+  renderTriggerTray(snap);
+  announceTurn(snap);
+  announceResult(snap.battle_result ?? null);
+  renderChoose(snap);
 
   $("question").textContent =
     snap.question ?? (snap.thinking ? "Opponent is thinking…" : "Waiting…");
 
   const inBattle = !!view.battle;
-  const options = $(inBattle ? "battle-options" : "options");
   $("options").innerHTML = "";
   $("battle-options").innerHTML = "";
   $("battle-question").textContent = inBattle ? (snap.question ?? "") : "";
-  if (snap.thinking) {
-    options.innerHTML = `<div class="thinking">Opponent is thinking…</div>`;
+
+  if (inBattle) {
+    // The modal owns the whole decision while a battle runs, so it gets the
+    // undivided list.
+    fillOptions($("battle-options"), snap.options);
+  } else {
+    fillOptions($("options"), cardless);
+    if (carded.length > 0) {
+      $("options").appendChild(allActions(carded));
+    }
   }
-  for (const opt of snap.options) {
-    const b = document.createElement("button");
-    b.className = `opt ${opt.kind}`;
-    b.textContent = opt.label;
-    b.addEventListener("click", () => choose(opt.index));
-    b.addEventListener("mouseenter", () => {
-      highlighted = new Set(opt.cards);
-      applyHighlight();
-    });
-    b.addEventListener("mouseleave", () => {
-      highlighted = new Set();
-      applyHighlight();
-    });
-    options.appendChild(b);
+  if (snap.thinking) {
+    $(inBattle ? "battle-options" : "options").innerHTML =
+      `<div class="thinking">Opponent is thinking…</div>`;
+  }
+
+  // The board was rebuilt underneath any open menu. A pinned one is re-anchored
+  // to the new element, or dropped if that card has left play. An unpinned one
+  // just closes: its card element is gone, so no mouseleave can ever arrive to
+  // close it later, and hovering again costs nothing.
+  if (selected !== null) {
+    const el = document.querySelector(`.card[data-id="${selected}"]`);
+    const card = cardIndex(view).get(selected);
+    if (pinned && el && card && !inBattle) {
+      el.classList.add("selected");
+      openMenu(card, el, isYours(view, selected));
+    } else {
+      closeMenu();
+    }
   }
 
   const log = $("log");
@@ -433,7 +1261,19 @@ let lastSnapshot = null;
 
 // ---- actions ----------------------------------------------------------------
 
+// An index only means anything against the decision that was pending when it
+// was read. Clearing `#options` is not enough to enforce that: a battle puts
+// the buttons in `#battle-options` and the counters in their own tray, and
+// both stay on screen until the next snapshot renders. A second click landing
+// before then would be validated against the *next* pending decision, which
+// silently applies a legal action nobody picked — declining a block twice
+// plays whichever Counter now occupies that slot. Guard the submission itself
+// rather than the surfaces, so a surface added later is covered too.
+let inFlight = false;
+
 async function choose(index) {
+  if (inFlight) return;
+  inFlight = true;
   $("options").innerHTML = `<div class="thinking">Opponent is thinking…</div>`;
   try {
     // Returns as soon as your own move is applied. If the AI owes a reply it
@@ -444,6 +1284,8 @@ async function choose(index) {
     render(lastSnapshot);
   } catch (err) {
     $("question").textContent = String(err);
+  } finally {
+    inFlight = false;
   }
 }
 
@@ -464,6 +1306,15 @@ async function start() {
     });
     catalogue = new Map(result.catalogue.map((c) => [c.number, c]));
     artCache.clear();
+    // A new game starts at turn 1 again, which is a change worth announcing.
+    lastTurn = null;
+    // Cleared so the first render of a fresh Life area is not five losses.
+    lastLifeCount.clear();
+    lastTrashTop.clear();
+    lastCause.clear();
+    // Seeded from the opening hand so a deal does not read as five arrivals.
+    handOrder = result.snapshot.view.you.hand.map((c) => c.id);
+    lastHandIds = new Set(handOrder);
     lastSnapshot = result.snapshot;
     $("setup").hidden = true;
     $("result").hidden = true;

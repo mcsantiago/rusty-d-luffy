@@ -363,6 +363,10 @@ impl ResolutionStack {
         self.frames.push(frame);
     }
 
+    pub fn top(&self) -> Option<&EffectFrame> {
+        self.frames.last()
+    }
+
     pub fn top_mut(&mut self) -> Option<&mut EffectFrame> {
         self.frames.last_mut()
     }

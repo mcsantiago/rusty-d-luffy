@@ -11,8 +11,17 @@
   --accent: #d9484b;
   --accent-2: #f0b429;
   --good: #4ea36b;
-  --card-w: 92px;
-  --card-h: 128px;
+  /* One card size for the whole board. Every zone derives from it rather than
+     hardcoding its own, so nothing drifts, and the 1.4 ratio is the physical
+     card's.
+     Tied to whichever window dimension is tighter: width alone let a short
+     window keep full-size cards and scroll instead, and a board you scroll is
+     one you cannot read at a glance — both mats have to be on screen. */
+  --card-w: clamp(46px, min(5.6vw, 8.4vh), 92px);
+  --card-h: calc(var(--card-w) * 1.4);
+  --card-gap: clamp(4px, 0.55vw, 10px);
+  --zone-pad: clamp(4px, 0.5vw, 9px);
+  --zone-radius: 10px;
 }
 
 * { box-sizing: border-box; }
@@ -42,6 +51,15 @@ html, body {
   background: rgba(8, 12, 18, 0.86);
   backdrop-filter: blur(6px);
   z-index: 50;
+}
+
+/* A [Counter] or [Trigger] whose script suspends on a Choose does so while the
+   battle is still running, so both overlays are up at once. The Choose is the
+   decision actually owed and has to take the clicks; sharing `.overlay`'s
+   z-index leaves it to DOM order, which puts the battle on top and swallows
+   every one of them. */
+#choose-modal {
+  z-index: 60;
 }
 
 .panel {
@@ -147,34 +165,192 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
     radial-gradient(ellipse at 50% 40%, #1d2b3a 0%, var(--felt) 70%);
 }
 
-.side { display: flex; flex-direction: column; gap: 8px; }
+/* ---- the playmat ----
 
-.side-meta {
+   A named grid per player rather than a stack of rows, so every zone has a
+   fixed home that does not move as the board fills.
+
+   Leader and Stage flank the Character area, the way they sit on the mat.
+   Six columns: the two middle ones are the battlefield, and splitting them
+   lets the bottom row divide into a cost area and a hand of comparable width
+   without either being one card wide.
+
+   The mats are mirrored about the divider — Character areas nearest it, cost
+   areas furthest apart, as across a table. The opponent has no hand to show,
+   so their cost area takes the whole far edge.
+
+       you                                  opponent
+   +----+----+---------+----+----+     +----+----+---------+----+----+
+   |life| ldr| chars   |stg |deck|     |dond|     cost area          |
+   |life| ldr| chars   |stg |tras|     |life| ldr| chars   |stg |tras|
+   |dond| cost    |    hand      |     |life| ldr| chars   |stg |deck|
+   +----+----+---------+----+----+     +----+----+---------+----+----+   */
+
+.mat {
+  display: grid;
+  gap: var(--card-gap);
+  grid-template-columns:
+    calc(var(--card-w) * 0.9)    /* life, laid sideways */
+    auto                          /* leader */
+    minmax(0, 1fr)                /* characters */
+    minmax(0, 1fr)
+    auto                          /* stage */
+    calc(var(--card-w) * 0.9);    /* deck / trash */
+  align-items: stretch;
+}
+
+.mat.you {
+  grid-template-areas:
+    "life    leader characters characters stage deck"
+    "life    leader characters characters stage trash"
+    "dondeck cost   cost       hand       hand  hand";
+}
+
+.mat.opponent {
+  grid-template-areas:
+    "dondeck cost   cost       cost       cost  cost"
+    "life    leader characters characters stage trash"
+    "life    leader characters characters stage deck";
+}
+
+.z-life { grid-area: life; }
+.z-characters { grid-area: characters; }
+.z-leader { grid-area: leader; }
+.z-stage { grid-area: stage; }
+.z-deck { grid-area: deck; }
+.z-trash { grid-area: trash; }
+.z-cost { grid-area: cost; }
+.z-dondeck { grid-area: dondeck; }
+.z-hand { grid-area: hand; }
+
+.zone {
+  position: relative;
+  padding: var(--zone-pad);
+  padding-top: calc(var(--zone-pad) + 11px);
+  border-radius: var(--zone-radius);
+  border: 1px solid rgba(42, 58, 77, 0.55);
+  background: rgba(8, 12, 18, 0.18);
+  min-width: 0;
+}
+
+/* Labelled the way the mat is printed. From ::before rather than a child, so
+   the renderers' innerHTML rebuilds cannot wipe it. */
+.zone::before {
+  content: attr(data-label);
+  position: absolute;
+  top: 3px;
+  left: 8px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #4a5f78;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+/* The battlefield, and the only zone that should grow. */
+.z-characters { min-height: calc(var(--card-h) + 18px); }
+.characters {
+  display: flex;
+  gap: var(--card-gap);
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--card-h);
+  height: 100%;
+}
+
+/* Flanking the battlefield, each hugging its side of it. */
+.z-leader { display: flex; justify-content: center; align-items: center; }
+.z-stage { display: flex; justify-content: center; align-items: center; }
+.leader-slot, .stage-slot, .deck-slot, .trash-slot, .don-deck-slot { flex: 0 0 auto; }
+
+/* An empty Stage still holds its place, or the Leader would slide sideways
+   the moment one is played. */
+.stage-slot:empty {
+  width: var(--card-w);
+  height: calc(var(--card-h) * 0.78);
+  border: 1px dashed rgba(60, 79, 102, 0.5);
+  border-radius: 7px;
+}
+
+.z-deck, .z-trash {
   display: flex;
   align-items: center;
-  gap: 16px;
-  font-size: 12px;
-  color: var(--muted);
+  justify-content: center;
 }
 
-.side-meta .who {
-  font-weight: 700;
-  color: var(--ink);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  font-size: 11px;
+/* Life is secret to both players (3-1-4), so there is nothing to draw but
+   backs. Overlapped upwards into a pile rather than absolutely placed, so the
+   stack sizes itself and never escapes its zone. */
+.z-life { display: flex; align-items: center; justify-content: center; }
+/* Laid sideways, as they are on the mat. Face-down cards have no art or text
+   to turn, so a landscape rectangle *is* a sideways card — no rotation, which
+   would leave the layout box upright and the stack as tall as before. Five of
+   them then cost a short side plus four overlaps instead of five long sides. */
+.life-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: calc(var(--card-w) * 0.86);
+}
+.life-stack.none { opacity: 0.3; }
+
+/* Anchored to the zone rather than the pile, and lifted above it: the cards
+   carry explicit z-indexes so they stack, which paints the top one over any
+   badge sitting inside. */
+.life-count {
+  right: 6px;
+  bottom: 5px;
+  z-index: 2;
+}
+/* Qualified with .card deliberately: these elements carry both classes, and
+   the .card block below sets a portrait width and height at the same
+   specificity — so on a bare .life-card it wins on order and the stack comes
+   out upright. */
+.card.life-card {
+  width: calc(var(--card-w) * 0.86);
+  height: calc(var(--card-w) * 0.86 / 1.4);
+  flex: 0 0 auto;
+  margin-top: calc(var(--card-w) * -0.86 / 1.4 + 18px);
+}
+.card.life-card:first-child { margin-top: 0; }
+
+/* A Life card leaving: a flash where it was, then out. Life vanishing silently
+   is the one board change a player must not miss, and it is also the only one
+   with no card left behind to look at afterwards. */
+@keyframes life-leaves {
+  0% { opacity: 1; filter: brightness(1); transform: scale(1); }
+  18% { opacity: 1; filter: brightness(3.2) saturate(0.4); transform: scale(1.09); }
+  40% { opacity: 1; filter: brightness(1.4); }
+  100% { opacity: 0; filter: brightness(1); transform: scale(1.16); }
+}
+.card.life-card.leaving {
+  animation: life-leaves 560ms ease-out both;
+  pointer-events: none;
+  z-index: 3;
 }
 
-.pips { color: var(--accent); letter-spacing: 2px; }
+/* Room for ten DON!! without a second row at full size, and controlled
+   overlap rather than overflow when there is not. */
+.z-cost { display: flex; align-items: center; }
+.don-row {
+  display: flex;
+  align-items: center;
+  gap: clamp(1px, 0.35vw, 5px);
+  flex-wrap: wrap;
+  justify-content: center;
+  width: 100%;
+  min-height: calc(var(--card-h) * 0.42);
+}
 
-.row { display: flex; align-items: flex-start; gap: 18px; min-height: var(--card-h); }
-.characters { display: flex; gap: 10px; flex: 1; flex-wrap: wrap; }
-.leader-slot, .stage-slot { flex: 0 0 auto; }
+.z-dondeck { display: flex; align-items: center; justify-content: center; }
 
 .divider {
   height: 1px;
   background: linear-gradient(90deg, transparent, var(--line), transparent);
-  margin: 16px 0;
+  margin: 10px 0;
 }
 
 .empty {
@@ -182,18 +358,18 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
   font-size: 12px;
   font-style: italic;
   align-self: center;
-  padding: 8px 0;
+  padding: 4px 0;
 }
 
-#hand-area { margin-top: 18px; }
-.hand-label {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--muted);
-  margin-bottom: 6px;
+.z-hand { display: flex; align-items: center; }
+.hand {
+  display: flex;
+  gap: var(--card-gap);
+  flex-wrap: wrap;
+  justify-content: center;
+  width: 100%;
+  min-height: var(--card-h);
 }
-.hand { display: flex; gap: 8px; flex-wrap: wrap; }
 
 /* ---- cards ---- */
 
@@ -211,7 +387,20 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
 }
 
 .card:hover { transform: translateY(-4px); box-shadow: 0 8px 20px rgba(0,0,0,0.45); z-index: 5; }
-.card.small { width: 72px; height: 100px; }
+
+/* A card that has just arrived in hand grows into place. Overshoots slightly:
+   a straight fade-in at final size is easy to miss between two renders, which
+   is the whole thing this is for. */
+@keyframes card-arrives {
+  0% { transform: scale(0.72); opacity: 0; }
+  55% { transform: scale(1.1); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+.card.arriving {
+  animation: card-arrives 420ms cubic-bezier(0.2, 0, 0.2, 1) both;
+  z-index: 6;
+}
+.card.small { width: calc(var(--card-w) * 0.78); height: calc(var(--card-w) * 0.78 * 1.4); }
 
 /* A card and the DON!! given to it. The rotation sits here so both turn
    together, the way they do on the table. */
@@ -295,7 +484,9 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
   min-height: 0;
 }
 
-#prompt { padding: 14px; border-bottom: 1px solid var(--line); }
+/* Below the log, so what you are being asked sits nearest the board and the
+   scrollback grows away from it. */
+#prompt { padding: 14px; border-top: 1px solid var(--line); flex: 0 0 auto; }
 #question { margin: 0 0 12px; font-size: 14px; font-weight: 600; }
 
 #options { display: flex; flex-direction: column; gap: 6px; max-height: 46vh; overflow: auto; }
@@ -310,7 +501,44 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
 .opt.play { border-left-color: #4a86c4; }
 .opt.don { border-left-color: var(--accent-2); }
 .opt.block, .opt.counter { border-left-color: var(--good); }
-.opt.end { border-left-color: #55708c; color: var(--muted); }
+/* Ending the turn hands the game to the opponent and cannot be taken back. */
+.opt.end-turn {
+  border-left-color: var(--accent);
+  background: rgba(217, 72, 75, 0.14);
+  border-color: rgba(217, 72, 75, 0.5);
+  border-left-width: 3px;
+  color: var(--ink);
+  font-weight: 600;
+}
+.opt.end-turn:hover { background: rgba(217, 72, 75, 0.26); border-color: var(--accent); }
+
+/* Finishing the Counter step commits to the damage as it stands, and is the
+   last moment a Counter can be played. */
+.opt.done {
+  border-left-color: var(--accent);
+  background: rgba(217, 72, 75, 0.14);
+  border-color: rgba(217, 72, 75, 0.5);
+  color: var(--ink);
+  font-weight: 600;
+}
+.opt.done:hover { background: rgba(217, 72, 75, 0.26); border-color: var(--accent); }
+
+/* The opening hand: keep what you were dealt, or trade it for another five. */
+.opt.keep {
+  border-left-color: var(--good);
+  background: rgba(78, 163, 107, 0.14);
+  border-color: rgba(78, 163, 107, 0.5);
+  font-weight: 600;
+}
+.opt.keep:hover { background: rgba(78, 163, 107, 0.26); border-color: var(--good); }
+
+.opt.mulligan {
+  border-left-color: var(--accent-2);
+  background: rgba(240, 180, 41, 0.14);
+  border-color: rgba(240, 180, 41, 0.5);
+  font-weight: 600;
+}
+.opt.mulligan:hover { background: rgba(240, 180, 41, 0.26); border-color: var(--accent-2); }
 
 .thinking { color: var(--muted); font-style: italic; font-size: 13px; padding: 8px 0; }
 
@@ -348,6 +576,352 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
 .peffect { font-size: 12px; line-height: 1.4; }
 .ptrigger { font-size: 12px; margin-top: 6px; color: var(--accent-2); }
 
+/* ---- card menu ----
+
+   Hovering a card shows its full view and the actions that start from it;
+   clicking pins that in place. Anchored in script, since it follows whichever
+   card the cursor is on. */
+
+#card-menu {
+  position: fixed;
+  width: 240px;
+  background: var(--felt-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px;
+  z-index: 40;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
+}
+/* The aspect ratio is declared so the menu has its final height before the art
+   decodes — it is positioned by measurement, and a late reflow would leave it
+   hanging off the bottom of the window. */
+#card-menu img {
+  width: 100%;
+  aspect-ratio: 5 / 7;
+  border-radius: 6px;
+  display: block;
+  margin-bottom: 8px;
+}
+.menu-name { font-weight: 700; font-size: 14px; }
+.menu-meta { color: var(--muted); font-size: 11px; margin: 2px 0 8px; }
+.menu-card { max-height: 46vh; overflow: auto; }
+.menu-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.menu-none { color: var(--muted); font-size: 12px; font-style: italic; }
+
+/* Pinned outlives the cursor, so it says so: an unpinned menu that happened to
+   stay put would otherwise look stuck. */
+#card-menu.pinned { border-color: var(--accent-2); }
+#card-menu.pinned::after {
+  content: "pinned — click again or Esc";
+  display: block;
+  margin-top: 8px;
+  font-size: 10px;
+  color: var(--accent-2);
+  text-align: center;
+}
+
+/* A card with nothing to offer, so the board reads at a glance. Kept legible
+   rather than greyed out: you still need to judge a board you cannot act on. */
+.card.inert { opacity: 0.55; }
+.card.inert:hover { opacity: 1; }
+.card.selected { outline-color: var(--accent-2); }
+
+/* ---- whose turn it is ----
+
+   Front and centre, once, then gone. Sits *below* the overlays: a modal is
+   always a question waiting on the player and must never be covered by an
+   announcement they cannot dismiss. */
+
+#turn-banner {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) scale(0.96);
+  padding: 22px 60px;
+  border-radius: 16px;
+  background: rgba(8, 12, 18, 0.9);
+  border: 1px solid var(--line);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.65);
+  text-align: center;
+  z-index: 45;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.22s, transform 0.22s;
+}
+#turn-banner.shown { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+#turn-banner.yours { border-color: var(--accent-2); }
+#turn-banner.theirs { border-color: var(--line); }
+
+.turn-who {
+  font-size: 34px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  text-transform: capitalize;
+  line-height: 1.1;
+}
+#turn-banner.yours .turn-who { color: var(--accent-2); }
+#turn-banner.theirs .turn-who { color: var(--muted); }
+.turn-no {
+  margin-top: 4px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--muted);
+}
+
+/* ---- the result of a battle ----
+
+   Its own overlay rather than a line in the modal: the engine clears the
+   battle the instant it resolves, so the modal is already gone. Non-interactive
+   and short-lived — it reports, it does not ask. */
+
+#battle-result {
+  position: fixed;
+  top: 84px;
+  left: 50%;
+  transform: translateX(-50%) translateY(-8px);
+  padding: 12px 26px;
+  border-radius: 12px;
+  background: rgba(8, 12, 18, 0.92);
+  border: 1px solid var(--line);
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.6);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  z-index: 60;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.18s, transform 0.18s;
+}
+#battle-result.shown { opacity: 1; transform: translateX(-50%) translateY(0); }
+#battle-result.landed { border-color: var(--accent); }
+#battle-result.repelled { border-color: var(--good); }
+
+/* The battle modal is about the board behind it, so it dims rather than
+   obscures — a heavy blur hides the cards being discussed. */
+#battle-modal { backdrop-filter: blur(2px); background: rgba(8, 12, 18, 0.72); }
+
+/* ---- the Life card that came off ----
+
+   Shown because the choice is otherwise blind: "Activate [Trigger]" or "Take
+   into hand", about a card the player has not seen. */
+
+#trigger-tray {
+  margin-top: 14px;
+  padding: 12px;
+  border-radius: 10px;
+  background: rgba(240, 180, 41, 0.07);
+  border: 1px solid rgba(240, 180, 41, 0.35);
+}
+.trigger-head {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent-2);
+  margin-bottom: 10px;
+  text-align: center;
+}
+.trigger-body { display: flex; gap: 14px; align-items: flex-start; }
+.trigger-art { flex: 0 0 auto; width: 92px; }
+.trigger-art img { width: 100%; border-radius: 7px; display: block; }
+.trigger-text { flex: 1; min-width: 0; }
+
+/* ---- the Counter step ----
+
+   The cards you may spend, in the modal that is asking about them. The flat
+   list named them, which does not say which Zoro when two are in play. */
+
+#counter-tray {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.counter-prompt {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 10px;
+  text-align: center;
+}
+.counter-hand {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+.counter-option {
+  position: relative;
+  padding: 4px;
+  border-radius: 9px;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: border-color 0.1s, transform 0.1s;
+}
+.counter-option:hover { transform: translateY(-3px); border-color: var(--good); }
+.counter-value {
+  position: absolute;
+  top: -7px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 1px 7px;
+  border-radius: 9px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  color: var(--bg);
+  background: var(--good);
+}
+/* What the defender's power becomes if this Counter is played. */
+.fighter-power.boosted { color: var(--good); }
+
+/* ---- battle narration ----
+
+   The board shows the result of a block or a Counter but never who did it or
+   with what, and the cards are in the trash by the time the modal closes. */
+
+.battle-beats {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 26vh;
+  overflow: auto;
+  margin: 16px 0 4px;
+  padding-right: 4px;
+}
+.beat {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: rgba(8, 12, 18, 0.4);
+  border-left: 3px solid var(--line);
+  font-size: 12px;
+}
+.beat .card.small { width: 34px; height: 48px; }
+.beat-nocard { width: 34px; flex: 0 0 auto; }
+.beat-text { flex: 1; }
+
+.beat.attack { border-left-color: var(--accent); }
+.beat.block { border-left-color: var(--good); }
+.beat.counter { border-left-color: var(--good); }
+.beat.trigger { border-left-color: var(--accent-2); }
+.beat.result { border-left-color: var(--ink); font-weight: 600; }
+/* Nothing happened, which is information too — stated, but quietly. */
+.beat.declined { color: var(--muted); font-style: italic; }
+
+/* A forecast of an unfinished battle, not an outcome. */
+.verdict.projected { opacity: 0.75; font-style: italic; font-weight: 500; }
+
+/* ---- choosing targets ----
+
+   The engine offers a Choose as one action per subset. Shown as cards rather
+   than as a list of combinations, which is unreadable past two candidates. */
+
+/* The card doing the asking. "Choose up to 1" says nothing about why, and by
+   the time the prompt appears several cards on the board could have caused it. */
+#choose-source {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  margin: 0 0 16px;
+  padding: 12px;
+  border-radius: 10px;
+  background: rgba(74, 134, 196, 0.08);
+  border: 1px solid rgba(74, 134, 196, 0.35);
+}
+.source-art { flex: 0 0 auto; width: 76px; }
+.source-art img { width: 100%; border-radius: 6px; display: block; }
+.source-text { flex: 1; min-width: 0; }
+.source-who { font-weight: 700; font-size: 13px; margin-bottom: 4px; }
+
+.choose-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.choose-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  justify-content: center;
+  max-height: 54vh;
+  overflow: auto;
+  padding: 4px;
+}
+.choose-option {
+  position: relative;
+  border-radius: 9px;
+  padding: 5px;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: border-color 0.1s, transform 0.1s;
+}
+.choose-option:hover { transform: translateY(-3px); border-color: var(--line); }
+.choose-option.picked { border-color: var(--accent-2); background: rgba(240, 180, 41, 0.12); }
+.choose-rank {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 20px;
+  height: 20px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 20px;
+  text-align: center;
+  color: var(--bg);
+  background: var(--accent-2);
+}
+.choose-option:not(.picked) .choose-rank { display: none; }
+/* A candidate the PlayerView does not hold, so there is no art to draw. */
+.choose-unknown {
+  width: var(--card-w);
+  height: var(--card-h);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 8px;
+  font-size: 11px;
+  border-radius: 7px;
+  background: #223145;
+  border: 1px solid #34485f;
+}
+.choose-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+/* ---- the full list ----
+
+   Every action is reachable from its card, but only once you know which card
+   to click. This stays as the index, closed by default. */
+
+.all-actions { margin-top: 10px; }
+.all-actions summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--muted);
+  padding: 4px 0;
+  user-select: none;
+}
+.all-actions summary:hover { color: var(--ink); }
+.all-list { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+
 /* ---- DON!! ----
 
    DON!! are fungible and have no art, so they are drawn rather than imaged.
@@ -364,8 +938,8 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
 }
 
 .don-card {
-  width: 34px;
-  height: 46px;
+  width: calc(var(--card-w) * 0.37);
+  height: calc(var(--card-w) * 0.5);
   border-radius: 5px;
   display: flex;
   flex-direction: column;
@@ -396,11 +970,11 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
   box-shadow: 0 0 0 4px rgba(232, 238, 246, 0.22);
 }
 
-/* Remaining DON!! deck, shown as a count rather than 10 more cards. */
+/* Remaining DON!! deck, shown as a count rather than 10 more cards. Its own
+   zone in the corner of the mat, not the tail of the cost area. */
 .don-deck {
-  width: 34px;
-  height: 46px;
-  margin-left: 8px;
+  width: calc(var(--card-w) * 0.55);
+  height: calc(var(--card-w) * 0.74);
   border-radius: 5px;
   display: grid;
   place-items: center;
@@ -685,8 +1259,8 @@ button:disabled:hover { background: var(--felt); border-color: var(--line); }
 .trash-pile.empty:hover { transform: none; filter: none; }
 
 .trash-empty {
-  width: 72px;
-  height: 100px;
+  width: calc(var(--card-w) * 0.78);
+  height: calc(var(--card-w) * 0.78 * 1.4);
   display: grid;
   place-items: center;
   border: 1px dashed #3c4f66;

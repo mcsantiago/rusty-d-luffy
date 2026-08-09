@@ -13,7 +13,8 @@ use op_core::card::{CardDb, Category};
 use op_core::script::ScriptSource;
 use op_core::view::PlayerView;
 use op_core::{
-    legal_actions, Action, CardInstanceId, DeckList, Game, GameConfig, PlayerId, SetupError,
+    legal_actions, Action, CardInstanceId, DeckList, Game, GameConfig, Pending, PlayerId,
+    SetupError,
 };
 use rand::rngs::StdRng;
 use rand::SeedableRng;
@@ -43,8 +44,36 @@ pub struct Choice {
     pub label: String,
     /// Cards this action involves, so hovering can highlight them.
     pub cards: Vec<u32>,
+    /// The card whose menu this action belongs in. `None` for the card-less
+    /// actions, which are the only ones the sidebar must still hold.
+    pub subject: Option<u32>,
     /// Coarse kind, for grouping and styling.
     pub kind: &'static str,
+}
+
+/// One thing that has happened in the battle now being resolved.
+///
+/// Carries the card responsible rather than only naming it, so the UI can show
+/// the blocker or the Counter that was actually used. `card` is `None` when the
+/// viewer may not identify it, on the same terms as any other projected event.
+#[derive(Debug, Clone, Serialize)]
+pub struct BattleBeat {
+    pub text: String,
+    pub card: Option<u32>,
+    pub kind: &'static str,
+}
+
+/// A card that has just gone to a trash pile.
+#[derive(Debug, Clone, Serialize)]
+pub struct CardToTrash {
+    pub number: String,
+    /// Whose trash it landed in, so the UI knows which pile to send it to.
+    pub yours: bool,
+    /// Where it came from: "field", "hand" or "life".
+    pub from: &'static str,
+    /// Why it went, in the player's words. An effect that removes a card is
+    /// the opponent's doing and looks arbitrary without the card that did it.
+    pub cause: String,
 }
 
 /// Everything the UI needs after a step.
@@ -57,6 +86,46 @@ pub struct Snapshot {
     pub over: Option<String>,
     /// Whose turn it is, as a label.
     pub turn_label: String,
+    /// What has happened so far in the battle being resolved, oldest first.
+    /// Empty when no battle is running.
+    pub battle_beats: Vec<BattleBeat>,
+    /// How the last battle ended, named for the cards that fought it.
+    ///
+    /// Outlives the battle deliberately: the engine clears `battle` the moment
+    /// it resolves, so anything shown only while one is running is gone before
+    /// it can be read. Cleared by the next attack.
+    pub battle_result: Option<String>,
+    /// Cards that reached a trash pile since the last decision.
+    ///
+    /// Built from the events that name the card — a K.O., a Counter spent, a
+    /// banished Life card. A card trashed to pay an activation cost is not
+    /// here, because the engine emits no event naming it.
+    pub to_trash: Vec<CardToTrash>,
+    /// The Life card whose [Trigger] the human is being asked about.
+    ///
+    /// Sent only to the player taking the damage, who may see it whichever way
+    /// they answer: declining adds it to their hand unrevealed (10-1-5-2). The
+    /// opponent learns it by revelation on activation (10-1-5-1), never here.
+    pub trigger_card: Option<String>,
+    /// Which decision the human owes, as a stable tag.
+    ///
+    /// The UI cannot tell them apart from the options alone, and needs to: a
+    /// card with no actions means "cannot act" in the Main Phase and nothing
+    /// at all during a mulligan, where no card has actions by definition.
+    pub pending_kind: Option<&'static str>,
+    /// The card whose effect is asking, while a `Choose` is pending.
+    ///
+    /// Public information: an effect resolves from a card that was played or
+    /// activated in the open, or from a [Trigger] revealed by activating it
+    /// (10-1-5-1).
+    pub choose_source: Option<String>,
+    /// The human owes a `Choose`, of at most this many cards.
+    ///
+    /// Carries no card ids of its own: the engine offers a `Choose` as one
+    /// action per subset, so the candidates are already in `options` and every
+    /// one of them appears there singly. This says only which kind of decision
+    /// is pending, which the UI otherwise cannot tell from a list of labels.
+    pub choose_up_to: Option<u8>,
     /// The AI owes a decision; the UI should expect a `game://update` shortly.
     pub thinking: bool,
     /// Short identifier for this session, matching its log filename, so a bug
@@ -89,6 +158,14 @@ pub struct Session {
     /// Omniscient debug log for this session. Never shown to the player — it
     /// records `GameEvent`, so it contains both hands.
     debug: Option<op_core::SessionLog>,
+    /// Narration for the battle in progress, reset by each attack.
+    battle_beats: Vec<BattleBeat>,
+    battle_result: Option<String>,
+    to_trash: Vec<CardToTrash>,
+    /// The card whose effect is resolving, for attributing what it removes.
+    /// Survives between engine steps: an [On Play] announces itself in one and
+    /// K.O.s in the next, once the controller has chosen a target.
+    resolving: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -195,6 +272,10 @@ impl Session {
             // appears verbatim in the log filename.
             session_id: format!("{:08x}", seed as u32),
             debug,
+            battle_beats: Vec::new(),
+            battle_result: None,
+            to_trash: Vec::new(),
+            resolving: None,
         };
         if let Some(path) = session.debug_log_path() {
             eprintln!("session log: {}", path.display());
@@ -219,6 +300,7 @@ impl Session {
     /// Stops there: the AI's reply is a separate step so the caller can put it
     /// on a worker thread and let the board show the human's own move first.
     pub fn apply_human(&mut self, index: usize) -> Result<(), String> {
+        self.to_trash.clear();
         let pending = self.game.pending().ok_or("no decision is pending")?;
         if pending.player() != self.human {
             return Err("it is not your decision".into());
@@ -247,6 +329,7 @@ impl Session {
     ///
     /// Expensive — a search per decision. Call it off the UI thread.
     pub fn run_ai(&mut self) {
+        self.to_trash.clear();
         for _ in 0..10_000 {
             if self.game.is_over() {
                 return;
@@ -282,6 +365,8 @@ impl Session {
     fn absorb(&mut self, events: &[op_core::GameEvent]) {
         for event in events {
             let projected = event.project(&self.game.state, self.human);
+            self.note_card_to_trash(&projected);
+            self.narrate_battle(&projected);
             if let Some(line) = crate::render::line(&projected, &self.game, self.human) {
                 self.log.push(line);
             }
@@ -291,6 +376,172 @@ impl Session {
             let excess = self.log.len() - 400;
             self.log.drain(..excess);
         }
+    }
+
+    /// A card that has just landed in a trash pile.
+    ///
+    /// Only the events that name a card can be used, which leaves one real
+    /// gap: trashing a card to pay an activation cost — ST02-001's leader and
+    /// several ST-06 cards — emits nothing naming it, so it cannot be shown.
+    fn note_card_to_trash(&mut self, event: &op_core::PlayerEvent) {
+        use op_core::PlayerEvent as E;
+
+        // An effect names itself when it activates and removes a card later,
+        // once its controller has chosen one — an [On Play] announces itself in
+        // one engine step and K.O.s in the next. A battle starting ends the
+        // attribution: what a battle K.O.s, the battle K.O.'d.
+        match event {
+            E::EffectActivated { source, .. } | E::TriggerActivated { card: source, .. } => {
+                self.resolving = source
+                    .id()
+                    .map(|id| self.db.get(self.game.state.card(id).def).name.clone());
+            }
+            E::AttackDeclared { .. } => self.resolving = None,
+            _ => {}
+        }
+
+        let (card, from, cause) = match event {
+            E::KnockedOut { card } => (
+                *card,
+                "field",
+                match &self.resolving {
+                    Some(by) => format!("K.O.'d by {by}"),
+                    None => "K.O.'d in battle".to_string(),
+                },
+            ),
+            E::Countered { card, .. } => (*card, "hand", "played as a Counter".to_string()),
+            E::LifeTaken {
+                card,
+                banished: true,
+                ..
+            } => (*card, "life", "banished from Life".to_string()),
+            _ => return,
+        };
+
+        // Trash is an open area (3-5-2), so a card that reached one is public
+        // and the projection will have named it.
+        let Some(id) = card.id() else { return };
+        let instance = self.game.state.card(id);
+        let yours = instance.owner == self.human;
+        let number = self.db.get(instance.def).number.clone();
+        self.to_trash.push(CardToTrash {
+            number,
+            yours,
+            from,
+            cause,
+        });
+    }
+
+    /// Records what a battle event means for the defender's side of the story.
+    ///
+    /// Built from `BattleStepStarted` as well as the actions themselves,
+    /// because declining is silent: passing on a block emits no event at all,
+    /// and only the arrival of the next step distinguishes "chose not to" from
+    /// "still deciding".
+    fn narrate_battle(&mut self, event: &op_core::PlayerEvent) {
+        use op_core::PlayerEvent as E;
+
+        let db = &self.db;
+        let state = &self.game.state;
+        let name = |card: op_core::CardRef| match card.id() {
+            Some(id) => db.get(state.card(id).def).name.clone(),
+            None => "a card".to_string(),
+        };
+        let beat = |text: String, card: op_core::CardRef, kind| BattleBeat {
+            text,
+            card: card.id().map(|c| c.0),
+            kind,
+        };
+
+        let next = match event {
+            E::AttackDeclared { attacker, target } => {
+                let b = beat(
+                    format!("{} attacks {}", name(*attacker), name(*target)),
+                    *attacker,
+                    "attack",
+                );
+                self.battle_beats.clear();
+                self.battle_result = None;
+                b
+            }
+            E::Blocked { blocker, .. } => beat(
+                format!("{} blocks, and becomes the target", name(*blocker)),
+                *blocker,
+                "block",
+            ),
+            E::Countered {
+                card,
+                target,
+                amount,
+                ..
+            } => beat(
+                format!("{} counters with {}: +{amount}", name(*target), name(*card)),
+                *card,
+                "counter",
+            ),
+            E::TriggerActivated { card, .. } => beat(
+                format!("{} activates its [Trigger]", name(*card)),
+                *card,
+                "trigger",
+            ),
+            E::KnockedOut { card } => beat(format!("{} is K.O.'d", name(*card)), *card, "result"),
+            E::BattleResolved {
+                attacker,
+                target,
+                attacker_power,
+                target_power,
+                attacker_won,
+            } => {
+                // Named from the event rather than from the board: a successful
+                // [Blocker] replaced the target (10-1-4-1), and the card that
+                // actually fought is the one worth naming.
+                self.battle_result = Some(if *attacker_won {
+                    format!("{} attacks {} successfully", name(*attacker), name(*target))
+                } else {
+                    format!(
+                        "{} repelled {} successfully",
+                        name(*target),
+                        name(*attacker)
+                    )
+                });
+                BattleBeat {
+                    text: format!(
+                        "{attacker_power} against {target_power} — {}",
+                        if *attacker_won {
+                            "the attack lands"
+                        } else {
+                            "the attack is repelled"
+                        }
+                    ),
+                    card: None,
+                    kind: "result",
+                }
+            }
+            // Nobody blocked, or nobody countered. Silence is the whole signal
+            // here, so it is stated rather than left to be inferred.
+            E::BattleStepStarted { step } => {
+                let missing = match step {
+                    op_core::BattleStep::Counter => ("block", "No blocker"),
+                    op_core::BattleStep::Damage => ("counter", "No Counter played"),
+                    _ => return,
+                };
+                // Outside a battle there is nothing to narrate, and a step
+                // whose action did happen needs no note that it did not.
+                if self.battle_beats.is_empty()
+                    || self.battle_beats.iter().any(|b| b.kind == missing.0)
+                {
+                    return;
+                }
+                BattleBeat {
+                    text: missing.1.to_string(),
+                    card: None,
+                    kind: "declined",
+                }
+            }
+            _ => return,
+        };
+
+        self.battle_beats.push(next);
     }
 
     pub fn snapshot(&self) -> Snapshot {
@@ -309,6 +560,7 @@ impl Session {
                     index,
                     label: crate::render::action_label(action, &self.game),
                     cards: action_cards(action).iter().map(|c| c.0).collect(),
+                    subject: action_subject(action).map(|c| c.0),
                     kind: action_kind(action),
                 })
                 .collect()
@@ -334,6 +586,39 @@ impl Session {
             "Opponent's turn".to_string()
         };
 
+        let pending_kind = self
+            .game
+            .pending()
+            .filter(|p| p.player() == self.human)
+            .map(pending_kind);
+
+        let trigger_card = self
+            .game
+            .pending()
+            .and_then(|p| match p {
+                Pending::Trigger { player, card } if *player == self.human => Some(*card),
+                _ => None,
+            })
+            .map(|card| self.db.get(self.game.state.card(card).def).number.clone());
+
+        let choose_up_to = self
+            .game
+            .pending()
+            .filter(|p| p.player() == self.human)
+            .and_then(|p| match p {
+                Pending::Choose { up_to, .. } => Some(*up_to),
+                _ => None,
+            });
+
+        // The frame on top of the stack is the one that suspended for this
+        // choice, so its source is the card doing the asking.
+        let choose_source = choose_up_to.and(self.game.state.stack.top()).map(|frame| {
+            self.db
+                .get(self.game.state.card(frame.source).def)
+                .number
+                .clone()
+        });
+
         Snapshot {
             view,
             log: self.log.clone(),
@@ -341,6 +626,13 @@ impl Session {
             question,
             over,
             turn_label,
+            battle_beats: self.battle_beats.clone(),
+            battle_result: self.battle_result.clone(),
+            to_trash: self.to_trash.clone(),
+            pending_kind,
+            trigger_card,
+            choose_source,
+            choose_up_to,
             thinking: self.ai_to_act(),
             session_id: self.session_id.clone(),
         }
@@ -410,6 +702,37 @@ fn action_cards(action: &Action) -> Vec<CardInstanceId> {
     }
 }
 
+/// The one card an action is offered *from*, which is the card the player
+/// reaches for: the attacker rather than its target, the Counter leaving hand
+/// rather than the card it saves. Not `action_cards().first()`, whose order
+/// exists for highlighting and is not load-bearing.
+fn action_subject(action: &Action) -> Option<CardInstanceId> {
+    match action {
+        Action::PlayCard { card, .. } => Some(*card),
+        Action::ActivateEffect { card, .. } => Some(*card),
+        Action::GiveDon { to } => Some(*to),
+        Action::Attack { attacker, .. } => Some(*attacker),
+        Action::Block { blocker } => *blocker,
+        Action::Counter { card, .. } | Action::CounterEvent { card, .. } => Some(*card),
+        Action::Mulligan(_)
+        | Action::EndMainPhase
+        | Action::DoneCountering
+        | Action::UseTrigger(_)
+        | Action::Choose { .. } => None,
+    }
+}
+
+fn pending_kind(pending: &Pending) -> &'static str {
+    match pending {
+        Pending::Mulligan { .. } => "mulligan",
+        Pending::MainAction { .. } => "main",
+        Pending::Block { .. } => "block",
+        Pending::Counter { .. } => "counter",
+        Pending::Trigger { .. } => "trigger",
+        Pending::Choose { .. } => "choose",
+    }
+}
+
 fn action_kind(action: &Action) -> &'static str {
     match action {
         Action::Attack { .. } => "attack",
@@ -418,7 +741,14 @@ fn action_kind(action: &Action) -> &'static str {
         Action::ActivateEffect { .. } => "effect",
         Action::Block { .. } => "block",
         Action::Counter { .. } | Action::CounterEvent { .. } => "counter",
-        Action::EndMainPhase | Action::DoneCountering => "end",
+        // Separate kinds: ending your turn hands the game over and is worth
+        // flagging, while finishing the Counter step is routine.
+        Action::EndMainPhase => "end-turn",
+        Action::DoneCountering => "done",
+        // The opening decision is between two answers, not a list, so each is
+        // coloured for what it does rather than sharing one neutral style.
+        Action::Mulligan(false) => "keep",
+        Action::Mulligan(true) => "mulligan",
         _ => "other",
     }
 }
@@ -487,6 +817,221 @@ mod tests {
             session.run_ai();
         }
         panic!("game did not finish");
+    }
+
+    /// A session on `seed`, for tests that need more than one game to meet the
+    /// situation they are about.
+    fn seeded(seed: u64) -> Option<Session> {
+        let dir = crate::ingest::data_dir().join("cards");
+        let db = CardDb::load_dir(dir).ok()?;
+        let scripts: Arc<dyn ScriptSource + Send + Sync> = Arc::new(Cards::new(&db));
+        Session::new(
+            Arc::new(db),
+            scripts,
+            SessionConfig {
+                seed,
+                human_deck: crate::st01(),
+                ai_deck: crate::st02(),
+                human_first: true,
+                difficulty: Difficulty::Easy,
+                debug_dir: None,
+            },
+        )
+        .ok()
+        .map(|mut session| {
+            session.run_ai();
+            session
+        })
+    }
+
+    /// Cards reaching a trash pile are announced so the UI can animate them.
+    ///
+    /// The gap this documents is as important as the coverage: trashing a card
+    /// to pay an activation cost emits no event naming it, so it cannot appear
+    /// here. Everything that *is* announced comes from an event that names the
+    /// card, and lands in the pile belonging to its owner.
+    #[test]
+    fn cards_reaching_a_trash_are_announced_with_where_they_came_from() {
+        let mut announced = 0;
+
+        for seed in 0..12u64 {
+            let Some(mut session) = seeded(seed) else {
+                return;
+            };
+
+            for _ in 0..5_000 {
+                let snap = session.snapshot();
+                if snap.over.is_some() {
+                    break;
+                }
+                for entry in &snap.to_trash {
+                    assert!(
+                        matches!(entry.from, "field" | "hand" | "life"),
+                        "seed {seed}: unknown origin {:?}",
+                        entry.from
+                    );
+                    assert!(
+                        session.db.by_number(&entry.number).is_some(),
+                        "seed {seed}: {} is not in the database",
+                        entry.number
+                    );
+                    announced += 1;
+                }
+
+                let next = snap
+                    .options
+                    .iter()
+                    .position(|o| o.kind == "attack")
+                    .or_else(|| snap.options.iter().position(|o| o.kind == "play"))
+                    .unwrap_or(0);
+                session
+                    .apply_human(next)
+                    .expect("offered option must be legal");
+                session.run_ai();
+            }
+        }
+
+        assert!(announced > 0, "nothing reached a trash in 12 games");
+    }
+
+    /// A Choose only ever arises from an effect resolving, so the card doing
+    /// the asking is always available — and the modal's header depends on it.
+    /// If the two ever came apart, the prompt would silently lose the one thing
+    /// that says why it is being asked.
+    #[test]
+    fn a_pending_choice_always_names_the_card_asking_it() {
+        let mut chosen = 0;
+
+        for seed in 0..12u64 {
+            let Some(mut session) = seeded(seed) else {
+                return;
+            };
+
+            for _ in 0..5_000 {
+                let snap = session.snapshot();
+                if snap.over.is_some() {
+                    break;
+                }
+                assert_eq!(
+                    snap.choose_up_to.is_some(),
+                    snap.choose_source.is_some(),
+                    "seed {seed}: a choice and its source must appear together"
+                );
+                if snap.choose_up_to.is_some() {
+                    chosen += 1;
+                }
+
+                // Taking option 0 everywhere ends the turn immediately and no
+                // effect ever resolves, which made an earlier version of this
+                // test pass without once meeting the thing it is about.
+                let next = snap
+                    .options
+                    .iter()
+                    .position(|o| o.kind == "effect")
+                    .or_else(|| snap.options.iter().position(|o| o.kind == "play"))
+                    .unwrap_or(0);
+                session
+                    .apply_human(next)
+                    .expect("offered option must be legal");
+                session.run_ai();
+            }
+        }
+
+        assert!(chosen > 0, "no choice arose in 12 games");
+    }
+
+    /// The Life card behind a [Trigger] is named only while its own player is
+    /// deciding about it. They may see it either way — declining adds it to
+    /// their hand unrevealed (10-1-5-2) — but the opponent learns it by
+    /// revelation on activation (10-1-5-1), and the snapshot must not become a
+    /// second route to it.
+    #[test]
+    fn a_trigger_card_is_named_only_while_its_own_player_is_asked() {
+        let mut asked = 0;
+
+        for seed in 0..12u64 {
+            let Some(mut session) = seeded(seed) else {
+                return;
+            };
+
+            for _ in 0..5_000 {
+                let snap = session.snapshot();
+                if snap.over.is_some() {
+                    break;
+                }
+                if snap.pending_kind == Some("trigger") {
+                    assert!(
+                        snap.trigger_card.is_some(),
+                        "seed {seed}: asked about a Trigger without saying which card"
+                    );
+                    asked += 1;
+                } else {
+                    assert!(
+                        snap.trigger_card.is_none(),
+                        "seed {seed}: named a Life card with no Trigger decision pending ({:?})",
+                        snap.pending_kind
+                    );
+                }
+                session.apply_human(0).expect("first option must be legal");
+                session.run_ai();
+            }
+        }
+
+        // Otherwise only the negative half was ever exercised.
+        assert!(asked > 0, "no Trigger decision arose in 12 games");
+    }
+
+    /// The battle narration is the only place the UI says what the defender
+    /// did, and two of its beats are inferred from silence rather than
+    /// observed: declining to block and declining to counter emit no event, so
+    /// they are read off the arrival of the next step. That inference is what
+    /// this checks, over every battle a whole game happens to contain.
+    #[test]
+    fn battle_narration_never_claims_a_defence_that_did_not_happen() {
+        let Some(mut session) = fixture() else { return };
+
+        let mut battles = 0;
+        for _ in 0..5_000 {
+            let snap = session.snapshot();
+            if snap.over.is_some() {
+                break;
+            }
+
+            let beats = &snap.battle_beats;
+            if !beats.is_empty() {
+                battles += 1;
+                assert_eq!(
+                    beats[0].kind, "attack",
+                    "narration must open with the attack that started it: {beats:?}"
+                );
+                assert_eq!(
+                    beats.iter().filter(|b| b.kind == "attack").count(),
+                    1,
+                    "a second attack must have reset the narration: {beats:?}"
+                );
+
+                // "No blocker" and a block are contradictory, as are "No
+                // Counter played" and a counter. Only one of each pair can be
+                // in a single battle's story.
+                let has = |kind: &str| beats.iter().any(|b| b.kind == kind);
+                assert!(
+                    !(has("declined") && has("block") && has("counter")),
+                    "a declined beat sits alongside the defence it denies: {beats:?}"
+                );
+                assert!(
+                    beats
+                        .iter()
+                        .all(|b| b.kind != "declined" || b.card.is_none()),
+                    "nothing happened, so no card can be shown for it: {beats:?}"
+                );
+            }
+
+            session.apply_human(0).expect("first option must be legal");
+            session.run_ai();
+        }
+
+        // Otherwise the loop above asserted nothing at all.
+        assert!(battles > 0, "no battle was narrated in a whole game");
     }
 
     /// The UI is handed a view, never state — so nothing it renders can name a
@@ -615,5 +1160,92 @@ mod tests {
         }
         // 17 cards per starter deck, leaders included, no duplicates.
         assert_eq!(catalogue.len(), 34);
+    }
+
+    /// The UI dims cards that cannot act, and decides whether to by reading
+    /// `pending_kind`. A tag that stopped matching the decision would dim the
+    /// hand during a mulligan or leave it lit with no DON!! left, which is the
+    /// bug this replaced. Needs no card data, so it cannot skip itself.
+    #[test]
+    fn every_decision_has_a_tag_the_ui_can_key_off() {
+        let card = CardInstanceId(0);
+        let cases = [
+            (
+                Pending::Mulligan {
+                    player: PlayerId::P0,
+                },
+                "mulligan",
+            ),
+            (
+                Pending::MainAction {
+                    player: PlayerId::P0,
+                },
+                "main",
+            ),
+            (
+                Pending::Block {
+                    player: PlayerId::P0,
+                },
+                "block",
+            ),
+            (
+                Pending::Counter {
+                    player: PlayerId::P0,
+                },
+                "counter",
+            ),
+            (
+                Pending::Trigger {
+                    player: PlayerId::P0,
+                    card,
+                },
+                "trigger",
+            ),
+            (
+                Pending::Choose {
+                    player: PlayerId::P0,
+                    key: "t".into(),
+                    options: vec![card],
+                    up_to: 1,
+                },
+                "choose",
+            ),
+        ];
+        for (pending, tag) in cases {
+            assert_eq!(pending_kind(&pending), tag, "{pending:?}");
+        }
+    }
+
+    /// Menus are built by matching `subject`, so a misattributed action shows
+    /// up under the wrong card — for an attack, one the player does not even
+    /// control. Needs no card data, so it cannot skip itself.
+    #[test]
+    fn an_action_is_offered_from_the_card_the_player_reaches_for() {
+        let (a, b) = (CardInstanceId(1), CardInstanceId(2));
+
+        // The attacker, not the target: the defender is not offering this.
+        assert_eq!(
+            action_subject(&Action::Attack {
+                attacker: a,
+                target: b
+            }),
+            Some(a)
+        );
+        assert_eq!(action_subject(&Action::GiveDon { to: a }), Some(a));
+        // The card leaving your hand, not the one being saved.
+        assert_eq!(action_subject(&Action::Counter { card: a, to: b }), Some(a));
+        assert_eq!(
+            action_subject(&Action::PlayCard {
+                card: a,
+                replacing: Some(b)
+            }),
+            Some(a)
+        );
+
+        // No subject: these are what keeps the sidebar alive.
+        assert_eq!(action_subject(&Action::EndMainPhase), None);
+        assert_eq!(action_subject(&Action::DoneCountering), None);
+        assert_eq!(action_subject(&Action::Mulligan(true)), None);
+        assert_eq!(action_subject(&Action::Block { blocker: None }), None);
     }
 }
