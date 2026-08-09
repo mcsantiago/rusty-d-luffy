@@ -47,6 +47,8 @@ let lastHandIds = new Set();
  *  the front, which would make one appear on each side; hand order carries no
  *  rules meaning, so which end a card joins is the UI's to choose. */
 let handOrder = [];
+/** Life count per side last render, to spot cards that just left. */
+const lastLifeCount = new Map();
 /** Top card of each trash last render, to spot one that just landed. */
 const lastTrashTop = new Map();
 /** Why each trash's top card went there, for the pile's tooltip. */
@@ -491,6 +493,13 @@ function renderLife(side, prefix) {
   box.innerHTML = "";
   box.classList.toggle("none", side.life_count === 0);
 
+  // Counted rather than identified: Life is a count in the view, so there are
+  // no ids to diff. A drop is the only signal that a card left, and it fires
+  // once because the count then stays put until the next one goes.
+  const before = lastLifeCount.get(prefix);
+  const lost = before == null ? 0 : Math.max(0, before - side.life_count);
+  lastLifeCount.set(prefix, side.life_count);
+
   // Overlapped by CSS margin rather than absolute offsets, so the pile sizes
   // itself and stays inside its zone however many cards are in it.
   for (let i = 0; i < side.life_count; i++) {
@@ -499,6 +508,18 @@ function renderLife(side, prefix) {
     c.style.zIndex = String(i);
     c.innerHTML = `<div class="back"></div>`;
     box.appendChild(c);
+  }
+
+  // The cards that just went, flashing where they were before fading. Left in
+  // the flow so the pile does not close the gap until they are gone.
+  for (let i = 0; i < lost; i++) {
+    const ghost = document.createElement("div");
+    ghost.className = "card facedown life-card leaving";
+    ghost.style.zIndex = String(side.life_count + i);
+    ghost.style.animationDelay = `${i * 160}ms`;
+    ghost.innerHTML = `<div class="back"></div>`;
+    ghost.addEventListener("animationend", () => ghost.remove());
+    box.appendChild(ghost);
   }
 
   // Counted like the deck and the trash, so the three piles read alike — and
@@ -1268,6 +1289,10 @@ async function start() {
     artCache.clear();
     // A new game starts at turn 1 again, which is a change worth announcing.
     lastTurn = null;
+    // Cleared so the first render of a fresh Life area is not five losses.
+    lastLifeCount.clear();
+    lastTrashTop.clear();
+    lastCause.clear();
     // Seeded from the opening hand so a deal does not read as five arrivals.
     handOrder = result.snapshot.view.you.hand.map((c) => c.id);
     lastHandIds = new Set(handOrder);

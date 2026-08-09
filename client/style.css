@@ -308,6 +308,21 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
 }
 .card.life-card:first-child { margin-top: 0; }
 
+/* A Life card leaving: a flash where it was, then out. Life vanishing silently
+   is the one board change a player must not miss, and it is also the only one
+   with no card left behind to look at afterwards. */
+@keyframes life-leaves {
+  0% { opacity: 1; filter: brightness(1); transform: scale(1); }
+  18% { opacity: 1; filter: brightness(3.2) saturate(0.4); transform: scale(1.09); }
+  40% { opacity: 1; filter: brightness(1.4); }
+  100% { opacity: 0; filter: brightness(1); transform: scale(1.16); }
+}
+.card.life-card.leaving {
+  animation: life-leaves 560ms ease-out both;
+  pointer-events: none;
+  z-index: 3;
+}
+
 /* Room for ten DON!! without a second row at full size, and controlled
    overlap rather than overflow when there is not. */
 .z-cost { display: flex; align-items: center; }
