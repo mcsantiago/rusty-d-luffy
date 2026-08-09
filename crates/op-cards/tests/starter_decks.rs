@@ -6,6 +6,7 @@
 use std::sync::Arc;
 
 use op_cards::Cards;
+use op_core::action::Pending;
 use op_core::card::{CardDb, Keyword};
 use op_core::script::ScriptSource;
 use op_core::state::Placement;
@@ -90,6 +91,29 @@ fn st06() -> DeckList {
     }
 }
 
+/// ST-08 Monkey D. Luffy. A legal 50-card build, not the printed list.
+fn st08() -> DeckList {
+    DeckList {
+        leader: "ST08-001".into(),
+        cards: counts(&[
+            ("ST08-002", 4),
+            ("ST08-003", 4),
+            ("ST08-004", 4),
+            ("ST08-005", 2),
+            ("ST08-006", 4),
+            ("ST08-007", 4),
+            ("ST08-008", 4),
+            ("ST08-009", 4),
+            ("ST08-010", 2),
+            ("ST08-011", 4),
+            ("ST08-012", 4),
+            ("ST08-013", 2),
+            ("ST08-014", 4),
+            ("ST08-015", 4),
+        ]),
+    }
+}
+
 fn counts(spec: &[(&str, usize)]) -> Vec<String> {
     let mut out = Vec::new();
     for (number, n) in spec {
@@ -107,6 +131,18 @@ fn load() -> Option<(Arc<CardDb>, Scripts)> {
     let db = CardDb::load_dir(dir).ok()?;
     let cards: Scripts = Arc::new(Cards::new(&db));
     Some((Arc::new(db), cards))
+}
+
+fn new_game_with(db: Arc<CardDb>, cards: Scripts, seed: u64, decks: [DeckList; 2]) -> Game {
+    let config = GameConfig {
+        seed,
+        first_player: PlayerId::P0,
+        decks,
+        allow_illegal_decks: false,
+    };
+    Game::new(config, db, cards)
+        .expect("starter decks must be legal")
+        .0
 }
 
 fn new_game(db: Arc<CardDb>, cards: Scripts, seed: u64) -> Game {
@@ -143,7 +179,12 @@ fn every_deck_pairing_plays_to_completion() {
         return;
     };
     type Build = fn() -> DeckList;
-    let decks: [(&str, Build); 3] = [("ST-01", st01), ("ST-02", st02), ("ST-06", st06)];
+    let decks: [(&str, Build); 4] = [
+        ("ST-01", st01),
+        ("ST-02", st02),
+        ("ST-06", st06),
+        ("ST-08", st08),
+    ];
 
     for (a_name, a) in decks {
         for (b_name, b) in decks {
@@ -224,6 +265,32 @@ fn game_at_main(db: Arc<CardDb>, cards: Scripts, seed: u64, turns: usize) -> Gam
         game.step(Action::EndMainPhase).unwrap();
     }
     game
+}
+
+/// A game with ST-08 in seat P0, advanced to P0's Main Phase on `turns + 1`.
+fn st08_at_main(db: Arc<CardDb>, cards: Scripts, seed: u64, turns: usize) -> Game {
+    let mut game = new_game_with(db, cards, seed, [st08(), st01()]);
+    for _ in 0..2 {
+        game.step(Action::Mulligan(false)).unwrap();
+    }
+    for _ in 0..turns {
+        game.step(Action::EndMainPhase).unwrap();
+    }
+    game
+}
+
+/// Plays a battle out with the defender declining everything, so the test only
+/// has to care about who was left standing.
+fn battle_through(game: &mut Game) {
+    while game.state.battle.is_some() {
+        let action = match game.pending() {
+            Some(Pending::Block { .. }) => Action::Block { blocker: None },
+            Some(Pending::Counter { .. }) => Action::DoneCountering,
+            Some(Pending::Trigger { .. }) => Action::UseTrigger(false),
+            _ => break,
+        };
+        game.step(action).unwrap();
+    }
 }
 
 fn put_in_play(game: &mut Game, player: PlayerId, number: &str) -> op_core::CardInstanceId {
@@ -541,6 +608,263 @@ fn st01_006_chopper_has_blocker_as_a_printed_keyword() {
     let mut game = game_at_main(db, cards, 3, 0);
     let chopper = put_in_play(&mut game, PlayerId::P0, "ST01-006");
     assert!(game.derived().get(chopper).has_keyword(Keyword::Blocker));
+}
+
+// ---- ST-08 ------------------------------------------------------------------
+
+/// ST08-001's Leader turns removal into DON!!. The trigger is a board-wide
+/// "when *a* Character is K.O.'d", not "when this card is K.O.'d", so the hook
+/// has to reach every card in play rather than the one that left.
+#[test]
+fn st08_001_leader_gains_a_rested_don_when_any_character_is_koed() {
+    let Some((db, cards)) = load() else { return };
+    let mut game = st08_at_main(db, cards, 5, 2);
+
+    let leader = game.state.player(PlayerId::P0).leader.unwrap();
+    assert!(game.state.card(leader).attached_don.is_empty());
+
+    // ST08-004 Koby rests to K.O. a Character with a cost of 2 or less.
+    let koby = put_in_play(&mut game, PlayerId::P0, "ST08-004");
+    let victim = put_in_play(&mut game, PlayerId::P1, "ST08-008"); // cost 1
+    game.step(Action::ActivateEffect {
+        card: koby,
+        slot: 0,
+        discard: Vec::new(),
+    })
+    .unwrap();
+    game.step(Action::Choose {
+        cards: vec![victim],
+    })
+    .unwrap();
+
+    assert_eq!(game.state.card(victim).zone, Zone::Trash);
+    let don = game.state.card(leader).attached_don.clone();
+    assert_eq!(don.len(), 1, "the K.O. should have paid the Leader");
+    assert!(
+        game.state.card(don[0]).rested,
+        "the card gives a *rested* DON!!"
+    );
+}
+
+/// The `[Your Turn]` half. A Character K.O.'d on the opponent's turn pays
+/// nothing, and a script that dropped the condition would still look right in
+/// the test above.
+#[test]
+fn st08_001_pays_nothing_on_the_opponents_turn() {
+    let Some((db, cards)) = load() else { return };
+    let mut game = st08_at_main(db, cards, 5, 1); // turn 2: P1's turn
+
+    let leader = game.state.player(PlayerId::P0).leader.unwrap();
+    assert_ne!(game.state.turn_player, PlayerId::P0);
+
+    let koby = put_in_play(&mut game, PlayerId::P1, "ST08-004");
+    let victim = put_in_play(&mut game, PlayerId::P0, "ST08-008");
+    game.step(Action::ActivateEffect {
+        card: koby,
+        slot: 0,
+        discard: Vec::new(),
+    })
+    .unwrap();
+    game.step(Action::Choose {
+        cards: vec![victim],
+    })
+    .unwrap();
+
+    assert_eq!(game.state.card(victim).zone, Zone::Trash);
+    assert!(
+        game.state.card(leader).attached_don.is_empty(),
+        "[Your Turn] gates the Leader's trigger"
+    );
+}
+
+/// ST08-002 Uta survives a Leader's attack but not a Character's. The
+/// protection is narrower than `cannot_be_koed_by_effect` in both directions:
+/// it stops a *battle* K.O., and only from a Leader.
+#[test]
+fn st08_002_survives_a_leader_in_battle_but_not_a_character() {
+    let Some((db, cards)) = load() else { return };
+
+    for (attacker_number, expect_survives) in [(None, true), (Some("ST01-013"), false)] {
+        let mut game = st08_at_main(Arc::clone(&db), Arc::clone(&cards), 5, 2);
+        // Uta belongs to P1 here so that P0, the turn player, can attack her.
+        let uta = put_in_play(&mut game, PlayerId::P1, "ST08-002");
+        game.state.card_mut(uta).rested = true; // 7-1-1-2: only rested Characters can be attacked
+        assert_eq!(game.derived().power(uta), 3000);
+
+        let attacker = match attacker_number {
+            // ST01-001 Luffy, 5000 power.
+            None => game.state.player(PlayerId::P0).leader.unwrap(),
+            // ST01-013 Zoro, 5000 power.
+            Some(number) => put_in_play(&mut game, PlayerId::P0, number),
+        };
+        assert!(game.derived().power(attacker) > game.derived().power(uta));
+
+        game.step(Action::Attack {
+            attacker,
+            target: uta,
+        })
+        .unwrap();
+        battle_through(&mut game);
+
+        assert_eq!(
+            game.state.card(uta).zone != Zone::Trash,
+            expect_survives,
+            "attacked by {attacker_number:?}"
+        );
+    }
+}
+
+/// ST08-005 Shanks K.O.s "all Characters with a cost of 1 or less" — both
+/// boards, his own side included, and with no choice offered.
+#[test]
+fn st08_005_kos_every_cheap_character_on_both_sides() {
+    let Some((db, cards)) = load() else { return };
+    // Turn 9, by which point P0 has the 9 DON!! Shanks costs.
+    let mut game = st08_at_main(db, cards, 5, 8);
+    assert_eq!(game.active_don(PlayerId::P0).len(), 9);
+
+    let mine = put_in_play(&mut game, PlayerId::P0, "ST08-008"); // cost 1
+    let theirs = put_in_play(&mut game, PlayerId::P1, "ST08-008"); // cost 1
+    let spared = put_in_play(&mut game, PlayerId::P1, "ST08-003"); // cost 2
+
+    let def = game.db().by_number("ST08-005").unwrap();
+    let shanks = game.state.spawn(def, PlayerId::P0, Zone::Hand);
+    assert!(
+        !game.state.player(PlayerId::P0).hand.is_empty(),
+        "the [On Play] costs a card from hand"
+    );
+    game.step(Action::PlayCard {
+        card: shanks,
+        replacing: None,
+    })
+    .unwrap();
+
+    assert_eq!(game.state.card(mine).zone, Zone::Trash, "his own side too");
+    assert_eq!(game.state.card(theirs).zone, Zone::Trash);
+    assert_eq!(
+        game.state.card(spared).zone,
+        Zone::Character,
+        "cost 2 is out of range"
+    );
+    assert_eq!(
+        game.state.card(shanks).zone,
+        Zone::Character,
+        "Shanks costs 9 and does not K.O. himself"
+    );
+}
+
+/// ST08-014 pays a Life card for the deck's deepest cost reduction. The
+/// payment is a real cost — it comes off Life — and it is not damage, so the
+/// card must arrive in hand without its `[Trigger]` firing.
+#[test]
+fn st08_014_pays_a_life_card_to_shrink_a_character_by_seven() {
+    let Some((db, cards)) = load() else { return };
+    let mut game = st08_at_main(db, cards, 5, 2);
+
+    let victim = put_in_play(&mut game, PlayerId::P1, "ST08-012"); // cost 4
+    assert_eq!(game.derived().get(victim).effective_cost(), 4);
+
+    let life_before = game.state.player(PlayerId::P0).life.len();
+    let top_of_life = game.state.player(PlayerId::P0).life[0];
+    let hand_before = game.state.player(PlayerId::P0).hand.len();
+
+    let def = game.db().by_number("ST08-014").unwrap();
+    let event = game.state.spawn(def, PlayerId::P0, Zone::Hand);
+    game.step(Action::PlayCard {
+        card: event,
+        replacing: None,
+    })
+    .unwrap();
+    game.step(Action::Choose {
+        cards: vec![victim],
+    })
+    .unwrap();
+
+    assert_eq!(game.state.player(PlayerId::P0).life.len(), life_before - 1);
+    assert_eq!(game.state.card(top_of_life).zone, Zone::Hand);
+    // The Event itself left hand for the trash, and the Life card arrived.
+    assert_eq!(game.state.player(PlayerId::P0).hand.len(), hand_before + 1);
+    assert_eq!(
+        game.derived().get(victim).effective_cost(),
+        0,
+        "4 - 7 clamps to 0 (1-3)"
+    );
+}
+
+/// With no Life left the cost cannot be paid, and 8-3-1-3 means it is not paid
+/// in part: the Event is still played, and does nothing.
+#[test]
+fn st08_014_does_nothing_with_no_life_to_pay_with() {
+    let Some((db, cards)) = load() else { return };
+    let mut game = st08_at_main(db, cards, 5, 2);
+
+    let victim = put_in_play(&mut game, PlayerId::P1, "ST08-012");
+    for card in game.state.player(PlayerId::P0).life.clone() {
+        game.state
+            .move_card(card, PlayerId::P0, Zone::Trash, Placement::Top);
+    }
+
+    let def = game.db().by_number("ST08-014").unwrap();
+    let event = game.state.spawn(def, PlayerId::P0, Zone::Hand);
+    game.step(Action::PlayCard {
+        card: event,
+        replacing: None,
+    })
+    .unwrap();
+
+    assert_eq!(game.state.card(event).zone, Zone::Trash, "still played");
+    assert!(
+        game.pending().is_none() || !matches!(game.pending(), Some(Pending::Choose { .. })),
+        "an unpayable cost resolves no ops, so nothing is asked"
+    );
+    assert_eq!(game.derived().get(victim).effective_cost(), 4);
+}
+
+/// ST08-013's trade. It is only reachable when the attacker *loses* — 7-1-4-2,
+/// where nothing happens — so both Characters are still standing when the
+/// end-of-battle effect resolves.
+#[test]
+fn st08_013_may_trade_itself_for_the_character_it_battled() {
+    let Some((db, cards)) = load() else { return };
+
+    for take_the_trade in [true, false] {
+        let mut game = st08_at_main(Arc::clone(&db), Arc::clone(&cards), 5, 2);
+
+        let bentham = put_in_play(&mut game, PlayerId::P0, "ST08-013"); // 6000
+        let wall = put_in_play(&mut game, PlayerId::P1, "ST08-005"); // 10000
+        game.state.card_mut(wall).rested = true;
+
+        // [DON!! x1] is the effect's condition; it also puts Bentham at 7000,
+        // still short of 10000, so he loses the battle and nothing is K.O.'d.
+        game.step(Action::GiveDon { to: bentham }).unwrap();
+        assert_eq!(game.derived().power(bentham), 7000);
+
+        game.step(Action::Attack {
+            attacker: bentham,
+            target: wall,
+        })
+        .unwrap();
+        battle_through(&mut game);
+
+        // The battle itself K.O.'d nobody; the choice is Bentham's controller's.
+        let chosen = if take_the_trade {
+            vec![wall]
+        } else {
+            Vec::new()
+        };
+        game.step(Action::Choose { cards: chosen }).unwrap();
+
+        assert_eq!(
+            game.state.card(wall).zone == Zone::Trash,
+            take_the_trade,
+            "taking the trade K.O.s the card battled"
+        );
+        assert_eq!(
+            game.state.card(bentham).zone == Zone::Trash,
+            take_the_trade,
+            "and 'if you do' K.O.s this card only then"
+        );
+    }
 }
 
 // Timing reachability used to be checked here. It is now one of the checks in

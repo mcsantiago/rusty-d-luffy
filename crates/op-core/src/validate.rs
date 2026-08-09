@@ -18,7 +18,7 @@ use std::collections::BTreeSet;
 use std::fmt;
 
 use crate::effect::{Condition, EffectOp, Timing, SELF_BINDING};
-use crate::script::{ActivationCost, CardScript, TARGET_BINDING};
+use crate::script::{ActivationCost, CardScript, BATTLED_BINDING, TARGET_BINDING};
 
 /// Which part of a script a [`Diagnostic`] came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -155,7 +155,15 @@ pub fn validate_script(script: &CardScript) -> Vec<Diagnostic> {
             });
         }
         check_conditions(site, &effect.conditions, &effect.cost, &mut out);
-        check_ops(site, &effect.ops, &[SELF_BINDING], &mut out);
+        // Only an [End of Battle] effect is handed the card it battled.
+        // Reading it anywhere else is the same class of mistake as reading
+        // TARGET outside a [Counter].
+        let supplied: &[&str] = if effect.timing == Timing::EndOfBattle {
+            &[SELF_BINDING, BATTLED_BINDING]
+        } else {
+            &[SELF_BINDING]
+        };
+        check_ops(site, &effect.ops, supplied, &mut out);
     }
 
     for (i, effect) in script.activated.iter().enumerate() {
@@ -476,9 +484,8 @@ mod tests {
             activated: vec![ActivatedEffect {
                 conditions: vec![Condition::SelfRested],
                 cost: ActivationCost {
-                    rest_don: 0,
                     rest_self: true,
-                    trash_from_hand: 0,
+                    ..ActivationCost::default()
                 },
                 ops: vec![EffectOp::Draw {
                     player: Who::You,

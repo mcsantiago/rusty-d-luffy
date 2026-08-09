@@ -9,7 +9,7 @@
 //! A card's script should read close to its printed text. Where it cannot, the
 //! divergence is worth a comment naming the rule involved.
 
-use op_core::card::{Category, Keyword};
+use op_core::card::{Category, Color, Keyword};
 use op_core::effect::{Condition, Duration, EffectOp, Filter, Selector, Who, SELF_BINDING};
 
 // Re-exported so a card script only ever needs `use crate::dsl::*`.
@@ -46,6 +46,27 @@ pub fn opponent_characters(up_to: u8) -> Selector {
     Selector {
         zone: Zone::Character,
         owner: Who::Opponent,
+        up_to,
+        filters: Vec::new(),
+    }
+}
+
+/// Every Character in play, both sides — plain "Characters" in card text, as
+/// opposed to "your" or "your opponent's". Pair it with [`select_all`]; `up_to`
+/// is left at 0 because a text that reaches the whole board never counts.
+pub fn all_characters() -> Selector {
+    Selector {
+        zone: Zone::Character,
+        owner: Who::Both,
+        up_to: 0,
+        filters: Vec::new(),
+    }
+}
+
+pub fn your_trash(up_to: u8) -> Selector {
+    Selector {
+        zone: Zone::Trash,
+        owner: Who::You,
         up_to,
         filters: Vec::new(),
     }
@@ -114,12 +135,53 @@ pub fn is_character() -> Filter {
     Filter::IsCategory(Category::Character)
 }
 
+pub fn of_color(color: Color) -> Filter {
+    Filter::HasColor(color)
+}
+
 // ---- ops -------------------------------------------------------------------
 
 pub fn choose(key: &str, select: Selector) -> EffectOp {
     EffectOp::Choose {
         key: key.to_string(),
         select,
+    }
+}
+
+/// Binds everything matching, with no question asked — "**all** Characters
+/// with a cost of 1 or less".
+pub fn select_all(key: &str, select: Selector) -> EffectOp {
+    EffectOp::SelectAll {
+        key: key.to_string(),
+        select,
+    }
+}
+
+/// "Up to `up_to` of the cards bound under `from`." Used where the pool cannot
+/// be re-derived from the board at choice time — see [`BATTLED`].
+pub fn choose_from(key: &str, from: &str, up_to: u8) -> EffectOp {
+    EffectOp::ChooseFrom {
+        key: key.to_string(),
+        from: from.to_string(),
+        up_to,
+    }
+}
+
+/// The "If you do," half of "you may X. If you do, Y." — stops unless the
+/// player took the optional half, which is a `choose` they may answer with
+/// nothing.
+pub fn require_bound(key: &str) -> EffectOp {
+    EffectOp::RequireBound {
+        key: key.to_string(),
+    }
+}
+
+/// "Add … to your hand" / "Return … to the owner's hand". `MoveTo` sends a card
+/// to its *owner's* zone, which is what both phrasings mean.
+pub fn to_hand(key: &str) -> EffectOp {
+    EffectOp::MoveTo {
+        key: key.to_string(),
+        to: Zone::Hand,
     }
 }
 
@@ -213,6 +275,9 @@ pub const THIS: &str = SELF_BINDING;
 
 /// The card a `[Counter]` Event was pointed at.
 pub const TARGET: &str = op_core::script::TARGET_BINDING;
+
+/// The card this one battled. Supplied to `[End of Battle]` effects only.
+pub const BATTLED: &str = op_core::script::BATTLED_BINDING;
 
 // ---- conditions ------------------------------------------------------------
 
@@ -332,6 +397,16 @@ pub fn cost(rest_don: u8, rest_self: bool, trash_from_hand: u8) -> ActivationCos
         rest_don,
         rest_self,
         trash_from_hand,
+        ..ActivationCost::default()
+    }
+}
+
+/// "You may add N cards from the top of your Life cards to your hand:"
+/// (ST08-014). Paying loses Life, so this is a cost like any other.
+pub fn life_cost(n: u8) -> ActivationCost {
+    ActivationCost {
+        life_to_hand: n,
+        ..ActivationCost::default()
     }
 }
 

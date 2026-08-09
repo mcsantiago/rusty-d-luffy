@@ -10,7 +10,7 @@ use crate::derive::{self, Derived};
 use crate::effect::{Duration, EffectFrame, ModKind, Modifier, Timing};
 use crate::event::{GameEvent, PlayerEvent};
 use crate::ids::{CardInstanceId, PlayerId};
-use crate::script::ScriptSource;
+use crate::script::{ScriptSource, BATTLED_BINDING};
 use crate::state::{BattleState, BattleStep, DamageState, GameOver, GameState, Phase, Placement};
 use crate::zone::Zone;
 
@@ -464,14 +464,43 @@ impl Game {
             Category::Event => {
                 // 8-4-2: the Event is trashed, then its effect is carried out.
                 // The [Main] effect is stored as the card's first activated
-                // effect, and needs no further cost.
-                let ops = self
+                // effect. Its printed cost is the DON!! already spent above,
+                // but the text may name a further cost of its own — ST08-014
+                // asks for a Life card.
+                let main = self
                     .scripts
                     .script(self.state.card(card).def)
                     .activated
                     .first()
-                    .map(|a| a.ops.clone())
-                    .unwrap_or_default();
+                    .cloned();
+                let extra = main.as_ref().map(|a| a.cost.clone()).unwrap_or_default();
+                // 8-3-1-3: a cost that cannot be paid in full cannot be paid at
+                // all, and then the effect does not resolve. The card is still
+                // played and trashed.
+                //
+                // Diverges from "You may ...:" in one direction only: with the
+                // cost payable, the engine pays. Declining would resolve
+                // nothing at all for DON!! already spent, so it is never a
+                // choice a player would take — and playing the Event is itself
+                // the decision. Same simplification as an auto effect with a
+                // cost; see `queue_autos`.
+                let paying = extra.is_free() || self.can_pay(player, card, &extra);
+                let ops = match &main {
+                    Some(a) if paying => a.ops.clone(),
+                    _ => Vec::new(),
+                };
+                if paying && !extra.is_free() {
+                    let discard: Vec<CardInstanceId> = self
+                        .state
+                        .player(player)
+                        .hand
+                        .iter()
+                        .filter(|&&c| c != card)
+                        .take(extra.trash_from_hand as usize)
+                        .copied()
+                        .collect();
+                    self.pay(player, card, &extra, &discard, events);
+                }
                 self.state
                     .move_card(card, player, Zone::Trash, Placement::Top);
                 events.push(GameEvent::CardPlayed {
@@ -582,6 +611,9 @@ impl Game {
         if self.state.player(player).hand.len() < cost.trash_from_hand as usize {
             return false;
         }
+        if self.state.player(player).life.len() < cost.life_to_hand as usize {
+            return false;
+        }
         true
     }
 
@@ -607,6 +639,20 @@ impl Game {
         for &card in discard {
             self.state
                 .move_card(card, player, Zone::Trash, Placement::Top);
+        }
+        // Life cards come off the top and go to hand face-up. This is not
+        // damage, so no `[Trigger]` activates (10-1-5 ties Triggers to damage).
+        for _ in 0..cost.life_to_hand {
+            let Some(&top) = self.state.player(player).life.first() else {
+                break;
+            };
+            self.state
+                .move_card(top, player, Zone::Hand, Placement::Top);
+            events.push(GameEvent::LifeTaken {
+                player,
+                card: top,
+                banished: false,
+            });
         }
     }
 
@@ -924,8 +970,17 @@ impl Game {
                 });
             }
             _ => {
-                // 7-1-4-1-2: the Character is K.O.'d.
-                self.knock_out(b.target, events);
+                // 7-1-4-1-2: the Character is K.O.'d — unless it is protected
+                // from exactly this. ST08-002's protection is narrower than
+                // `cannot_be_koed_by_effect`: it stops the *battle* K.O., and
+                // only when a Leader won the battle.
+                let attacker_is_leader =
+                    self.db.get(self.state.card(b.attacker).def).category == Category::Leader;
+                let protected =
+                    attacker_is_leader && derived.get(b.target).cannot_be_koed_in_battle_by_leader;
+                if !protected {
+                    self.knock_out(b.target, events);
+                }
                 self.enter_battle_step(BattleStep::EndOfBattle, events);
             }
         }
@@ -1033,10 +1088,21 @@ impl Game {
     }
 
     fn knock_out(&mut self, card: CardInstanceId, events: &mut Vec<GameEvent>) {
+        let was_character = self.db.get(self.state.card(card).def).category == Category::Character;
         let owner = self.state.card(card).owner;
         self.state
             .move_card(card, owner, Zone::Trash, Placement::Top);
         events.push(GameEvent::KnockedOut { card });
+
+        // "When a Character is K.O.'d" watches the whole board, not the card
+        // that left it, so every card in play gets the timing (ST08-001).
+        // Trashing a Character to make room for a sixth (3-7-6-1) is not a
+        // K.O. and does not come through here.
+        if was_character {
+            for watcher in self.state.all_in_play() {
+                self.queue_autos(Timing::OnCharacterKoed, watcher, events);
+            }
+        }
     }
 
     fn end_battle(&mut self, events: &mut Vec<GameEvent>) {
@@ -1046,7 +1112,21 @@ impl Game {
             let target_is_character =
                 self.db.get(self.state.card(b.target).def).category == Category::Character;
             if target_is_character {
-                self.queue_autos(Timing::EndOfBattle, b.attacker, events);
+                // Both participants, because "a battle in which this Character
+                // battles your opponent's Character" (ST02-010, ST08-013) reads
+                // the same whichever side declared the attack. A participant
+                // the battle just K.O.'d has left its area, and 8-1-3-1-3 stops
+                // its effect there.
+                for (participant, other) in [(b.attacker, b.target), (b.target, b.attacker)] {
+                    if self.state.card(participant).zone.is_field() {
+                        self.queue_autos_with(
+                            Timing::EndOfBattle,
+                            participant,
+                            &[(BATTLED_BINDING, vec![other])],
+                            events,
+                        );
+                    }
+                }
             }
         }
         // 7-1-5-3/4: effects lasting "during this battle" become invalid.
@@ -1493,6 +1573,47 @@ impl Game {
                 OpOutcome::Suspend
             }
 
+            Op::ChooseFrom { key, from, up_to } => {
+                if frame.has_binding(&key) {
+                    return OpOutcome::Advance;
+                }
+                // Only cards still where the effect can act on them;
+                // 8-1-3-1-3 drops the rest.
+                let options: Vec<CardInstanceId> = frame
+                    .bound(&from)
+                    .iter()
+                    .copied()
+                    .filter(|&c| self.state.card(c).zone.is_field())
+                    .collect();
+                if options.is_empty() {
+                    events.push(GameEvent::NoLegalTargets {
+                        source: frame.source,
+                        controller: frame.controller,
+                    });
+                    self.state.stack.frames[idx].bind(&key, Vec::new());
+                    return OpOutcome::Advance;
+                }
+                self.state.pending = Some(Pending::Choose {
+                    player: frame.controller,
+                    key,
+                    options,
+                    up_to,
+                });
+                OpOutcome::Suspend
+            }
+
+            Op::SelectAll { key, select } => {
+                let options = self.selector_options(frame, &select);
+                if options.is_empty() {
+                    events.push(GameEvent::NoLegalTargets {
+                        source: frame.source,
+                        controller: frame.controller,
+                    });
+                }
+                self.state.stack.frames[idx].bind(&key, options);
+                OpOutcome::Advance
+            }
+
             Op::Modify {
                 key,
                 kind,
@@ -1549,11 +1670,12 @@ impl Game {
             }
 
             Op::Draw { player, n } => {
-                let who = self.who(frame.controller, player);
-                for _ in 0..n {
-                    match draw_one(&mut self.state, who) {
-                        Some(card) => events.push(GameEvent::Drew { player: who, card }),
-                        None => break,
+                for who in self.players_of(frame.controller, player) {
+                    for _ in 0..n {
+                        match draw_one(&mut self.state, who) {
+                            Some(card) => events.push(GameEvent::Drew { player: who, card }),
+                            None => break,
+                        }
                     }
                 }
                 OpOutcome::Advance
@@ -1738,13 +1860,35 @@ impl Game {
                     OpOutcome::Abort
                 }
             }
+
+            Op::RequireBound { key } => {
+                if frame.bound(&key).is_empty() {
+                    // "If you do" — the player declined the optional half, so
+                    // the consequence does not happen either.
+                    OpOutcome::Abort
+                } else {
+                    OpOutcome::Advance
+                }
+            }
         }
     }
 
-    fn who(&self, controller: PlayerId, who: crate::effect::Who) -> PlayerId {
+    /// The players a [`Who`] names, relative to an effect's controller.
+    ///
+    /// A list rather than one player because card text that says plain
+    /// "Characters" reaches both sides (ST08-005).
+    ///
+    /// [`Who`]: crate::effect::Who
+    fn players_of(&self, controller: PlayerId, who: crate::effect::Who) -> Vec<PlayerId> {
         match who {
-            crate::effect::Who::You => controller,
-            crate::effect::Who::Opponent => controller.opponent(),
+            crate::effect::Who::You => vec![controller],
+            crate::effect::Who::Opponent => vec![controller.opponent()],
+            // Turn player first, so the pool order does not depend on which
+            // seat happens to control the effect.
+            crate::effect::Who::Both => {
+                let first = self.state.turn_player;
+                vec![first, first.opponent()]
+            }
         }
     }
 
@@ -1824,14 +1968,16 @@ impl Game {
         frame: &crate::effect::EffectFrame,
         select: &crate::effect::Selector,
     ) -> Vec<CardInstanceId> {
-        let owner = self.who(frame.controller, select.owner);
         let derived = self.derived();
-        let pool: Vec<CardInstanceId> = match select.zone {
-            // "your Leader or 1 of your Characters" is by far the most common
-            // target set, and spans two areas.
-            Zone::Leader => self.state.battlers(owner),
-            other => self.state.player(owner).zone(other).to_vec(),
-        };
+        let mut pool: Vec<CardInstanceId> = Vec::new();
+        for owner in self.players_of(frame.controller, select.owner) {
+            match select.zone {
+                // "your Leader or 1 of your Characters" is by far the most
+                // common target set, and spans two areas.
+                Zone::Leader => pool.extend(self.state.battlers(owner)),
+                other => pool.extend(self.state.player(owner).zone(other).iter().copied()),
+            }
+        }
         pool.into_iter()
             .filter(|&c| {
                 derive::matches_filters(
@@ -1849,6 +1995,20 @@ impl Game {
     /// Pushes any auto effects on `card` whose timing has just been met
     /// (8-1-3-1). Conditions are checked at activation time (8-3-2).
     fn queue_autos(&mut self, timing: Timing, card: CardInstanceId, events: &mut Vec<GameEvent>) {
+        self.queue_autos_with(timing, card, &[], events);
+    }
+
+    /// As [`Game::queue_autos`], with extra bindings pre-supplied to the frame.
+    ///
+    /// For context the effect cannot recover from the state once it resolves —
+    /// see [`BATTLED_BINDING`].
+    fn queue_autos_with(
+        &mut self,
+        timing: Timing,
+        card: CardInstanceId,
+        supplied: &[(&str, Vec<CardInstanceId>)],
+        events: &mut Vec<GameEvent>,
+    ) {
         let def = self.state.card(card).def;
         let controller = self.state.card(card).controller;
         let effects: Vec<_> = self
@@ -1901,9 +2061,11 @@ impl Game {
                 source: card,
                 controller,
             });
-            self.state
-                .stack
-                .push(EffectFrame::new(card, controller, effect.ops.clone()));
+            let mut frame = EffectFrame::new(card, controller, effect.ops.clone());
+            for (key, cards) in supplied {
+                frame.bind(key, cards.clone());
+            }
+            self.state.stack.push(frame);
         }
     }
 

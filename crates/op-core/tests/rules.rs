@@ -1134,9 +1134,8 @@ fn rule_8_3_1_a_hand_cost_is_the_players_choice() {
             activated: vec![op_core::script::ActivatedEffect {
                 conditions: vec![],
                 cost: op_core::script::ActivationCost {
-                    rest_don: 0,
-                    rest_self: false,
                     trash_from_hand: 1,
+                    ..Default::default()
                 },
                 ops: vec![op_core::effect::EffectOp::Draw {
                     player: op_core::effect::Who::You,

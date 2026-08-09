@@ -36,6 +36,10 @@ pub enum ModKind {
     /// "This Character cannot be K.O.'d by effects." Losing a battle still
     /// K.O.s it (10-2-1-1) — only effect-driven K.O. is prevented.
     CannotBeKoedByEffect,
+    /// "This Character cannot be K.O.'d in battle by Leaders" (ST08-002). The
+    /// complement of [`ModKind::CannotBeKoedByEffect`]: this one stops the
+    /// battle K.O. of 7-1-4-1-2, and only when the attacker is a Leader.
+    CannotBeKoedInBattleByLeader,
     GrantKeyword(Keyword),
     /// The opponent cannot activate `[Blocker]` against this card's attack
     /// (ST01-012, ST01-016).
@@ -67,6 +71,10 @@ pub enum Timing {
     OnYourOpponentsAttack,
     OnBlock,
     OnKo,
+    /// "When a Character is K.O.'d" — fires on every card in play, for *any*
+    /// Character leaving via a K.O., either player's (ST08-001). Distinct from
+    /// [`Timing::OnKo`], which is the card's own K.O.
+    OnCharacterKoed,
     EndOfYourTurn,
     EndOfYourOpponentsTurn,
     Trigger,
@@ -87,6 +95,7 @@ impl Timing {
             Timing::OnPlay
             | Timing::WhenAttacking
             | Timing::OnYourOpponentsAttack
+            | Timing::OnCharacterKoed
             | Timing::EndOfYourTurn
             | Timing::EndOfYourOpponentsTurn
             | Timing::EndOfBattle => true,
@@ -139,6 +148,23 @@ impl DonSource {
 pub enum EffectOp {
     /// Ask the controller to pick cards matching `select`, binding the result.
     Choose { key: String, select: Selector },
+    /// Bind *every* card matching `select`, with no decision to make. "K.O.
+    /// **all** Characters with a cost of 1 or less" (ST08-005) is not a choice,
+    /// and offering it as one would put a pointless subset enumeration in front
+    /// of both the player and the search.
+    SelectAll { key: String, select: Selector },
+    /// Ask the controller to pick up to `up_to` of the cards already bound
+    /// under `from`, binding the answer under `key`.
+    ///
+    /// Exists because some pools cannot be re-derived from the state at choice
+    /// time. `[BATTLED]` is the case in hand: the battle is over by the time an
+    /// `EndOfBattle` effect resolves, so the participants have to travel with
+    /// the frame (ST08-013).
+    ChooseFrom {
+        key: String,
+        from: String,
+        up_to: u8,
+    },
     /// Grant a modifier to every card bound under `key`.
     Modify {
         key: String,
@@ -181,6 +207,10 @@ pub enum EffectOp {
     },
     /// Stop resolving unless the condition holds (8-3-3 "if" clauses).
     RequireIf { cond: Condition },
+    /// Stop resolving unless `key` bound at least one card — the "If you do,"
+    /// half of "you may X. If you do, Y." (ST08-013), where the optionality of
+    /// X is a `Choose` the player may answer with nothing.
+    RequireBound { key: String },
     /// Trash the effect's source if it is still in no area. Appended by the
     /// engine after a `[Trigger]`'s ops so that a Trigger which played or
     /// otherwise relocated the card does not then trash it (10-1-5-3).
@@ -192,6 +222,8 @@ impl EffectOp {
     pub fn name(&self) -> &'static str {
         match self {
             EffectOp::Choose { .. } => "Choose",
+            EffectOp::SelectAll { .. } => "SelectAll",
+            EffectOp::ChooseFrom { .. } => "ChooseFrom",
             EffectOp::Modify { .. } => "Modify",
             EffectOp::Ko { .. } => "Ko",
             EffectOp::Rest { .. } => "Rest",
@@ -203,6 +235,7 @@ impl EffectOp {
             EffectOp::DigTop { .. } => "DigTop",
             EffectOp::RequireIf { .. } => "RequireIf",
             EffectOp::TrashIfInLimbo => "TrashIfInLimbo",
+            EffectOp::RequireBound { .. } => "RequireBound",
         }
     }
 
@@ -221,8 +254,11 @@ impl EffectOp {
             | EffectOp::SetActive { key }
             | EffectOp::GiveDon { key, .. }
             | EffectOp::MoveTo { key, .. }
+            | EffectOp::RequireBound { key }
+            | EffectOp::ChooseFrom { from: key, .. }
             | EffectOp::PlayBound { key } => Some(key),
             EffectOp::Choose { .. }
+            | EffectOp::SelectAll { .. }
             | EffectOp::DigTop { .. }
             | EffectOp::Draw { .. }
             | EffectOp::RequireIf { .. }
@@ -233,7 +269,10 @@ impl EffectOp {
     /// The binding key this op fills in, if any.
     pub fn binds(&self) -> Option<&str> {
         match self {
-            EffectOp::Choose { key, .. } | EffectOp::DigTop { key, .. } => Some(key),
+            EffectOp::Choose { key, .. }
+            | EffectOp::SelectAll { key, .. }
+            | EffectOp::ChooseFrom { key, .. }
+            | EffectOp::DigTop { key, .. } => Some(key),
             EffectOp::Modify { .. }
             | EffectOp::Ko { .. }
             | EffectOp::Rest { .. }
@@ -243,6 +282,7 @@ impl EffectOp {
             | EffectOp::MoveTo { .. }
             | EffectOp::PlayBound { .. }
             | EffectOp::RequireIf { .. }
+            | EffectOp::RequireBound { .. }
             | EffectOp::TrashIfInLimbo => None,
         }
     }
@@ -253,6 +293,9 @@ impl EffectOp {
 pub enum Who {
     You,
     Opponent,
+    /// Both players. Card text that says plain "Characters" rather than "your"
+    /// or "your opponent's" reaches the whole board (ST08-005).
+    Both,
 }
 
 /// A filtered request for cards, resolved against the state at choice time.
@@ -279,6 +322,9 @@ pub enum Filter {
     NotSelf,
     /// Restricts to a card category, e.g. Characters only.
     IsCategory(crate::card::Category),
+    /// Matches a card of this colour ("1 **black** Character card", ST08-014's
+    /// `[Trigger]`). A card may be multi-coloured, so this is "has", not "is".
+    HasColor(crate::card::Color),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

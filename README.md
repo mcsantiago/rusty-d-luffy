@@ -1,7 +1,7 @@
 # OnePieceSim
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
-[![Card coverage: 3/59 sets scripted](https://img.shields.io/badge/card_sets-3%2F59_scripted-orange)](#coverage-of-the-source)
+[![Card coverage: 4/59 sets scripted](https://img.shields.io/badge/card_sets-4%2F59_scripted-orange)](#coverage-of-the-source)
 
 <p align="center">
   <img src="docs/screenshot.png" alt="The desktop client on turn 5. Each player's zones are laid out facing each other across the middle of the table: leader, character area, stage, life, deck and trash, with the DON!! cost areas furthest apart at the top and bottom. Three characters are in play for the near player, one for the far player, each showing its current power. The player's hand runs along the bottom edge and a turn-by-turn game log fills the right-hand column." width="900">
@@ -250,10 +250,10 @@ every other phase. Playable against the AI on macOS, Windows and Linux; the
 binaries are unsigned, so both Gatekeeper and SmartScreen will warn on first
 launch. Card data is not bundled and is fetched on first run.
 
-Implemented: the rules kernel, ST-01, ST-02 and ST-06 at full script coverage,
-the legal-action generator, heuristic and ISMCTS agents, static validation of
-card scripts, session replay and verification, and both clients — desktop and
-terminal.
+Implemented: the rules kernel, ST-01, ST-02, ST-06 and ST-08 at full script
+coverage, the legal-action generator, heuristic and ISMCTS agents, static
+validation of card scripts, session replay and verification, and both clients —
+desktop and terminal.
 
 Not yet built: PyO3 bindings and the Gymnasium environment, and the authoritative
 multiplayer server and web client. Both sit on top of the existing kernel — the
@@ -273,6 +273,12 @@ These are deliberate and localised; each is commented at its site.
   prompting. Only ST02-001 uses this, for a single card.
 - An unscripted `[Trigger]` is treated as absent rather than offering a choice
   that would do nothing.
+- An Event whose `[Main]` text names a further cost ("You may … : …") pays it
+  whenever it can. Declining would resolve nothing for DON!! already spent, so
+  it is never a choice worth offering; playing the Event is the decision.
+  ST08-014 is the only card affected.
+- ST08-013 pays its own K.O. for a trade whose K.O. an effect could in
+  principle prevent. No card in the implemented pool can produce that board.
 
 ## Contributing
 

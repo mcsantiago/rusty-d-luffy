@@ -67,6 +67,7 @@ pub fn all_scripts() -> Vec<(&'static str, CardScript)> {
     out.extend(sets::st01::scripts());
     out.extend(sets::st02::scripts());
     out.extend(sets::st06::scripts());
+    out.extend(sets::st08::scripts());
     out
 }
 
@@ -99,3 +100,16 @@ pub const KEYWORD_ONLY: &[&str] = &[
     "ST02-004", // [Blocker]
     "ST06-007", // [Blocker]
 ];
+
+#[cfg(test)]
+mod tests {
+    /// Two sets may not claim the same card number: `Cards::new` indexes by
+    /// `CardDefId`, so the later entry would silently overwrite the earlier one.
+    #[test]
+    fn no_card_number_is_scripted_twice() {
+        let mut seen = std::collections::BTreeSet::new();
+        for (number, _) in super::all_scripts() {
+            assert!(seen.insert(number), "{number} has two scripts");
+        }
+    }
+}

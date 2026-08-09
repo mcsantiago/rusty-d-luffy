@@ -66,6 +66,10 @@ pub struct ActivationCost {
     pub rest_self: bool,
     /// Trash this many cards from hand.
     pub trash_from_hand: u8,
+    /// "You may add N cards from the top of your Life cards to your hand:"
+    /// (ST08-014). Paying costs Life, so it is a real cost and not a bonus —
+    /// and it is not damage, so no `[Trigger]` activates (10-1-5).
+    pub life_to_hand: u8,
 }
 
 impl ActivationCost {
@@ -93,6 +97,15 @@ pub struct CardScript {
 /// Binding key under which the engine pre-supplies a target the player already
 /// picked outside the effect, e.g. the card a `[Counter]` Event boosts.
 pub const TARGET_BINDING: &str = "target";
+
+/// Binding key under which an [`crate::effect::Timing::EndOfBattle`] effect is
+/// handed the *other* participant in the battle that just ended.
+///
+/// It has to travel with the frame: `state.battle` is cleared as the battle
+/// ends, before the effects it queued get to resolve, so a script that went
+/// looking for "the Character I battled" at resolution time would find nothing
+/// and silently do nothing.
+pub const BATTLED_BINDING: &str = "battled";
 
 impl CardScript {
     pub fn is_vanilla(&self) -> bool {

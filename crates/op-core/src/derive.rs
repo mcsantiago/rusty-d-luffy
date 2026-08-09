@@ -37,6 +37,9 @@ pub struct Characteristics {
     pub cost: i32,
     /// Effects cannot K.O. this card; battle still can (10-2-1-1).
     pub cannot_be_koed_by_effect: bool,
+    /// A Leader that wins a battle against this card does not K.O. it
+    /// (ST08-002). A Character attacker still does.
+    pub cannot_be_koed_in_battle_by_leader: bool,
     pub keywords: Vec<Keyword>,
     pub cannot_be_blocked: bool,
     /// The opponent may not block with a `[Blocker]` whose power is at or above
@@ -82,6 +85,7 @@ pub fn derive_all(state: &GameState, db: &CardDb, scripts: &dyn ScriptSource) ->
                 power: def.power.unwrap_or(0),
                 cost: def.cost as i32,
                 cannot_be_koed_by_effect: false,
+                cannot_be_koed_in_battle_by_leader: false,
                 keywords: def.keywords.clone(),
                 cannot_be_blocked: false,
                 blocker_power_ceiling: None,
@@ -151,6 +155,7 @@ fn apply(ch: &mut Characteristics, kind: ModKind) {
             ch.cost += delta;
         }
         ModKind::CannotBeKoedByEffect => ch.cannot_be_koed_by_effect = true,
+        ModKind::CannotBeKoedInBattleByLeader => ch.cannot_be_koed_in_battle_by_leader = true,
         ModKind::GrantKeyword(kw) => {
             if !ch.keywords.contains(&kw) {
                 ch.keywords.push(kw);
@@ -249,6 +254,7 @@ pub fn matches_filters(
         Filter::IsRested(want) => state.card(card).rested == *want,
         Filter::NotSelf => card != source,
         Filter::IsCategory(cat) => def.category == *cat,
+        Filter::HasColor(color) => def.colors.contains(color),
     })
 }
 
