@@ -45,6 +45,11 @@ cargo run -p op-ingest --bin op-fetch -- --data-dir data --packs ST-01 ST-02 ST-
 | `op-desktop` | Tauri client; `client/` is its front end. |
 | `op-cli` | Terminal client. |
 
+Design notes for work that spans crates live in `docs/`. Read the relevant one
+before starting: [`docs/multiplayer.md`](docs/multiplayer.md) covers the
+authoritative server, and names the four invariants that multiplayer turns from
+hygiene into exploits.
+
 ## Invariants
 
 These are load-bearing. Breaking one usually still compiles.
