@@ -4,11 +4,11 @@
 [![Card coverage: 3/59 sets scripted](https://img.shields.io/badge/card_sets-3%2F59_scripted-orange)](#coverage-of-the-source)
 
 <p align="center">
-  <img src="docs/screenshot.png" alt="The desktop client during a battle, resolving a counter step: attacker and defender side by side at 5000 power each, with the counter cards available from hand listed below and a running game log down the right-hand side." width="900">
+  <img src="docs/screenshot.png" alt="The desktop client on turn 5. Each player's zones are laid out facing each other across the middle of the table: leader, character area, stage, life, deck and trash, with the DON!! cost areas furthest apart at the top and bottom. Three characters are in play for the near player, one for the far player, each showing its current power. The player's hand runs along the bottom edge and a turn-by-turn game log fills the right-hand column." width="900">
 </p>
 
 <p align="center">
-  <em>The desktop client at the counter step — the defender decides before damage.
+  <em>The desktop client on turn 5 — both boards, the hand, and the turn log.
   Card art is fetched at runtime and is not part of this repository.</em>
 </p>
 
