@@ -186,7 +186,7 @@ async function showPreview(number) {
     ${uri ? `<img src="${uri}" alt="${number}" />` : ""}
     <div class="ptext">
       <div class="pname">${info ? info.name : number}</div>
-      <div class="pmeta">${info ? `${info.category} · cost ${info.cost}${
+      <div class="pmeta">${info ? `${number} · ${info.category} · cost ${info.cost}${
         info.power != null ? ` · ${info.power}` : ""
       }${info.counter != null ? ` · counter ${info.counter}` : ""}` : number}</div>
       ${info && info.effect ? `<div class="peffect">${info.effect.replaceAll("<br>", "<br/>")}</div>` : ""}
@@ -279,7 +279,7 @@ async function openMenu(card, el, yours) {
       <div class="menu-name">${info ? info.name : (card.number ?? "Face-down")}</div>
       <div class="menu-meta">${
         info
-          ? `${info.category} · cost ${info.cost}${
+          ? `${card.number} · ${info.category} · cost ${info.cost}${
               card.power != null ? ` · ${card.power} now` : ""
             }`
           : ""
@@ -749,7 +749,7 @@ async function renderChooseSource(number) {
   box.innerHTML = `
     <div class="source-art">${uri ? `<img src="${uri}" alt="${number}" />` : number}</div>
     <div class="source-text">
-      <div class="source-who">${info ? info.name : number} is asking</div>
+      <div class="source-who" title="${number ?? ""}">${info ? info.name : number} is asking</div>
       ${info && info.effect ? `<div class="peffect">${info.effect.replaceAll("<br>", "<br/>")}</div>` : ""}
       ${info && info.trigger ? `<div class="ptrigger">${info.trigger}</div>` : ""}
     </div>
@@ -872,6 +872,19 @@ const cardName = (c) => {
   return info ? info.name : (c.number ?? "?");
 };
 
+/** The card number, for a `title` wherever a name appears on its own.
+ *
+ * A name does not identify a card — the same printed name recurs across sets
+ * with different power, cost and text — so anywhere the number is not already
+ * on screen, it belongs on hover.
+ *
+ * Empty for a card the viewer may not identify. The engine withholds the number
+ * there, and an empty `title` shows no tooltip at all, where the string
+ * "undefined" would read as the UI being broken rather than the information
+ * being deliberately withheld.
+ */
+const cardNumber = (c) => (c && c.number) || "";
+
 function renderBattle(view) {
   const bar = $("battle-bar");
   const modal = $("battle-modal");
@@ -890,9 +903,9 @@ function renderBattle(view) {
 
   bar.hidden = false;
   bar.innerHTML = `
-    <span class="atk">${label(attacker)}</span>
+    <span class="atk" title="${cardNumber(attacker)}">${label(attacker)}</span>
     <span class="arrow">&#8594;</span>
-    <span class="def">${label(defender)}</span>
+    <span class="def" title="${cardNumber(defender)}">${label(defender)}</span>
     <span class="step">${view.battle.step}</span>
   `;
 
@@ -910,6 +923,7 @@ function renderBattle(view) {
     holder.innerHTML = "";
     if (card) holder.appendChild(cardEl(card, { large: true, plain: true, preview: false }));
     $(`battle-${slot}-name`).textContent = cardName(card);
+    $(`battle-${slot}-name`).title = cardNumber(card);
     $(`battle-${slot}-power`).textContent =
       card && card.power != null ? card.power : "—";
   }
@@ -1164,6 +1178,7 @@ function renderCounterTray(snap) {
   $("counter-prompt").textContent = options.length
     ? `Play a Counter for ${cardName(target)}`
     : `No Counter in hand for ${cardName(target)}`;
+  $("counter-prompt").title = cardNumber(target);
 
   const hand = $("counter-hand");
   hand.innerHTML = "";
