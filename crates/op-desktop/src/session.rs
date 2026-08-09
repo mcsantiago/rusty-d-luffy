@@ -747,6 +747,10 @@ fn action_kind(action: &Action) -> &'static str {
         // flagging, while finishing the Counter step is routine.
         Action::EndMainPhase => "end-turn",
         Action::DoneCountering => "done",
+        // The opening decision is between two answers, not a list, so each is
+        // coloured for what it does rather than sharing one neutral style.
+        Action::Mulligan(false) => "keep",
+        Action::Mulligan(true) => "mulligan",
         _ => "other",
     }
 }
