@@ -1207,6 +1207,7 @@ mod tests {
                     key: "t".into(),
                     options: vec![card],
                     up_to: 1,
+                    at_least: 0,
                 },
                 "choose",
             ),

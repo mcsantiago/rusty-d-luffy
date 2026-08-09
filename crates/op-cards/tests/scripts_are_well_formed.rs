@@ -77,7 +77,7 @@ fn every_script_survives_a_json_round_trip() {
 /// Bandai's ST01-001 ruling settles that the adjective qualifies the DON!!
 /// being selected rather than the state it ends up in, so a script that asked
 /// for `Any` here would let the effect spend an active DON!! the player still
-/// needs. The three cards below are the whole of it today; a new one that
+/// needs. The four cards below are the whole of it today; a new one that
 /// genuinely takes an active DON!! by effect should be added to the expected
 /// set deliberately, not by relaxing the assertion.
 #[test]
@@ -109,7 +109,10 @@ fn a_rested_don_effect_selects_only_rested_don() {
     seen.dedup();
     assert_eq!(
         seen,
-        vec!["ST01-001", "ST01-007", "ST01-011"],
+        // ST08-001 joined when ST-08 was scripted: "[Your Turn] When a
+        // Character is K.O.'d, give up to 1 rested DON!! card to this Leader."
+        // Same printed phrasing as the ST-01 three, so same source.
+        vec!["ST01-001", "ST01-007", "ST01-011", "ST08-001"],
         "the set of DON!!-giving cards changed; check each against its printed text"
     );
 }

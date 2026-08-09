@@ -658,6 +658,14 @@ fn st08_001_leader_gains_a_rested_don_when_any_character_is_koed() {
     let leader = game.state.player(PlayerId::P0).leader.unwrap();
     assert!(game.state.card(leader).attached_don.is_empty());
 
+    // The card reads "rested DON!! card", and 4-4-2 makes that a constraint on
+    // which DON!! may be selected rather than the state it ends up in, so the
+    // cost area has to contain one or the effect resolves to nothing. Turn 3:
+    // three DON!!, of which one has been spent and is rested.
+    let cost_don = game.state.player(PlayerId::P0).cost_area.clone();
+    assert_eq!(cost_don.len(), 3);
+    game.state.card_mut(cost_don[2]).rested = true;
+
     // ST08-004 Koby rests to K.O. a Character with a cost of 2 or less.
     let koby = put_in_play(&mut game, PlayerId::P0, "ST08-004");
     let victim = put_in_play(&mut game, PlayerId::P1, "ST08-008"); // cost 1

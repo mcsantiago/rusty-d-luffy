@@ -31,7 +31,7 @@ pub fn scripts() -> Vec<(&'static str, CardScript)> {
                 .auto(auto(
                     Timing::OnCharacterKoed,
                     vec![your_turn()],
-                    vec![give_don(THIS, 1, true)],
+                    vec![give_don(THIS, 1, DonSource::Rested)],
                 ))
                 .build(),
         ),
