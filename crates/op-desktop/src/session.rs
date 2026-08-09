@@ -776,8 +776,8 @@ mod tests {
             scripts,
             SessionConfig {
                 seed: 7,
-                human_deck: crate::st01(),
-                ai_deck: crate::st02(),
+                human_deck: op_cards::decks::st01(),
+                ai_deck: op_cards::decks::st02(),
                 human_first: true,
                 difficulty: Difficulty::Easy,
                 debug_dir,
@@ -830,8 +830,8 @@ mod tests {
             scripts,
             SessionConfig {
                 seed,
-                human_deck: crate::st01(),
-                ai_deck: crate::st02(),
+                human_deck: op_cards::decks::st01(),
+                ai_deck: op_cards::decks::st02(),
                 human_first: true,
                 difficulty: Difficulty::Easy,
                 debug_dir: None,
@@ -1147,7 +1147,7 @@ mod tests {
     #[test]
     fn the_catalogue_covers_every_card_either_deck_can_contain() {
         let Some(session) = fixture() else { return };
-        let (a, b) = (crate::st01(), crate::st02());
+        let (a, b) = (op_cards::decks::st01(), op_cards::decks::st02());
         let catalogue = session.catalogue(&[&a, &b]);
 
         for deck in [&a, &b] {

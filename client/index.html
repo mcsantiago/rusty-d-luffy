@@ -12,22 +12,17 @@
         <h1>One Piece Card Game</h1>
         <p class="sub">Local play against the AI</p>
 
+        <!-- Both lists are filled from the `decks` command at startup. Typing
+             the options here is what left ST-04 and ST-08 out of the menu long
+             after they were scripted and playable. -->
         <label>
           Your deck
-          <select id="your-deck">
-            <option value="ST01">ST-01 Straw Hat Crew</option>
-            <option value="ST02">ST-02 Worst Generation</option>
-            <option value="ST06">ST-06 Absolute Justice</option>
-          </select>
+          <select id="your-deck"></select>
         </label>
 
         <label>
           Opponent deck
-          <select id="ai-deck">
-            <option value="ST02">ST-02 Worst Generation</option>
-            <option value="ST01">ST-01 Straw Hat Crew</option>
-            <option value="ST06">ST-06 Absolute Justice</option>
-          </select>
+          <select id="ai-deck"></select>
         </label>
 
         <label>

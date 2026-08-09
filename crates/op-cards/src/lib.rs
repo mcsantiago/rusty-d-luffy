@@ -6,6 +6,7 @@
 //! [`op_core::card::CardDb`], so a card with no script simply behaves as a
 //! vanilla body — which is correct for the many cards that have no text.
 
+pub mod decks;
 pub mod dsl;
 pub mod sets;
 

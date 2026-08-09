@@ -26,103 +26,35 @@ use op_core::DeckList;
 use serde::Serialize;
 use session::{CardInfo, Difficulty, Session, Snapshot};
 
-/// Built-in decks, so a game can be started without a deckbuilder.
-fn deck(leader: &str, spec: &[(&str, usize)]) -> DeckList {
-    let mut cards = Vec::new();
-    for (number, n) in spec {
-        for _ in 0..*n {
-            cards.push(number.to_string());
-        }
-    }
-    DeckList {
-        leader: leader.into(),
-        cards,
-    }
+/// A deck as the setup menu needs it: what to show, and what to send back.
+#[derive(Serialize)]
+struct DeckChoice {
+    id: &'static str,
+    name: &'static str,
 }
 
-fn st01() -> DeckList {
-    deck(
-        "ST01-001",
-        &[
-            ("ST01-002", 4),
-            ("ST01-003", 4),
-            ("ST01-004", 4),
-            ("ST01-005", 2),
-            ("ST01-006", 4),
-            ("ST01-007", 4),
-            ("ST01-008", 2),
-            ("ST01-009", 4),
-            ("ST01-010", 2),
-            ("ST01-011", 4),
-            ("ST01-012", 2),
-            ("ST01-013", 4),
-            ("ST01-014", 4),
-            ("ST01-015", 2),
-            ("ST01-016", 2),
-            ("ST01-017", 2),
-        ],
-    )
-}
-
-fn st02() -> DeckList {
-    deck(
-        "ST02-001",
-        &[
-            ("ST02-002", 4),
-            ("ST02-003", 4),
-            ("ST02-004", 4),
-            ("ST02-005", 4),
-            ("ST02-006", 2),
-            ("ST02-007", 4),
-            ("ST02-008", 4),
-            ("ST02-009", 2),
-            ("ST02-010", 2),
-            ("ST02-011", 4),
-            ("ST02-012", 4),
-            ("ST02-013", 2),
-            ("ST02-014", 2),
-            ("ST02-015", 4),
-            ("ST02-016", 2),
-            ("ST02-017", 2),
-        ],
-    )
-}
-
-/// ST-06 Absolute Justice.
+/// The decks the client may offer.
 ///
-/// A legal 50-card build, not the printed decklist — the ingest carries card
-/// data but not product contents, so the copy counts here are chosen rather
-/// than transcribed. Deck construction (5-1-2) is enforced either way.
-fn st06() -> DeckList {
-    deck(
-        "ST06-001",
-        &[
-            ("ST06-002", 4),
-            ("ST06-003", 4),
-            ("ST06-004", 2),
-            ("ST06-005", 2),
-            ("ST06-006", 4),
-            ("ST06-007", 4),
-            ("ST06-008", 4),
-            ("ST06-009", 4),
-            ("ST06-010", 4),
-            ("ST06-011", 2),
-            ("ST06-012", 2),
-            ("ST06-013", 4),
-            ("ST06-014", 4),
-            ("ST06-015", 2),
-            ("ST06-016", 2),
-            ("ST06-017", 2),
-        ],
-    )
+/// Served rather than hardcoded in `index.html`, so a newly scripted set
+/// reaches the menu by being added to `op_cards::decks::ALL` and nowhere else.
+/// The previous copy in the markup is why ST-04 and ST-08 were fully scripted
+/// and playable while the picker still showed three decks.
+#[tauri::command]
+fn decks() -> Vec<DeckChoice> {
+    op_cards::decks::ALL
+        .iter()
+        .map(|d| DeckChoice {
+            id: d.id,
+            name: d.name,
+        })
+        .collect()
 }
 
 fn deck_by_name(name: &str) -> DeckList {
-    match name {
-        "ST02" => st02(),
-        "ST06" => st06(),
-        _ => st01(),
-    }
+    // Falling back rather than erroring: the id comes from our own menu, so an
+    // unknown one means the front end drifted, and a playable game beats a
+    // dead window. `op_cards::decks::by_name` is the strict form.
+    op_cards::decks::by_name(name).unwrap_or_else(op_cards::decks::st01)
 }
 
 /// Card data, once it has been fetched and loaded.
@@ -546,6 +478,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             bootstrap,
+            decks,
             new_game,
             choose,
             snapshot,

@@ -1517,6 +1517,32 @@ $("ingest-retry").addEventListener("click", () => {
   bootstrap();
 });
 
+/** Fills both deck pickers from the backend's list.
+ *
+ *  The menu is generated rather than written into `index.html` so that a newly
+ *  scripted set appears by being added to `op_cards::decks::ALL` alone. The two
+ *  lists default to different decks, which is only a nicety — nothing stops a
+ *  mirror match. */
+async function loadDecks() {
+  const decks = await invoke("decks");
+  if (!decks.length) return;
+  for (const [id, fallback] of [
+    ["your-deck", 0],
+    ["ai-deck", Math.min(1, decks.length - 1)],
+  ]) {
+    const select = $(id);
+    select.innerHTML = "";
+    for (const deck of decks) {
+      const opt = document.createElement("option");
+      opt.value = deck.id;
+      opt.textContent = deck.name;
+      select.appendChild(opt);
+    }
+    select.selectedIndex = fallback;
+  }
+}
+
+loadDecks();
 bootstrap();
 
 $("start").addEventListener("click", start);

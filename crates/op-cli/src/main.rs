@@ -276,8 +276,8 @@ fn parse_args() -> Result<Option<Options>> {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos() as u64)
         .unwrap_or(0);
-    let mut you = decks::st01();
-    let mut opponent = decks::st02();
+    let mut you = op_cards::decks::st01();
+    let mut opponent = op_cards::decks::st02();
     let mut you_first = true;
     let mut difficulty = Difficulty::Normal;
     let mut autoplay = false;
@@ -358,6 +358,6 @@ blank lines and # comments are ignored.
 
 Card data must be fetched first:
     python3 tools/ingest/fetch_cards.py",
-        decks::BUILTIN.join(", ")
+        decks::builtin_names().join(", ")
     );
 }
