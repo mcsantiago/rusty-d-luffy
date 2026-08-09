@@ -369,13 +369,7 @@ pub fn read(path: impl AsRef<Path>) -> Result<SessionRecord, ReadError> {
         return Err(ReadError::Empty { path });
     }
 
-    let header: Header<'static> = parse(&path, 1, &lines[0], HEADER)?;
-    if header.version != FORMAT_VERSION {
-        return Err(ReadError::Version {
-            expected: FORMAT_VERSION,
-            found: header.version,
-        });
-    }
+    let header = parse_header(&path, &lines[0])?;
     if header.first_player > 1 {
         return Err(ReadError::BadSeat {
             path,
@@ -406,6 +400,43 @@ pub fn read(path: impl AsRef<Path>) -> Result<SessionRecord, ReadError> {
         truncated,
         path,
     })
+}
+
+/// Parses the header, deciding the format version before anything that depends
+/// on the schema.
+///
+/// The order is the whole point. Deserializing `Header` first means a log whose
+/// schema moved dies on whichever field moved — the reader is told
+/// `invalid type: integer 50, expected a sequence` when what it needs to hear is
+/// that the log is from an older format. So only `kind` and `version` are read
+/// up front, and neither may ever gain a requirement that a foreign header
+/// might not satisfy.
+fn parse_header(path: &Path, line: &str) -> Result<Header<'static>, ReadError> {
+    let malformed = |source| ReadError::Malformed {
+        path: path.to_path_buf(),
+        line: 1,
+        source,
+    };
+
+    let probe: HeaderProbe = serde_json::from_str(line).map_err(malformed)?;
+    // Kind before version: a step record sitting where the header belongs has
+    // no version field, and reporting that as "version 0" would be a lie.
+    if probe.kind != HEADER {
+        return Err(ReadError::WrongKind {
+            path: path.to_path_buf(),
+            line: 1,
+            expected: HEADER,
+            found: probe.kind,
+        });
+    }
+    if probe.version != FORMAT_VERSION {
+        return Err(ReadError::Version {
+            expected: FORMAT_VERSION,
+            found: probe.version,
+        });
+    }
+
+    serde_json::from_str(line).map_err(malformed)
 }
 
 /// Parses one record and checks its `kind` tag.
@@ -439,6 +470,19 @@ where
 #[derive(Deserialize)]
 struct Kind {
     kind: String,
+}
+
+/// The only two header fields this build may assume a foreign log has.
+///
+/// This is the format's compatibility contract: every field here must parse out
+/// of *any* header this project has ever written, including ones predating the
+/// version stamp. Adding a field re-creates the failure the probe exists to
+/// prevent, so it stays at two.
+#[derive(Deserialize)]
+struct HeaderProbe {
+    kind: String,
+    #[serde(default)]
+    version: u32,
 }
 
 /// Where two event lists first disagree.
