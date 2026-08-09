@@ -503,8 +503,16 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
 }
 .opt.end-turn:hover { background: rgba(217, 72, 75, 0.26); border-color: var(--accent); }
 
-/* Finishing the Counter step is routine, and stays quiet. */
-.opt.done { border-left-color: #55708c; color: var(--muted); }
+/* Finishing the Counter step commits to the damage as it stands, and is the
+   last moment a Counter can be played. */
+.opt.done {
+  border-left-color: var(--accent);
+  background: rgba(217, 72, 75, 0.14);
+  border-color: rgba(217, 72, 75, 0.5);
+  color: var(--ink);
+  font-weight: 600;
+}
+.opt.done:hover { background: rgba(217, 72, 75, 0.26); border-color: var(--accent); }
 
 /* The opening hand: keep what you were dealt, or trade it for another five. */
 .opt.keep {
