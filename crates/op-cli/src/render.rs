@@ -106,6 +106,32 @@ fn describe(card: &VisibleCard, db: &CardDb, in_hand: bool) -> String {
 }
 
 /// A one-line description of an action, for the numbered choice menu.
+/// Names an activation cost in the player's terms, so the prompt is answerable
+/// without knowing the card's text by heart.
+pub fn cost_label(cost: &op_core::script::ActivationCost) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if cost.don_minus > 0 {
+        parts.push(format!("DON!! -{}", cost.don_minus));
+    }
+    if cost.rest_don > 0 {
+        parts.push(format!("rest {} DON!!", cost.rest_don));
+    }
+    if cost.rest_self {
+        parts.push("rest this card".into());
+    }
+    if cost.trash_from_hand > 0 {
+        parts.push(format!("trash {} card(s) from hand", cost.trash_from_hand));
+    }
+    if cost.life_to_hand > 0 {
+        parts.push(format!("take {} Life card(s) into hand", cost.life_to_hand));
+    }
+    if parts.is_empty() {
+        "nothing".into()
+    } else {
+        parts.join(" and ")
+    }
+}
+
 pub fn action(action: &Action, game: &Game) -> String {
     let db = game.db();
     let name = |id: op_core::CardInstanceId| {
@@ -117,6 +143,8 @@ pub fn action(action: &Action, game: &Game) -> String {
     match action {
         Action::Mulligan(true) => "mulligan (shuffle back and redraw 5)".into(),
         Action::Mulligan(false) => "keep this hand".into(),
+        Action::PayCost(true) => "pay the cost".into(),
+        Action::PayCost(false) => "decline (the effect does not activate)".into(),
         Action::EndMainPhase => "end turn".into(),
         Action::PlayCard { card, replacing } => {
             let suffix = if game.play_finds_targets(*card) {

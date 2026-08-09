@@ -714,6 +714,9 @@ fn action_subject(action: &Action) -> Option<CardInstanceId> {
         Action::Attack { attacker, .. } => Some(*attacker),
         Action::Block { blocker } => *blocker,
         Action::Counter { card, .. } | Action::CounterEvent { card, .. } => Some(*card),
+        // The question belongs to the card whose effect is asking, but the
+        // answer is a yes/no the sidebar owns rather than a card menu.
+        Action::PayCost(_) => None,
         Action::Mulligan(_)
         | Action::EndMainPhase
         | Action::DoneCountering
@@ -729,6 +732,7 @@ fn pending_kind(pending: &Pending) -> &'static str {
         Pending::Block { .. } => "block",
         Pending::Counter { .. } => "counter",
         Pending::Trigger { .. } => "trigger",
+        Pending::PayCost { .. } => "pay-cost",
         Pending::Choose { .. } => "choose",
     }
 }

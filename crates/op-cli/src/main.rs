@@ -235,6 +235,9 @@ fn question(pending: &op_core::Pending) -> String {
         P::Block { .. } => "You are being attacked — block?".into(),
         P::Counter { .. } => "Counter step:".into(),
         P::Trigger { .. } => "That life card has a [Trigger]:".into(),
+        P::PayCost { cost, .. } => {
+            format!("Pay {} to activate that effect?", render::cost_label(cost))
+        }
         P::Choose { up_to, .. } => format!("Choose up to {up_to}:"),
     }
 }

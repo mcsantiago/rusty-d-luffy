@@ -369,6 +369,17 @@ pub enum Condition {
     AnyCharacterWithCost(u8),
 }
 
+/// An auto effect's cost, offered to its controller before the effect runs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingCost {
+    pub cost: crate::script::ActivationCost,
+    /// The effect's slot, so `[Once Per Turn]` is consumed only when the cost
+    /// is actually paid — a declined effect never activated (8-3-1-4), so it
+    /// has not been used this turn.
+    pub slot: u8,
+    pub once_per_turn: bool,
+}
+
 /// A suspended effect in mid-resolution.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EffectFrame {
@@ -376,6 +387,13 @@ pub struct EffectFrame {
     pub source: CardInstanceId,
     pub controller: PlayerId,
     pub ops: Vec<EffectOp>,
+    /// A cost the controller has not yet agreed to pay (8-3-1-4).
+    ///
+    /// While this is set the frame runs no ops: the engine asks first, and a
+    /// refusal discards the frame without the effect ever activating. An
+    /// activated effect has no need of it — taking `ActivateEffect` at all is
+    /// the agreement — so only auto effects arrive here.
+    pub pending_cost: Option<PendingCost>,
     /// Instruction pointer — where to resume after a suspension.
     pub ip: usize,
     /// Cards chosen so far, by binding key.
@@ -392,6 +410,7 @@ impl EffectFrame {
             source,
             controller,
             ops,
+            pending_cost: None,
             ip: 0,
             bindings: vec![(SELF_BINDING.to_string(), vec![source])],
         }

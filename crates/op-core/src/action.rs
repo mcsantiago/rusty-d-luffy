@@ -63,6 +63,8 @@ pub enum Action {
     /// Answer an effect's request to choose cards. May be empty when the text
     /// says "up to" (8-4-4-1).
     Choose { cards: Vec<CardInstanceId> },
+    /// Pay an auto effect's activation cost, or decline it (8-3-1-4).
+    PayCost(bool),
 }
 
 /// What the engine is currently waiting for. Stored in `GameState` because a
@@ -84,6 +86,18 @@ pub enum Pending {
     Trigger {
         player: PlayerId,
         card: CardInstanceId,
+    },
+    /// An auto effect wants an activation cost paid before it resolves.
+    ///
+    /// 8-3-1-4: a cost worded with "may" is the controller's to decline, and
+    /// declining means the effect is not activated at all. An *activated*
+    /// effect never lands here — choosing `ActivateEffect` is the agreement.
+    PayCost {
+        player: PlayerId,
+        /// The card whose effect is asking.
+        source: CardInstanceId,
+        /// What it wants, so a client can name the price.
+        cost: crate::script::ActivationCost,
     },
     Choose {
         player: PlayerId,
@@ -110,6 +124,7 @@ impl Pending {
             | Pending::Block { player }
             | Pending::Counter { player }
             | Pending::Trigger { player, .. }
+            | Pending::PayCost { player, .. }
             | Pending::Choose { player, .. } => *player,
         }
     }

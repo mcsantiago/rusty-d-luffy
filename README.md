@@ -269,8 +269,11 @@ These are deliberate and localised; each is commented at its site.
 - `DigTop` returns unchosen cards to the bottom of the deck in draw order; the
   card text permits any order, but the ordering is unobservable and enumerating
   permutations would inflate the action space for search and RL.
-- Activation costs that trash from hand take the leftmost cards rather than
-  prompting. Only ST02-001 uses this, for a single card.
+- An auto effect's hand cost takes the leftmost cards rather than asking which.
+  Whether to pay at all is now a real choice (8-3-1-4), which is the half that
+  was spending resources nobody agreed to spend; picking *which* card wants a
+  second decision point and is not built. Affects ST04-008, ST06-002 and
+  ST08-005.
 - An unscripted `[Trigger]` is treated as absent rather than offering a choice
   that would do nothing.
 - An Event whose `[Main]` text names a further cost ("You may … : …") pays it

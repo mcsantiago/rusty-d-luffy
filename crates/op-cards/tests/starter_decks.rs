@@ -200,6 +200,21 @@ fn battle_through(game: &mut Game) {
     }
 }
 
+/// Agrees to an auto effect's activation cost.
+///
+/// An auto effect with a non-free cost now asks before spending anything
+/// (8-3-1-4), so a test that wants the effect to resolve has to say yes. The
+/// assertion is the point: if the prompt stops appearing, these tests should
+/// fail rather than quietly go back to testing forced payment.
+fn pay_cost(game: &mut Game) {
+    assert!(
+        matches!(game.pending(), Some(Pending::PayCost { .. })),
+        "expected a cost prompt, got {:?}",
+        game.pending()
+    );
+    game.step(Action::PayCost(true)).unwrap();
+}
+
 fn put_in_play(game: &mut Game, player: PlayerId, number: &str) -> op_core::CardInstanceId {
     let def = game.db().by_number(number).unwrap();
     let card = game.state.spawn(def, player, Zone::Limbo);
@@ -653,6 +668,7 @@ fn st08_005_kos_every_cheap_character_on_both_sides() {
         replacing: None,
     })
     .unwrap();
+    pay_cost(&mut game);
 
     assert_eq!(game.state.card(mine).zone, Zone::Trash, "his own side too");
     assert_eq!(game.state.card(theirs).zone, Zone::Trash);
@@ -890,6 +906,7 @@ fn st04_008_adds_an_active_don_from_the_don_deck() {
         replacing: None,
     })
     .unwrap();
+    pay_cost(&mut game);
 
     assert_eq!(
         game.state.player(PlayerId::P0).don_deck.len(),
@@ -904,6 +921,70 @@ fn st04_008_adds_an_active_don_from_the_don_deck() {
 
 /// ST04-002 finds [Page One] by printed name, not card number, and plays it for
 /// free from hand.
+/// 8-3-1-4: "The player can choose not to pay the activation cost; however,
+/// this will mean the effect cannot be activated."
+///
+/// The case that motivated this, from session-1786259932: ST04-002's `[On Play]`
+/// plays a [Page One] from hand, and its cost is DON!! -1 — DON!! returned to
+/// the DON!! deck for the rest of the game. With no [Page One] in hand the
+/// effect can do nothing, and the engine used to spend the DON!! anyway,
+/// twice in one game, because an auto effect paid the moment it could afford to.
+#[test]
+fn st04_002_declining_the_cost_spends_nothing() {
+    let Some((db, cards)) = load() else { return };
+    let mut game = st04_at_main(db, cards, 5, 6);
+
+    // No [Page One] in hand, so paying would buy nothing.
+    assert!(
+        !game.state.player(PlayerId::P0).hand.iter().any(|&c| game
+            .db()
+            .get(game.state.card(c).def)
+            .number
+            == "ST04-012"),
+        "this test needs a hand with no Page One in it"
+    );
+
+    let don_deck_before = game.state.player(PlayerId::P0).don_deck.len();
+    let cost_area_before = game.state.player(PlayerId::P0).cost_area.len();
+
+    let ulti = game.state.spawn(
+        game.db().by_number("ST04-002").unwrap(),
+        PlayerId::P0,
+        Zone::Hand,
+    );
+    game.step(Action::PlayCard {
+        card: ulti,
+        replacing: None,
+    })
+    .unwrap();
+
+    // The price is offered rather than taken.
+    let Some(Pending::PayCost { cost, source, .. }) = game.pending() else {
+        panic!("expected a cost prompt, got {:?}", game.pending());
+    };
+    assert_eq!(*source, ulti);
+    assert_eq!(cost.don_minus, 1);
+    assert!(
+        legal_actions(&game).contains(&Action::PayCost(false)),
+        "declining must be a legal answer"
+    );
+
+    game.step(Action::PayCost(false)).unwrap();
+
+    assert_eq!(
+        game.state.player(PlayerId::P0).don_deck.len(),
+        don_deck_before,
+        "a declined cost must not return DON!! to the DON!! deck"
+    );
+    assert_eq!(
+        game.state.player(PlayerId::P0).cost_area.len(),
+        cost_area_before,
+        "and must not take one out of the cost area"
+    );
+    // Ulti is still played — only her effect declined to activate.
+    assert_eq!(game.state.card(ulti).zone, Zone::Character);
+}
+
 #[test]
 fn st04_002_plays_page_one_from_hand_by_name() {
     let Some((db, cards)) = load() else { return };
@@ -929,6 +1010,7 @@ fn st04_002_plays_page_one_from_hand_by_name() {
         replacing: None,
     })
     .unwrap();
+    pay_cost(&mut game);
 
     // The [On Play] offers exactly the [Page One] in hand.
     let Some(Pending::Choose { options, .. }) = game.pending() else {
@@ -965,6 +1047,7 @@ fn st04_005_must_trash_a_card_after_drawing() {
         replacing: None,
     })
     .unwrap();
+    pay_cost(&mut game);
 
     let Some(Pending::Choose { at_least, .. }) = game.pending() else {
         panic!("expected the mandatory trash, got {:?}", game.pending());

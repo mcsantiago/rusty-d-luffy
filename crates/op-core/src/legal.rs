@@ -175,6 +175,10 @@ pub fn legal_actions(game: &Game) -> Vec<Action> {
 
         Pending::Trigger { .. } => vec![Action::UseTrigger(false), Action::UseTrigger(true)],
 
+        // 8-3-1-4: both answers are always legal. Affordability was settled
+        // before the question was asked.
+        Pending::PayCost { .. } => vec![Action::PayCost(true), Action::PayCost(false)],
+
         Pending::Choose {
             options,
             up_to,

@@ -254,6 +254,63 @@ impl Game {
                 Ok(())
             }
 
+            (Pending::PayCost { player, .. }, Action::PayCost(pay)) => {
+                let player = *player;
+                let idx =
+                    self.state
+                        .stack
+                        .frames
+                        .len()
+                        .checked_sub(1)
+                        .ok_or(IllegalAction::Illegal(
+                            "no effect is waiting on a cost".into(),
+                        ))?;
+                let Some(pc) = self.state.stack.frames[idx].pending_cost.take() else {
+                    return Err(IllegalAction::Illegal(
+                        "that effect is not waiting on a cost".into(),
+                    ));
+                };
+                let source = self.state.stack.frames[idx].source;
+                if !pay {
+                    // 8-3-1-4: refusing the cost means the effect is not
+                    // activated at all — no announcement, and its
+                    // `[Once Per Turn]` is untouched.
+                    self.state.stack.frames.remove(idx);
+                    self.state.pending = None;
+                    return Ok(());
+                }
+                // The cost may have stopped being payable while the question
+                // was outstanding, since an earlier effect in the same window
+                // can spend the same DON!!.
+                if !self.can_pay(player, source, &pc.cost) {
+                    self.state.stack.frames.remove(idx);
+                    self.state.pending = None;
+                    return Ok(());
+                }
+                // Known simplification: a hand cost still takes the leftmost
+                // cards rather than asking which. Declining is now possible,
+                // which is the half that was destroying resources; choosing
+                // *which* card wants a second decision point.
+                let discard: Vec<CardInstanceId> = self
+                    .state
+                    .player(player)
+                    .hand
+                    .iter()
+                    .take(pc.cost.trash_from_hand as usize)
+                    .copied()
+                    .collect();
+                self.pay(player, source, &pc.cost, &discard, events);
+                if pc.once_per_turn {
+                    self.state.card_mut(source).used_once_per_turn.push(pc.slot);
+                }
+                events.push(GameEvent::EffectActivated {
+                    source,
+                    controller: player,
+                });
+                self.state.pending = None;
+                Ok(())
+            }
+
             (Pending::MainAction { player }, _) => self.main_action(*player, action, events),
 
             (Pending::Block { player }, Action::Block { blocker }) => {
@@ -1567,6 +1624,16 @@ impl Game {
             // never advance and the effect would replay forever.
             let idx = self.state.stack.frames.len() - 1;
 
+            // Before any op runs: an unpaid cost is a question, not a fee.
+            if let Some(pc) = &frame.pending_cost {
+                self.state.pending = Some(Pending::PayCost {
+                    player: frame.controller,
+                    source: frame.source,
+                    cost: pc.cost.clone(),
+                });
+                return;
+            }
+
             if frame.ip >= frame.ops.len() {
                 self.state.stack.frames.remove(idx);
                 return;
@@ -2107,35 +2174,37 @@ impl Game {
             {
                 continue;
             }
-            // 8-3-1-3: a cost that cannot be paid in full cannot be paid at all.
+            // 8-3-1-3: a cost that cannot be paid in full cannot be paid at all,
+            // so an unaffordable one stops the effect here rather than asking.
+            let mut pending_cost = None;
             if !effect.cost.is_free() {
                 if !self.can_pay(controller, card, &effect.cost) {
                     continue;
                 }
-                // An auto effect fires without an action to carry a choice, so
-                // a hand cost still takes the leftmost card. Only ST06-002 is
-                // affected today; a real choice needs the effect to suspend.
-                let discard: Vec<CardInstanceId> = self
-                    .state
-                    .player(controller)
-                    .hand
-                    .iter()
-                    .take(effect.cost.trash_from_hand as usize)
-                    .copied()
-                    .collect();
-                self.pay(controller, card, &effect.cost, &discard, events);
+                // 8-3-1-4: the cost is the controller's to decline, and
+                // declining means the effect is not activated. The frame is
+                // pushed unpaid and parks on `Pending::PayCost`; only when it
+                // is paid does the effect announce itself and consume its
+                // `[Once Per Turn]`.
+                pending_cost = Some(crate::effect::PendingCost {
+                    cost: effect.cost.clone(),
+                    slot: effect.slot,
+                    once_per_turn: effect.once_per_turn,
+                });
+            } else {
+                if effect.once_per_turn {
+                    self.state
+                        .card_mut(card)
+                        .used_once_per_turn
+                        .push(effect.slot);
+                }
+                events.push(GameEvent::EffectActivated {
+                    source: card,
+                    controller,
+                });
             }
-            if effect.once_per_turn {
-                self.state
-                    .card_mut(card)
-                    .used_once_per_turn
-                    .push(effect.slot);
-            }
-            events.push(GameEvent::EffectActivated {
-                source: card,
-                controller,
-            });
             let mut frame = EffectFrame::new(card, controller, effect.ops.clone());
+            frame.pending_cost = pending_cost;
             for (key, cards) in supplied {
                 frame.bind(key, cards.clone());
             }
