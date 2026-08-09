@@ -30,6 +30,13 @@ Reviews judge the change, not its provenance.
 - Fetch card data first if you touched anything card-related; those tests skip
   themselves without it, so a green run can be hollow
 
+CI runs the desktop bundles only when a pull request touches something they can
+package — `crates/op-desktop/`, `client/`, or the dependency manifests. A pull
+request that touches none of them shows four checks rather than seven, and has
+not skipped anything that applies to it; `main` is bundled on every push
+regardless. If you are changing the Tauri config or the icons, expect the three
+`bundle` jobs and read them.
+
 For a rules or card change, add a test that **fails without your change**. For
 anything touching the hidden-information boundary, verify that explicitly — a
 leak test that cannot fail is worse than none, because it looks like coverage.

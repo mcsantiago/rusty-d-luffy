@@ -13,6 +13,31 @@ env:
   RUSTFLAGS: -D warnings
 
 jobs:
+  # Whether a pull request can affect the desktop bundles. Only `bundle` asks;
+  # everything else runs on every change regardless.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      desktop: ${{ steps.filter.outputs.desktop }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            desktop:
+              # Rust and the Tauri config, the icon set, and the bundle
+              # settings all live here.
+              - 'crates/op-desktop/**'
+              # `frontendDist` points at these files directly; they are what
+              # gets packaged.
+              - 'client/**'
+              # A tauri or tauri-build bump reaches the bundler without
+              # touching either directory above.
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - '.github/workflows/ci.yml'
+
   # Cheap checks, once. No need to lint the same code on three OSes.
   lint:
     runs-on: ubuntu-latest
@@ -75,7 +100,19 @@ jobs:
 
   # Proves the desktop app actually bundles on every target, which is the thing
   # a release depends on and the thing most likely to break silently.
+  #
+  # `test` already compiles op-desktop on all three OSes — it is a workspace
+  # member — so what this adds over that is the packaging layer: the Tauri
+  # config, the icons, and the installer tooling (WiX, dmg, deb/AppImage).
+  # None of that can be reached by a change that touches neither the desktop
+  # crate nor what it packages, so a pull request that does not is spared the
+  # three jobs. Anything landing on main is bundled regardless, so the packaged
+  # form of every commit released from is still proven.
   bundle:
+    needs: changes
+    if: >-
+      github.event_name != 'pull_request'
+      || needs.changes.outputs.desktop == 'true'
     strategy:
       fail-fast: false
       matrix:
