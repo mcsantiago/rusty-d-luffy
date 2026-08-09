@@ -90,8 +90,15 @@ jobs:
       # The card-level tests skip themselves without data/, so fetching is what
       # makes them meaningful. Card data only — the art is ~750 MB and no test
       # reads a single image.
+      # The pack list comes from the built-in decks rather than being typed
+      # here, so a newly scripted set is fetched because it is playable. Typing
+      # it is what left ST-04 and ST-08 without data, failing their tests with
+      # `UnknownCard` rather than skipping them.
       - name: Fetch card data
-        run: cargo run --release -p op-ingest --bin op-fetch -- --data-dir data --packs ST-01 ST-02 ST-06
+        run: |
+          PACKS=$(cargo run -q --release -p op-cards --bin packs)
+          echo "fetching packs: $PACKS"
+          cargo run --release -p op-ingest --bin op-fetch -- --data-dir data --packs $PACKS
 
       # Release, not debug: the ISMCTS strength matches are ~200s optimised and
       # do not finish in a reasonable time unoptimised.
