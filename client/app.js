@@ -637,7 +637,7 @@ function renderChoose(snap) {
   $("choose-none").hidden = !canDecline;
   $("choose-confirm").hidden = upTo === 1;
   $("choose-confirm").disabled = picked.length === 0;
-  modal.hidden = false;
+  modal.hidden = animating();
 }
 
 /** Submits a set of cards by finding the option that names exactly them. */
@@ -713,7 +713,10 @@ function renderBattle(view) {
   // The full view. Power shown here is derived, so DON!! and counters are
   // already folded in — which is the whole point of showing it during the
   // Counter step.
-  modal.hidden = false;
+  //
+  // Held while something is flying: the K.O. that preceded this attack has to
+  // be seen happening, or it reads as the attack's doing.
+  modal.hidden = animating();
   $("battle-step").textContent = `${view.battle.step} step`;
 
   for (const [slot, card] of [["attacker", attacker], ["defender", defender]]) {
@@ -837,16 +840,19 @@ function renderBeats(snap) {
 
 const FLY_HOLD = 1000;
 const FLY_TRAVEL = 700;
-const FLY_CAPTION = { trash: "to the trash" };
+
+
+const FLY_STEP = 450;
 
 let flySeenFor = null;
 let flyQueue = [];
 let flyPump = null;
+/** When the queue will have finished. Modals that would open in the meantime
+ *  wait for it, so cause is seen before effect: a card K.O.'d by an [On Play]
+ *  before an attack must be watched dying, not discovered afterwards. */
+let flyUntil = 0;
 
-/** Whether a modal is up. Animations wait for one: a card flying behind an
- *  overlay is invisible, and one flying over a question the player is being
- *  asked is worse than invisible. */
-const modalOpen = () => !!document.querySelector(".overlay:not([hidden])");
+const animating = () => Date.now() < flyUntil;
 
 /** Queues everything trashed since the last decision. An AI turn is a single
  *  snapshot, so several can land at once; the pump plays them one at a time
@@ -857,6 +863,12 @@ function flyCards(snap) {
   if (snap === flySeenFor) return;
   flySeenFor = snap;
 
+  // Anything still waiting belongs to a decision the player has already moved
+  // past. Playing it now attaches it to whatever is on screen instead: a card
+  // K.O.'d by an [On Play] before an attack was held behind the battle modal
+  // and landed after the battle resolved, reading as its consequence.
+  flyQueue = [];
+
   for (const entry of snap.to_trash) {
     flyQueue.push({
       ...entry,
@@ -864,6 +876,13 @@ function flyCards(snap) {
       to: entry.yours ? "you-trash" : "opp-trash",
     });
   }
+  if (!flyQueue.length) return;
+
+  // Held for as long as the queue will take, then the board is re-rendered so
+  // whatever modal was waiting opens.
+  const span = (flyQueue.length - 1) * FLY_STEP + FLY_HOLD + FLY_TRAVEL;
+  flyUntil = Date.now() + span;
+  setTimeout(() => lastSnapshot && render(lastSnapshot), span + 30);
   pumpFly();
 }
 
@@ -874,12 +893,8 @@ function pumpFly() {
       flyPump = null;
       return;
     }
-    if (modalOpen()) {
-      flyPump = setTimeout(step, 250);
-      return;
-    }
     flyOne(flyQueue.shift());
-    flyPump = setTimeout(step, 450);
+    flyPump = setTimeout(step, FLY_STEP);
   };
   flyPump = setTimeout(step, 0);
 }
@@ -894,28 +909,36 @@ async function flyOne(entry) {
   el.innerHTML = `
     ${uri ? `<img src="${uri}" alt="${number}" />` : ""}
     <div class="life-fly-name">${info ? info.name : number}</div>
-    <div class="life-fly-note">${FLY_CAPTION[entry.how] ?? ""}</div>
+    <div class="life-fly-note">${entry.cause ?? ""}</div>
   `;
   document.body.appendChild(el);
 
   // Everything here is measured rather than declared in CSS: the hand grows as
   // it fills and the trash piles sit at opposite ends of the board, so neither
-  // the corner it starts in nor the pile it flies to has a fixed position.
-  const hand = $("hand").getBoundingClientRect();
-  const trash = $("you-trash").getBoundingClientRect();
+  // the place it starts nor the pile it flies to has a fixed position.
   const box = el.getBoundingClientRect();
   const margin = 12;
+  let left;
+  let top;
 
-  // Right-aligned to the hand grid and below the trash: the hand fills from
-  // the left, so this corner stays clear of the cards it is about.
-  const left = Math.max(
-    margin,
-    Math.min(hand.right - box.width, window.innerWidth - box.width - margin),
-  );
-  const top = Math.max(
-    margin,
-    Math.min(trash.bottom + margin, window.innerHeight - box.height - margin),
-  );
+  if (entry.yours === false) {
+    // The opponent's cards start from the middle of their own half, which is
+    // where the player was looking when it happened. Starting them by your
+    // hand would suggest they came from it.
+    const side = $("opponent-side").getBoundingClientRect();
+    left = side.left + side.width / 2 - box.width / 2;
+    top = side.top + side.height / 2 - box.height / 2;
+  } else {
+    // Right-aligned to the hand grid and below the trash: the hand fills from
+    // the left, so this corner stays clear of the cards it is about.
+    const hand = $("hand").getBoundingClientRect();
+    const trash = $("you-trash").getBoundingClientRect();
+    left = hand.right - box.width;
+    top = trash.bottom + margin;
+  }
+
+  left = Math.max(margin, Math.min(left, window.innerWidth - box.width - margin));
+  top = Math.max(margin, Math.min(top, window.innerHeight - box.height - margin));
   el.style.left = `${Math.round(left)}px`;
   el.style.top = `${Math.round(top)}px`;
 

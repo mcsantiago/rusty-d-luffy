@@ -71,6 +71,9 @@ pub struct CardToTrash {
     pub yours: bool,
     /// Where it came from: "field", "hand" or "life".
     pub from: &'static str,
+    /// Why it went, in the player's words. An effect that removes a card is
+    /// the opponent's doing and looks arbitrary without the card that did it.
+    pub cause: String,
 }
 
 /// Everything the UI needs after a step.
@@ -159,6 +162,10 @@ pub struct Session {
     battle_beats: Vec<BattleBeat>,
     battle_result: Option<String>,
     to_trash: Vec<CardToTrash>,
+    /// The card whose effect is resolving, for attributing what it removes.
+    /// Survives between engine steps: an [On Play] announces itself in one and
+    /// K.O.s in the next, once the controller has chosen a target.
+    resolving: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -270,6 +277,7 @@ impl Session {
             battle_beats: Vec::new(),
             battle_result: None,
             to_trash: Vec::new(),
+            resolving: None,
         };
         if let Some(path) = session.debug_log_path() {
             eprintln!("session log: {}", path.display());
@@ -380,14 +388,35 @@ impl Session {
     fn note_card_to_trash(&mut self, event: &op_core::PlayerEvent) {
         use op_core::PlayerEvent as E;
 
-        let (card, from) = match event {
-            E::KnockedOut { card } => (*card, "field"),
-            E::Countered { card, .. } => (*card, "hand"),
+        // An effect names itself when it activates and removes a card later,
+        // once its controller has chosen one — an [On Play] announces itself in
+        // one engine step and K.O.s in the next. A battle starting ends the
+        // attribution: what a battle K.O.s, the battle K.O.'d.
+        match event {
+            E::EffectActivated { source, .. } | E::TriggerActivated { card: source, .. } => {
+                self.resolving = source
+                    .id()
+                    .map(|id| self.db.get(self.game.state.card(id).def).name.clone());
+            }
+            E::AttackDeclared { .. } => self.resolving = None,
+            _ => {}
+        }
+
+        let (card, from, cause) = match event {
+            E::KnockedOut { card } => (
+                *card,
+                "field",
+                match &self.resolving {
+                    Some(by) => format!("K.O.'d by {by}"),
+                    None => "K.O.'d in battle".to_string(),
+                },
+            ),
+            E::Countered { card, .. } => (*card, "hand", "played as a Counter".to_string()),
             E::LifeTaken {
                 card,
                 banished: true,
                 ..
-            } => (*card, "life"),
+            } => (*card, "life", "banished from Life".to_string()),
             _ => return,
         };
 
@@ -401,6 +430,7 @@ impl Session {
             number,
             yours,
             from,
+            cause,
         });
     }
 
