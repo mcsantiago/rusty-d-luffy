@@ -256,10 +256,13 @@ card scripts, session replay and verification, and both clients — desktop and
 terminal.
 
 Not yet built: PyO3 bindings and the Gymnasium environment, and the authoritative
-multiplayer server and web client. Both sit on top of the existing kernel — the
-turn-based ruleset means lockstep on actions is sufficient for netcode, with no
-rollback needed. The multiplayer half now has a design:
-[docs/multiplayer.md](docs/multiplayer.md).
+multiplayer server and web client. Both sit on top of the existing kernel: the
+ruleset is turn-based and deterministic, so the server needs no rollback or
+prediction — it steps recorded actions and projects the result. That
+determinism does not make peers interchangeable with a server, though. Lockstep
+would keep two peers synchronised while giving both of them the whole shuffle,
+and hidden information is the reason this needs an authority at all. The design
+is in [docs/multiplayer.md](docs/multiplayer.md).
 
 ### Known simplifications
 

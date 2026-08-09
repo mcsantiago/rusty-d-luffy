@@ -62,6 +62,51 @@ local engine: it stays instant and offline, and it keeps ISMCTS off the server
 fallback is a thin client with an in-process server for solo — but two
 backends behind one interface is the cheaper first move.
 
+## Why not peer-to-peer
+
+The obvious cheaper thing is to cut the server out. It does not work here, and
+the reason is hidden information rather than networking.
+
+**Lockstep is incompatible with a hidden hand.** Lockstep means both peers
+simulate the same game from the same actions — which requires both peers to
+hold the full state, which is the entire shuffle. It is the right answer for an
+RTS, which has no real secrets, and fog-of-war maphacks are the well-known
+consequence of the one place it does. This ruleset is turn-based and
+deterministic, so peers would stay *synchronised* perfectly; they would simply
+both know everything. (The README's status section currently offers lockstep as
+sufficient for netcode. That is true of synchronisation and false of
+confidentiality.)
+
+**Host-authoritative peer-to-peer leaks to the host.** One peer runs the
+engine, so that peer's process holds `GameState`: the opponent's hand, their
+deck order, their life cards. That is not a leak to be patched, it is what the
+type is. The host also chooses the seed, and so the shuffle.
+
+**The cryptographic fix is out of proportion to the project.** Mental-poker
+protocols genuinely solve this, but they need commitments and reveal proofs
+everywhere the rules touch a hidden zone — draw, mulligan, life, `[Trigger]`
+reveal, and every deck-searching effect. That machinery would be larger than
+the rules engine. The cheap variant — each player commits to
+`H(deck_order ‖ nonce)` at setup and reveals at the end, making cheating
+*detectable afterwards* rather than impossible — is more proportionate, but
+still assumes an engine in which neither side is omniscient. `GameState` is
+unitary by design. That is a different engine, not a refactor.
+
+**And peer-to-peer usually needs a server anyway.** Two peers behind
+residential NAT need STUN to find each other and TURN when hole-punching fails.
+TURN relays the actual traffic, so the fallback path costs more to run than
+this game server does. Giving up the security model would not remove the
+infrastructure.
+
+**What does follow is that "central" is a deployment choice, not an
+architectural one.** `op-server` is a binary holding matches in memory; nothing
+above requires it to be always-on infrastructure. The same build supports a
+homelab instance that is always up, a *host a match* button where one player's
+desktop app runs the server in-process and the other connects, and LAN play
+with no internet at all. The host is trusted in that second case — which for
+friends is the honest security model regardless — but the authority stays in
+one place, and moving it later is a deployment change rather than a rewrite.
+
 ## The client cannot compute its own options
 
 `legal_actions(game: &Game)` takes the omniscient game. A client does not have
