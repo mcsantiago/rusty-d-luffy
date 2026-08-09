@@ -47,12 +47,17 @@ pub fn source_ref() -> String {
     std::env::var("OPSIM_SOURCE_REF").unwrap_or_else(|_| SOURCE_REF.to_string())
 }
 
+/// Upstream root for a given revision.
+///
+/// Split out from [`source_root`] so the URL shape can be asserted without
+/// reading the environment — see the tests at the bottom of this file.
+fn root_for(reference: &str) -> String {
+    format!("https://raw.githubusercontent.com/buhbbl/punk-records/{reference}/english")
+}
+
 /// Upstream root for the pinned revision.
 pub fn source_root() -> String {
-    format!(
-        "https://raw.githubusercontent.com/buhbbl/punk-records/{}/english",
-        source_ref()
-    )
+    root_for(&source_ref())
 }
 
 const RETRIES: u32 = 4;
@@ -564,14 +569,33 @@ mod tests {
             SOURCE_REF.chars().all(|c| c.is_ascii_hexdigit()),
             "expected hex, got {SOURCE_REF}"
         );
-        assert!(source_root().contains(SOURCE_REF));
+        // `root_for`, not `source_root`: this used to read the override and so
+        // raced with the test below, failing on CI roughly one run in four.
+        assert!(root_for(SOURCE_REF).contains(SOURCE_REF));
     }
 
+    /// The override has to be exercised end to end — through the real variable
+    /// name, since a typo there is exactly the bug worth catching.
+    ///
+    /// That makes this the only test allowed to touch `OPSIM_SOURCE_REF`, and
+    /// it must stay that way. Environment variables are process-global while
+    /// the harness runs tests on threads, so any other test that reads the
+    /// override — directly, or through `source_ref`/`source_root` — would see
+    /// whatever this one had set at the instant it happened to look. Assert
+    /// against `root_for` instead.
     #[test]
     fn the_source_ref_can_be_overridden_without_a_rebuild() {
         std::env::set_var("OPSIM_SOURCE_REF", "main");
-        assert!(source_root().ends_with("/main/english"));
+        let overridden = source_root();
+        // Restored before asserting, so a failure cannot leak the override into
+        // the rest of the process.
         std::env::remove_var("OPSIM_SOURCE_REF");
+
+        assert!(
+            overridden.ends_with("/main/english"),
+            "the override should reach the URL, got: {overridden}"
+        );
+        assert_eq!(source_ref(), SOURCE_REF, "the override should not persist");
     }
 
     #[test]
