@@ -546,3 +546,84 @@ fn st01_006_chopper_has_blocker_as_a_printed_keyword() {
 // Timing reachability used to be checked here. It is now one of the checks in
 // `op_core::validate`, exercised by `tests/scripts_are_well_formed.rs` — which
 // needs no `data/`, so it cannot skip itself.
+
+/// ST01-001 Monkey.D.Luffy: "[Activate: Main] [Once Per Turn] Give this Leader
+/// or 1 of your Characters up to 1 rested DON!! card."
+///
+/// Two things at once, because they are the two halves of the printed text:
+/// "this Leader" makes Luffy a legal target for his own effect, and "rested
+/// DON!! card" qualifies which DON!! may be selected. Bandai's ruling settles
+/// the second — a DON!! already given to another Character is refused on the
+/// ground that it is not a rested DON!! card — so an active DON!! sitting in
+/// the cost area is not available to this effect either.
+#[test]
+fn st01_001_gives_itself_the_rested_don_and_never_an_active_one() {
+    let Some((db, cards)) = load() else { return };
+    let mut game = game_at_main(db, cards, 5, 2);
+
+    let leader = game.state.player(PlayerId::P0).leader.unwrap();
+    assert_eq!(
+        game.db().get(game.state.card(leader).def).number,
+        "ST01-001"
+    );
+
+    // Turn 3: three DON!!, of which one has been spent and is rested.
+    let don = game.state.player(PlayerId::P0).cost_area.clone();
+    assert_eq!(don.len(), 3);
+    game.state.card_mut(don[2]).rested = true;
+
+    game.step(Action::ActivateEffect {
+        card: leader,
+        slot: 0,
+        discard: vec![],
+    })
+    .unwrap();
+
+    // "this Leader" — Luffy may name himself.
+    assert!(
+        legal_actions(&game).contains(&Action::Choose {
+            cards: vec![leader]
+        }),
+        "the Leader must be a legal target for its own effect"
+    );
+    game.step(Action::Choose {
+        cards: vec![leader],
+    })
+    .unwrap();
+
+    assert_eq!(
+        game.state.card(leader).attached_don,
+        vec![don[2]],
+        "only the rested DON!! is available to the effect"
+    );
+    assert!(game.state.card(don[2]).rested);
+    assert!(don[..2].iter().all(|&d| game.state.card(d).is_active()));
+}
+
+/// The same effect with every DON!! active. The activation stays legal and
+/// gives nothing, because no rested DON!! exists to select — not because the
+/// count was declined; the engine takes it greedily and never asks. What it
+/// must not do is take an active DON!! the player is still holding for costs.
+#[test]
+fn st01_001_gives_nothing_while_every_don_is_active() {
+    let Some((db, cards)) = load() else { return };
+    let mut game = game_at_main(db, cards, 5, 2);
+
+    let leader = game.state.player(PlayerId::P0).leader.unwrap();
+    let before = game.state.player(PlayerId::P0).cost_area.clone();
+    assert!(before.iter().all(|&d| game.state.card(d).is_active()));
+
+    game.step(Action::ActivateEffect {
+        card: leader,
+        slot: 0,
+        discard: vec![],
+    })
+    .unwrap();
+    game.step(Action::Choose {
+        cards: vec![leader],
+    })
+    .unwrap();
+
+    assert!(game.state.card(leader).attached_don.is_empty());
+    assert_eq!(game.state.player(PlayerId::P0).cost_area, before);
+}

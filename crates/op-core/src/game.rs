@@ -1559,26 +1559,29 @@ impl Game {
                 OpOutcome::Advance
             }
 
-            Op::GiveDon { key, n, rested } => {
+            Op::GiveDon { key, n, source } => {
                 let targets = frame.bound(&key).to_vec();
                 for target in targets {
                     for _ in 0..n {
-                        // A rested give may use any DON!! in the cost area; an
-                        // active give needs an active one.
+                        // `cost_area` holds only DON!! not already given —
+                        // giving lifts them out of it — so a DON!! sitting
+                        // under another Character is out of the pool already,
+                        // which is the other half of the ST01-001 ruling.
                         let pool: Vec<CardInstanceId> = self
                             .state
                             .player(frame.controller)
                             .cost_area
                             .iter()
                             .copied()
-                            .filter(|&d| rested || self.state.card(d).is_active())
+                            .filter(|&d| source.admits(self.state.card(d).rested))
                             .collect();
                         let Some(don) = pool.first().copied() else {
                             break;
                         };
+                        // Rest state is left alone: an effect selects a DON!!
+                        // already in the state it names.
                         self.state.lift(don);
                         self.state.card_mut(don).zone = Zone::Cost;
-                        self.state.card_mut(don).rested = rested;
                         self.state.card_mut(target).attached_don.push(don);
                         events.push(GameEvent::DonGiven {
                             player: frame.controller,

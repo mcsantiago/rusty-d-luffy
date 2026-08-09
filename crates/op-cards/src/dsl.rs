@@ -14,7 +14,7 @@ use op_core::effect::{Condition, Duration, EffectOp, Filter, Selector, Who, SELF
 
 // Re-exported so a card script only ever needs `use crate::dsl::*`.
 pub use op_core::effect::Duration::{ThisBattle, ThisTurn};
-pub use op_core::effect::{ModKind, Timing};
+pub use op_core::effect::{DonSource, ModKind, Timing};
 use op_core::script::{
     ActivatedEffect, ActivationCost, AutoEffect, CardScript, PermanentEffect, Scope,
 };
@@ -178,11 +178,11 @@ pub fn set_active(key: &str) -> EffectOp {
     }
 }
 
-pub fn give_don(key: &str, n: u8, rested: bool) -> EffectOp {
+pub fn give_don(key: &str, n: u8, source: DonSource) -> EffectOp {
     EffectOp::GiveDon {
         key: key.to_string(),
         n,
-        rested,
+        source,
     }
 }
 
