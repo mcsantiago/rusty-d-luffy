@@ -25,7 +25,78 @@ Rules are implemented against the official **Comprehensive Rules v1.2.0**
 (2026-01-16). Non-obvious code carries the rule number it comes from, and the
 test suite is named for the clauses it pins down.
 
-## Quick start
+## Install
+
+Download the file for your platform from
+[Releases](https://github.com/mcsantiago/rusty-d-luffy/releases/latest).
+
+| Platform | File |
+|---|---|
+| macOS (Intel and Apple Silicon) | `OnePieceSim_<version>_universal.dmg` |
+| Windows | `OnePieceSim_<version>_x64-setup.exe` |
+| Linux | `OnePieceSim_<version>_amd64.AppImage`, or the `.deb` / `.rpm` |
+
+**The builds are unsigned, so your OS will warn you the first time.** Signing
+certificates cost money this project does not have. The warning means "nobody
+paid Apple or Microsoft to vouch for this", not that anything is wrong with the
+download — but you are right to be careful with unsigned software from
+strangers, so build from source if you would rather not take that on trust.
+
+<details>
+<summary><b>macOS</b> — "cannot be opened because the developer cannot be verified"</summary>
+
+Open the `.dmg` and drag the app to Applications. Then, the first time only:
+
+1. **Right-click** (or Control-click) the app in Applications and choose **Open**.
+2. Click **Open** in the dialog that appears.
+
+Double-clicking will not offer that choice — only the right-click route does. If
+macOS says the app "is damaged and can't be opened", it was quarantined on
+download; clear the flag with:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/OnePieceSim.app
+```
+</details>
+
+<details>
+<summary><b>Windows</b> — "Windows protected your PC"</summary>
+
+Run the installer. When SmartScreen appears:
+
+1. Click **More info**.
+2. Click **Run anyway**.
+
+If your browser blocks the download itself, choose **Keep** from the downloads
+list first.
+</details>
+
+<details>
+<summary><b>Linux</b></summary>
+
+The AppImage needs the executable bit:
+
+```bash
+chmod +x OnePieceSim_*_amd64.AppImage
+./OnePieceSim_*_amd64.AppImage
+```
+
+Or install the `.deb` (`sudo apt install ./OnePieceSim_*_amd64.deb`) or `.rpm`.
+</details>
+
+### First run downloads the cards
+
+The app ships with **no card data**. Card text and art are Bandai's copyright
+and are not redistributed here, so the first launch fetches them — all 59 sets,
+around **750 MB**, which takes a few minutes on a decent connection.
+
+The window opens immediately and shows progress; only *Start game* waits. After
+that the app is entirely offline, and a re-install skips the fetch if the data
+is already on disk. An interrupted download resumes rather than restarting.
+
+## Build from source
+
+Rust 1.88 or newer. No other toolchain — the card fetch is Rust, not Python.
 
 ```bash
 # Either client fetches card data on first run. No setup, no Python.
@@ -110,8 +181,9 @@ install directory, which is not user-writable on Windows or macOS. A checkout's
 `OPSIM_DATA_DIR` overrides both.
 
 Everything is fetched up front, the way a phone TCG client does it: all 59
-sets, card data and art, ~2,700 files and roughly 750 MB. It takes a few
-minutes once, and afterwards the app is entirely offline.
+sets, ~2,700 files. The size and the wait are covered under
+[Install](#install); what matters here is that it is one fetch, not a
+per-session one.
 
 Two things make that survivable. The fetch **skips what is already on disk**, so
 an interrupted run resumes instead of restarting. And startup checks for missing
@@ -246,9 +318,8 @@ the cards they are about rather than naming them. Session logs replay and
 verify against the engine, so any recorded game is a regression test. Two
 rules fixes: an effect reading "rested DON!! card" selects a rested DON!!
 rather than resting an active one, and the End Phase announces itself like
-every other phase. Playable against the AI on macOS, Windows and Linux; the
-binaries are unsigned, so both Gatekeeper and SmartScreen will warn on first
-launch. Card data is not bundled and is fetched on first run.
+every other phase. Playable against the AI on macOS, Windows and Linux — see
+[Install](#install) for the unsigned-binary warnings and the first-run fetch.
 
 Implemented: the rules kernel, ST-01, ST-02, ST-04, ST-06 and ST-08 at full
 script coverage, the legal-action generator, heuristic and ISMCTS agents, static
