@@ -379,6 +379,47 @@ fn a_log_from_another_format_version_is_refused_by_name() {
     }
 }
 
+/// The version gate has to fire for a header whose *schema* moved, which is the
+/// only case it exists for — a version that differs while every other field
+/// still parses is the easy half.
+///
+/// This reproduces a real pre-versioning header: no `version` field at all, and
+/// `decks` in the shape that release wrote. Reading it used to fail inside the
+/// full `Header` deserialize and report `invalid type: integer 50, expected a
+/// sequence`, which tells the user nothing about what is actually wrong.
+#[test]
+fn a_log_whose_header_schema_moved_is_still_refused_by_version() {
+    let dir = TempDir::new("old-schema");
+    let config = config_for(
+        5,
+        decklist("LDR-001", deck_of("CHR-5K", 40)),
+        decklist("LDR-002", deck_of("CHR-BLOCK", 40)),
+    );
+    let (path, _) = logged_playout(&dir, config, 4);
+
+    let text = std::fs::read_to_string(&path).unwrap();
+    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+    let mut header: serde_json::Value = serde_json::from_str(&lines[0]).unwrap();
+
+    // Absent, not zero: that is what "written before versioning" looks like.
+    header.as_object_mut().unwrap().remove("version");
+    header["decks"] = serde_json::json!([
+        { "cards": 50, "list": ["LDR-001"] },
+        { "cards": 50, "list": ["LDR-002"] },
+    ]);
+    lines[0] = serde_json::to_string(&header).unwrap();
+    std::fs::write(&path, lines.join("\n") + "\n").unwrap();
+
+    match replay::read(&path) {
+        Err(replay::ReadError::Version { expected, found }) => {
+            assert_eq!(found, 0, "a header written before versioning is version 0");
+            assert_eq!(expected, replay::FORMAT_VERSION);
+        }
+        Err(other) => panic!("the version gate must outrank the schema mismatch, got: {other}"),
+        Ok(_) => panic!("a log from an older format must be refused"),
+    }
+}
+
 /// `Verified::steps` counts what was actually replayed. It previously echoed
 /// the record count, so assertions against it could not fail.
 #[test]
