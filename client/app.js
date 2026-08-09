@@ -1181,11 +1181,16 @@ function render(snap) {
   }
   lastHandIds = new Set(handOrder);
 
+  // Before the modals: both gate themselves on `animating()`, and this is what
+  // opens that window. Called after them, it sets `growUntil` too late to be
+  // read this pass, so a snapshot carrying both a K.O. and a battle decision
+  // shows the modal over the very animation it is meant to wait for.
+  noteTrashArrivals(snap);
+
   renderBattle(view);
   if (view.battle) renderBeats(snap);
   renderCounterTray(snap);
   renderTriggerTray(snap);
-  noteTrashArrivals(snap);
   announceTurn(snap);
   announceResult(snap.battle_result ?? null);
   renderChoose(snap);
@@ -1256,7 +1261,19 @@ let lastSnapshot = null;
 
 // ---- actions ----------------------------------------------------------------
 
+// An index only means anything against the decision that was pending when it
+// was read. Clearing `#options` is not enough to enforce that: a battle puts
+// the buttons in `#battle-options` and the counters in their own tray, and
+// both stay on screen until the next snapshot renders. A second click landing
+// before then would be validated against the *next* pending decision, which
+// silently applies a legal action nobody picked — declining a block twice
+// plays whichever Counter now occupies that slot. Guard the submission itself
+// rather than the surfaces, so a surface added later is covered too.
+let inFlight = false;
+
 async function choose(index) {
+  if (inFlight) return;
+  inFlight = true;
   $("options").innerHTML = `<div class="thinking">Opponent is thinking…</div>`;
   try {
     // Returns as soon as your own move is applied. If the AI owes a reply it
@@ -1267,6 +1284,8 @@ async function choose(index) {
     render(lastSnapshot);
   } catch (err) {
     $("question").textContent = String(err);
+  } finally {
+    inFlight = false;
   }
 }
 

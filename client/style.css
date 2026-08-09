@@ -53,6 +53,15 @@ html, body {
   z-index: 50;
 }
 
+/* A [Counter] or [Trigger] whose script suspends on a Choose does so while the
+   battle is still running, so both overlays are up at once. The Choose is the
+   decision actually owed and has to take the clicks; sharing `.overlay`'s
+   z-index leaves it to DOM order, which puts the battle on top and swallows
+   every one of them. */
+#choose-modal {
+  z-index: 60;
+}
+
 .panel {
   background: var(--felt-2);
   border: 1px solid var(--line);
