@@ -1102,9 +1102,11 @@ button:disabled:hover { background: var(--felt); border-color: var(--line); }
   box-shadow: 0 0 0 4px rgba(74, 134, 196, 0.28), 0 6px 18px rgba(0, 0, 0, 0.5);
 }
 
-/* Corner marks, so the pairing survives being colour-blind or on a dim panel. */
+/* Corner marks, so the pairing survives being colour-blind or on a dim panel.
+   The aiming mark below shares this geometry rather than restating it. */
 .card.attacking::after,
-.card.defending::after {
+.card.defending::after,
+.card.targetable::after {
   position: absolute;
   top: 2px;
   left: 3px;
@@ -1135,17 +1137,7 @@ body.aiming .card:not(.targetable):not(.aimer) { opacity: 0.4; }
   box-shadow: 0 0 0 5px rgba(217, 72, 75, 0.5), 0 6px 18px rgba(0, 0, 0, 0.55);
 }
 
-.card.targetable::after {
-  content: "◎";
-  position: absolute;
-  top: 2px;
-  left: 3px;
-  z-index: 2;
-  font-size: 11px;
-  line-height: 1;
-  color: #ffb3b4;
-  text-shadow: 0 1px 3px #000;
-}
+.card.targetable::after { content: "◎"; color: #ffb3b4; }
 
 /* The card doing the attacking, so the pairing is legible while aiming. */
 .card.aimer {
