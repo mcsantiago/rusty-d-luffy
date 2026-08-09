@@ -8,7 +8,7 @@ mod common;
 use common::{deck_of, game_with, TestCards, TestScripts};
 use op_core::state::Placement;
 use op_core::zone::Zone;
-use op_core::{Action, BattleStep, Game, GameEvent, GameOver, Pending, PlayerId};
+use op_core::{Action, BattleStep, Game, GameEvent, GameOver, Pending, Phase, PlayerId};
 
 /// Drives the game to the turn player's Main Phase, taking the default answer
 /// to any setup decision along the way.
@@ -209,6 +209,46 @@ fn rule_6_2_3_refresh_returns_given_don_rested_to_the_cost_area() {
     // Returned DON!! are set active again by 6-2-4 in the same phase.
     assert_eq!(game.state.player(PlayerId::P0).cost_area.len(), 3);
     assert_eq!(game.active_don(PlayerId::P0).len(), 3);
+}
+
+/// 6-1-1: a turn is a Refresh, Draw, DON!!, Main and End Phase, in that order.
+///
+/// This pins the *announcement*, not the behaviour. The End Phase does real,
+/// rules-visible work — 6-6-1-1 queues the end-of-turn autos and 6-6-1-3
+/// expires "during this turn" modifiers — but it used to enter without pushing
+/// `PhaseStarted`, because Main→End happens on the player's word in
+/// `main_action` rather than in `tick_phase`. A trace could then not tell a
+/// quiet End Phase from one that never ran.
+#[test]
+fn rule_6_1_1_every_phase_of_a_turn_announces_itself() {
+    let (_cards, mut game) = fixture();
+    to_main(&mut game);
+
+    // Turn 2 rather than turn 1: its Refresh announcement arrives in the same
+    // step that ends turn 1, so one window holds all five of its phases.
+    let mut events = game.step(Action::EndMainPhase).unwrap().events;
+    events.extend(game.step(Action::EndMainPhase).unwrap().events);
+
+    let turn_2: Vec<_> = events
+        .iter()
+        .skip_while(|e| !matches!(e, GameEvent::TurnStarted { turn: 2, .. }))
+        .take_while(|e| !matches!(e, GameEvent::TurnStarted { turn: 3, .. }))
+        .filter_map(|e| match *e {
+            GameEvent::PhaseStarted { phase, player } => Some((phase, player)),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(
+        turn_2,
+        vec![
+            (Phase::Refresh, PlayerId::P1),
+            (Phase::Draw, PlayerId::P1),
+            (Phase::Don, PlayerId::P1),
+            (Phase::Main, PlayerId::P1),
+            (Phase::End, PlayerId::P1),
+        ]
+    );
 }
 
 // ---- battle ----------------------------------------------------------------
