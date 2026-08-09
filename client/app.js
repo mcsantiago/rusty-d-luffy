@@ -333,6 +333,10 @@ function place(menu, el) {
 
 // Clicking the pinned card or its text is not a dismissal; only the option
 // buttons inside close the menu, and they do it themselves.
+//
+// Load-bearing for aiming, too: without it the click that starts an aim would
+// go on to reach the document listener below and call the aim off on its way
+// out, leaving Attack looking like a button that does nothing.
 $("card-menu").addEventListener("click", (e) => e.stopPropagation());
 // The cursor leaving the card to reach the menu must not close it.
 $("card-menu").addEventListener("mouseenter", () => clearTimeout(closeTimer));
@@ -637,7 +641,15 @@ function fillOptions(container, options) {
 // attacked is exactly the divergence this must not introduce.
 
 /** The distinct targets among an attacker's options, each mapped to the option
- *  that hits it. `Action::Attack` sends `[attacker, target]` as its cards. */
+ *  that hits it. `Action::Attack` sends `[attacker, target]` as its cards.
+ *
+ *  One attacker reaches a given target exactly one way today, so the first-wins
+ *  rule below never discards anything. If that stops being true — a second
+ *  attack on the same target, differing in something the pair does not name —
+ *  the board would offer only the first and the flat list would hold both. That
+ *  is the intended degradation rather than an oversight: the list is documented
+ *  as the complete index precisely so a collapse here cannot strand an action.
+ */
 function attackTargets(attacks) {
   const targets = new Map();
   for (const opt of attacks) {
@@ -1241,8 +1253,13 @@ function render(snap) {
 
   // An option index only means anything against the decision it was read from,
   // so an aim in progress cannot survive a new snapshot.
-  targeting = null;
-  document.body.classList.remove("aiming");
+  //
+  // Through `cancelTargeting` rather than clearing the two fields here: the
+  // marks it also drops happen to die with the cards below, which are rebuilt
+  // from scratch, but that is a fact about a different function. A render path
+  // that ever diffs instead — the hand already diffs by instance id — would
+  // otherwise leave cards outlined and crosshaired with no aim in progress.
+  cancelTargeting();
 
   menus = new Map();
   cardless = [];
