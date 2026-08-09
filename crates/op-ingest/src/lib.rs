@@ -61,7 +61,10 @@ pub fn source_ref() -> String {
 }
 
 /// Upstream root for a given revision.
-pub fn source_root_for(git_ref: &str) -> String {
+///
+/// Deliberately private: nothing outside this crate fetches from a revision it
+/// chose itself, and the tests that assert the URL shape live here.
+fn source_root_for(git_ref: &str) -> String {
     format!("https://raw.githubusercontent.com/buhbbl/punk-records/{git_ref}/english")
 }
 
@@ -579,20 +582,34 @@ mod tests {
             SOURCE_REF.chars().all(|c| c.is_ascii_hexdigit()),
             "expected hex, got {SOURCE_REF}"
         );
-        assert!(source_root_for(SOURCE_REF).contains(SOURCE_REF));
+        let root = source_root_for(SOURCE_REF);
+        assert!(
+            root.contains(SOURCE_REF),
+            "the pin should reach the URL, got: {root}"
+        );
     }
 
     /// Absent an override, the pin is what everything downstream fetches from.
     #[test]
     fn the_pin_is_what_applies_when_nothing_overrides_it() {
-        assert_eq!(resolve_source_ref(None), SOURCE_REF);
+        assert_eq!(
+            resolve_source_ref(None),
+            SOURCE_REF,
+            "no override should leave the pin in effect"
+        );
     }
 
     #[test]
     fn the_source_ref_can_be_overridden_without_a_rebuild() {
         let overridden = source_root_for(resolve_source_ref(Some("main")));
-        assert!(overridden.ends_with("/main/english"));
-        assert!(!overridden.contains(SOURCE_REF));
+        assert!(
+            overridden.ends_with("/main/english"),
+            "the override should reach the URL, got: {overridden}"
+        );
+        assert!(
+            !overridden.contains(SOURCE_REF),
+            "the override should replace the pin, not sit alongside it: {overridden}"
+        );
     }
 
     #[test]
