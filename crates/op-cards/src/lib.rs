@@ -66,6 +66,7 @@ pub fn all_scripts() -> Vec<(&'static str, CardScript)> {
     let mut out = Vec::new();
     out.extend(sets::st01::scripts());
     out.extend(sets::st02::scripts());
+    out.extend(sets::st04::scripts());
     out.extend(sets::st06::scripts());
     out.extend(sets::st08::scripts());
     out
@@ -98,6 +99,7 @@ pub fn validate_all_scripts() -> Vec<(String, Diagnostic)> {
 pub const KEYWORD_ONLY: &[&str] = &[
     "ST01-006", // [Blocker]
     "ST02-004", // [Blocker]
+    "ST04-011", // [Blocker]
     "ST06-007", // [Blocker]
 ];
 

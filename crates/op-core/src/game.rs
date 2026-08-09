@@ -284,6 +284,7 @@ impl Game {
                     key,
                     options,
                     up_to,
+                    at_least,
                 },
                 Action::Choose { cards },
             ) => {
@@ -292,6 +293,19 @@ impl Game {
                         "chose {} cards, at most {up_to} allowed",
                         cards.len()
                     )));
+                }
+                let floor = (*at_least as usize).min(options.len());
+                if cards.len() < floor {
+                    return Err(IllegalAction::Illegal(format!(
+                        "chose {} cards, at least {floor} required",
+                        cards.len()
+                    )));
+                }
+                let mut seen = cards.clone();
+                seen.sort();
+                seen.dedup();
+                if seen.len() != cards.len() {
+                    return Err(IllegalAction::Illegal("named a card twice".into()));
                 }
                 if let Some(bad) = cards.iter().find(|c| !options.contains(c)) {
                     return Err(IllegalAction::Illegal(format!(
@@ -614,6 +628,9 @@ impl Game {
         if self.state.player(player).life.len() < cost.life_to_hand as usize {
             return false;
         }
+        if self.state.player(player).cost_area.len() < cost.don_minus as usize {
+            return false;
+        }
         true
     }
 
@@ -654,6 +671,33 @@ impl Game {
                 banished: false,
             });
         }
+        if cost.don_minus > 0 {
+            let spent = self.return_don(player, cost.don_minus);
+            events.push(GameEvent::DonSpentToDonDeck {
+                player,
+                count: spent,
+            });
+        }
+    }
+
+    /// Sends `n` DON!! from `player`'s cost area back to the bottom of their
+    /// DON!! deck, and reports how many actually went.
+    ///
+    /// Rested DON!! go first. The player is never asked which: an active DON!!
+    /// can still be spent this turn and a rested one cannot, so keeping the
+    /// active ones is the choice they would make every time.
+    fn return_don(&mut self, player: PlayerId, n: u8) -> u8 {
+        let mut pool: Vec<CardInstanceId> = self.state.player(player).cost_area.to_vec();
+        pool.sort_by_key(|&d| self.state.card(d).is_active());
+        let mut returned = 0;
+        for don in pool.into_iter().take(n as usize) {
+            self.state.lift(don);
+            self.state.card_mut(don).rested = false;
+            self.state
+                .put(don, player, Zone::DonDeck, Placement::Bottom);
+            returned += 1;
+        }
+        returned
     }
 
     // ---- battle ------------------------------------------------------------
@@ -866,13 +910,14 @@ impl Game {
             .copied()
             .filter(|&c| {
                 let def = self.db.get(self.state.card(c).def);
+                let script = self.scripts.script(self.state.card(c).def);
                 def.category == Category::Event
-                    && !self
-                        .scripts
-                        .script(self.state.card(c).def)
-                        .counter
-                        .is_empty()
+                    && !script.counter.is_empty()
                     && def.cost as usize <= affordable
+                    // 8-3-1-3: an extra cost the [Counter] text names has to be
+                    // payable in full or the Event does nothing at all.
+                    && (script.counter_cost.is_free()
+                        || self.can_pay(defender, c, &script.counter_cost))
             })
             .collect()
     }
@@ -902,11 +947,13 @@ impl Game {
             self.state.card_mut(don).rested = true;
         }
 
-        let ops = self
-            .scripts
-            .script(self.state.card(card).def)
-            .counter
-            .clone();
+        let script = self.scripts.script(self.state.card(card).def);
+        let ops = script.counter.clone();
+        let extra = script.counter_cost.clone();
+        if !extra.is_free() {
+            // `legal_counter_events` already refused anything unpayable.
+            self.pay(player, card, &extra, &[], events);
+        }
         // 8-4-2: the Event is trashed, then its effect is carried out.
         self.state
             .move_card(card, player, Zone::Trash, Placement::Top);
@@ -1569,6 +1616,7 @@ impl Game {
                     key,
                     options,
                     up_to: select.up_to,
+                    at_least: select.at_least,
                 });
                 OpOutcome::Suspend
             }
@@ -1598,6 +1646,7 @@ impl Game {
                     key,
                     options,
                     up_to,
+                    at_least: 0,
                 });
                 OpOutcome::Suspend
             }
@@ -1709,6 +1758,56 @@ impl Game {
                             player: frame.controller,
                             don,
                             to: target,
+                        });
+                    }
+                }
+                OpOutcome::Advance
+            }
+
+            Op::AddDon { n, rested } => {
+                let mut added = 0;
+                for _ in 0..n {
+                    // 6-4-2/6-4-3: an empty DON!! deck simply supplies nothing.
+                    let Some(don) = self
+                        .state
+                        .player(frame.controller)
+                        .don_deck
+                        .first()
+                        .copied()
+                    else {
+                        break;
+                    };
+                    self.state.lift(don);
+                    self.state
+                        .put(don, frame.controller, Zone::Cost, Placement::Bottom);
+                    self.state.card_mut(don).rested = rested;
+                    added += 1;
+                }
+                if added > 0 {
+                    events.push(GameEvent::DonPlaced {
+                        player: frame.controller,
+                        count: added,
+                    });
+                }
+                OpOutcome::Advance
+            }
+
+            Op::TrashLife { player, n } => {
+                for victim in self.players_of(frame.controller, player) {
+                    for _ in 0..n {
+                        let Some(&top) = self.state.player(victim).life.first() else {
+                            break;
+                        };
+                        self.state
+                            .move_card(top, victim, Zone::Trash, Placement::Top);
+                        // Not damage: no `[Trigger]` (10-1-5) and nothing to
+                        // hand. Reported as a plain move rather than as
+                        // `LifeTaken`, whose `banished` flag names the keyword
+                        // (10-1-3) and is not what happened here.
+                        events.push(GameEvent::CardMoved {
+                            card: top,
+                            from: Zone::Life,
+                            to: Zone::Trash,
                         });
                     }
                 }
@@ -1830,6 +1929,8 @@ impl Game {
                     key,
                     options,
                     up_to,
+                    // "reveal *up to* 1" — a dig may always be declined.
+                    at_least: 0,
                 });
                 OpOutcome::Suspend
             }

@@ -66,6 +66,30 @@ fn st02() -> DeckList {
     }
 }
 
+/// ST-04 Animal Kingdom Pirates. A legal 50-card build, not the printed list.
+fn st04() -> DeckList {
+    DeckList {
+        leader: "ST04-001".into(),
+        cards: counts(&[
+            ("ST04-002", 4),
+            ("ST04-003", 2),
+            ("ST04-004", 2),
+            ("ST04-005", 4),
+            ("ST04-006", 4),
+            ("ST04-007", 4),
+            ("ST04-008", 4),
+            ("ST04-009", 4),
+            ("ST04-010", 4),
+            ("ST04-011", 4),
+            ("ST04-012", 4),
+            ("ST04-013", 4),
+            ("ST04-014", 2),
+            ("ST04-015", 2),
+            ("ST04-016", 2),
+        ]),
+    }
+}
+
 /// ST-06 Absolute Justice. A legal 50-card build, not the printed list.
 fn st06() -> DeckList {
     DeckList {
@@ -179,9 +203,10 @@ fn every_deck_pairing_plays_to_completion() {
         return;
     };
     type Build = fn() -> DeckList;
-    let decks: [(&str, Build); 4] = [
+    let decks: [(&str, Build); 5] = [
         ("ST-01", st01),
         ("ST-02", st02),
+        ("ST-04", st04),
         ("ST-06", st06),
         ("ST-08", st08),
     ];
@@ -267,9 +292,11 @@ fn game_at_main(db: Arc<CardDb>, cards: Scripts, seed: u64, turns: usize) -> Gam
     game
 }
 
-/// A game with ST-08 in seat P0, advanced to P0's Main Phase on `turns + 1`.
-fn st08_at_main(db: Arc<CardDb>, cards: Scripts, seed: u64, turns: usize) -> Game {
-    let mut game = new_game_with(db, cards, seed, [st08(), st01()]);
+/// A game with `decks` in place, advanced to the Main Phase of turn
+/// `turns + 1`. P0 is the turn player on odd turns, so an even `turns` leaves
+/// the first-named deck to act.
+fn at_main(db: Arc<CardDb>, cards: Scripts, seed: u64, decks: [DeckList; 2], turns: usize) -> Game {
+    let mut game = new_game_with(db, cards, seed, decks);
     for _ in 0..2 {
         game.step(Action::Mulligan(false)).unwrap();
     }
@@ -277,6 +304,14 @@ fn st08_at_main(db: Arc<CardDb>, cards: Scripts, seed: u64, turns: usize) -> Gam
         game.step(Action::EndMainPhase).unwrap();
     }
     game
+}
+
+fn st08_at_main(db: Arc<CardDb>, cards: Scripts, seed: u64, turns: usize) -> Game {
+    at_main(db, cards, seed, [st08(), st01()], turns)
+}
+
+fn st04_at_main(db: Arc<CardDb>, cards: Scripts, seed: u64, turns: usize) -> Game {
+    at_main(db, cards, seed, [st04(), st01()], turns)
 }
 
 /// Plays a battle out with the defender declining everything, so the test only
@@ -865,6 +900,264 @@ fn st08_013_may_trade_itself_for_the_character_it_battled() {
             "and 'if you do' K.O.s this card only then"
         );
     }
+}
+
+// ---- ST-04 ------------------------------------------------------------------
+
+/// "DON!! −N" is not `rest_don`. Rested DON!! comes back next Refresh Phase;
+/// this leaves the field for the DON!! deck, and a script that confused the two
+/// would look identical for exactly one turn.
+#[test]
+fn st04_don_minus_returns_don_to_the_don_deck_rather_than_resting_it() {
+    let Some((db, cards)) = load() else { return };
+    // Turn 15, so the Leader's DON!! −7 is payable.
+    let mut game = st04_at_main(db, cards, 5, 14);
+    let leader = game.state.player(PlayerId::P0).leader.unwrap();
+
+    let cost_before = game.state.player(PlayerId::P0).cost_area.len();
+    let deck_before = game.state.player(PlayerId::P0).don_deck.len();
+    assert!(cost_before >= 7, "need 7 DON!! to pay DON!! -7");
+
+    game.step(Action::ActivateEffect {
+        card: leader,
+        slot: 0,
+        discard: Vec::new(),
+    })
+    .unwrap();
+
+    assert_eq!(
+        game.state.player(PlayerId::P0).cost_area.len(),
+        cost_before - 7,
+        "the DON!! left the cost area entirely"
+    );
+    assert_eq!(
+        game.state.player(PlayerId::P0).don_deck.len(),
+        deck_before + 7,
+        "and went back to the DON!! deck"
+    );
+}
+
+/// ST04-001's Leader trashes a Life card outright. Unlike damage it never
+/// reaches the opponent's hand and activates no `[Trigger]` (10-1-5).
+#[test]
+fn st04_001_trashes_an_opponent_life_card_without_giving_it_to_them() {
+    let Some((db, cards)) = load() else { return };
+    let mut game = st04_at_main(db, cards, 5, 14);
+    let leader = game.state.player(PlayerId::P0).leader.unwrap();
+
+    let life_before = game.state.player(PlayerId::P1).life.len();
+    let hand_before = game.state.player(PlayerId::P1).hand.len();
+    let doomed = game.state.player(PlayerId::P1).life[0];
+
+    game.step(Action::ActivateEffect {
+        card: leader,
+        slot: 0,
+        discard: Vec::new(),
+    })
+    .unwrap();
+
+    assert_eq!(game.state.player(PlayerId::P1).life.len(), life_before - 1);
+    assert_eq!(game.state.card(doomed).zone, Zone::Trash);
+    assert_eq!(
+        game.state.player(PlayerId::P1).hand.len(),
+        hand_before,
+        "trashing Life is not damage; the card does not go to hand"
+    );
+}
+
+/// The cost has to be payable in full or not at all (8-3-1-3), so the Leader's
+/// effect simply is not offered below 7 DON!!.
+#[test]
+fn st04_001_is_not_offered_when_the_don_cost_cannot_be_paid() {
+    let Some((db, cards)) = load() else { return };
+    let mut game = st04_at_main(db, cards, 5, 2); // turn 3: 3 DON!!
+    let leader = game.state.player(PlayerId::P0).leader.unwrap();
+    assert!(game.state.player(PlayerId::P0).cost_area.len() < 7);
+
+    assert!(
+        !legal_actions(&game)
+            .iter()
+            .any(|a| matches!(a, Action::ActivateEffect { card, .. } if *card == leader)),
+        "DON!! -7 is unpayable, so the effect is not a legal action"
+    );
+    assert!(game
+        .step(Action::ActivateEffect {
+            card: leader,
+            slot: 0,
+            discard: Vec::new(),
+        })
+        .is_err());
+}
+
+/// ST04-008 refills instead of spending: a DON!! card off the DON!! deck,
+/// arriving *active* so it is spendable the same turn.
+#[test]
+fn st04_008_adds_an_active_don_from_the_don_deck() {
+    let Some((db, cards)) = load() else { return };
+    let mut game = st04_at_main(db, cards, 5, 2);
+
+    let spendable_before = game.active_don(PlayerId::P0).len();
+    let deck_before = game.state.player(PlayerId::P0).don_deck.len();
+
+    let def = game.db().by_number("ST04-008").unwrap();
+    let jack = game.state.spawn(def, PlayerId::P0, Zone::Hand);
+    assert!(
+        game.state.player(PlayerId::P0).hand.len() > 1,
+        "cost 1 card"
+    );
+    game.step(Action::PlayCard {
+        card: jack,
+        replacing: None,
+    })
+    .unwrap();
+
+    assert_eq!(
+        game.state.player(PlayerId::P0).don_deck.len(),
+        deck_before - 1
+    );
+    // 3 DON!! rested to play a cost-3 Character, then 1 added active.
+    assert_eq!(
+        game.active_don(PlayerId::P0).len(),
+        spendable_before - 3 + 1
+    );
+}
+
+/// ST04-002 finds [Page One] by printed name, not card number, and plays it for
+/// free from hand.
+#[test]
+fn st04_002_plays_page_one_from_hand_by_name() {
+    let Some((db, cards)) = load() else { return };
+    let mut game = st04_at_main(db, cards, 5, 6);
+
+    let page_one = game.state.spawn(
+        game.db().by_number("ST04-012").unwrap(),
+        PlayerId::P0,
+        Zone::Hand,
+    );
+    assert_eq!(
+        game.db().get(game.state.card(page_one).def).name,
+        "Page One"
+    );
+
+    let ulti = game.state.spawn(
+        game.db().by_number("ST04-002").unwrap(),
+        PlayerId::P0,
+        Zone::Hand,
+    );
+    game.step(Action::PlayCard {
+        card: ulti,
+        replacing: None,
+    })
+    .unwrap();
+
+    // The [On Play] offers exactly the [Page One] in hand.
+    let Some(Pending::Choose { options, .. }) = game.pending() else {
+        panic!("expected a choice, got {:?}", game.pending());
+    };
+    assert_eq!(options, &[page_one]);
+
+    game.step(Action::Choose {
+        cards: vec![page_one],
+    })
+    .unwrap();
+    assert_eq!(
+        game.state.card(page_one).zone,
+        Zone::Character,
+        "played from hand for free"
+    );
+}
+
+/// ST04-005 draws 2 and then trashes 1 — an instruction, not an offer. The
+/// trash must not be declinable, which is what `at_least` is for.
+#[test]
+fn st04_005_must_trash_a_card_after_drawing() {
+    let Some((db, cards)) = load() else { return };
+    let mut game = st04_at_main(db, cards, 5, 8);
+
+    let hand_before = game.state.player(PlayerId::P0).hand.len();
+    let queen = game.state.spawn(
+        game.db().by_number("ST04-005").unwrap(),
+        PlayerId::P0,
+        Zone::Hand,
+    );
+    game.step(Action::PlayCard {
+        card: queen,
+        replacing: None,
+    })
+    .unwrap();
+
+    let Some(Pending::Choose { at_least, .. }) = game.pending() else {
+        panic!("expected the mandatory trash, got {:?}", game.pending());
+    };
+    assert_eq!(*at_least, 1);
+    assert!(
+        legal_actions(&game)
+            .iter()
+            .all(|a| !matches!(a, Action::Choose { cards } if cards.is_empty())),
+        "declining a mandatory trash must not be a legal action"
+    );
+    assert!(game.step(Action::Choose { cards: Vec::new() }).is_err());
+
+    let victim = game.state.player(PlayerId::P0).hand[0];
+    game.step(Action::Choose {
+        cards: vec![victim],
+    })
+    .unwrap();
+    assert_eq!(game.state.card(victim).zone, Zone::Trash);
+    // Queen left hand to be played, 2 drawn, 1 trashed.
+    assert_eq!(
+        game.state.player(PlayerId::P0).hand.len(),
+        hand_before + 2 - 1
+    );
+}
+
+/// ST04-016 pays its printed cost *and* a DON!! −1 on top. Both come out of the
+/// cost area, but only one of them comes back.
+#[test]
+fn st04_016_counter_pays_its_don_minus_on_top_of_the_printed_cost() {
+    let Some((db, cards)) = load() else { return };
+    // P1 plays ST-04 here so they are the defender on P0's turn.
+    let mut game = at_main(db, cards, 5, [st01(), st04()], 2);
+
+    let blast = game.state.spawn(
+        game.db().by_number("ST04-016").unwrap(),
+        PlayerId::P1,
+        Zone::Hand,
+    );
+    let deck_before = game.state.player(PlayerId::P1).don_deck.len();
+    let cost_before = game.state.player(PlayerId::P1).cost_area.len();
+    assert!(cost_before >= 2, "1 to play it, 1 to return");
+
+    let leader = game.state.player(PlayerId::P0).leader.unwrap();
+    let target = game.state.player(PlayerId::P1).leader.unwrap();
+    let power_before = game.derived().power(target);
+
+    game.step(Action::Attack {
+        attacker: leader,
+        target,
+    })
+    .unwrap();
+    // The Block Step is skipped outright when nothing can block.
+    if matches!(game.pending(), Some(Pending::Block { .. })) {
+        game.step(Action::Block { blocker: None }).unwrap();
+    }
+    game.step(Action::CounterEvent {
+        card: blast,
+        to: target,
+    })
+    .unwrap();
+
+    assert_eq!(game.derived().power(target), power_before + 4000);
+    assert_eq!(
+        game.state.player(PlayerId::P1).don_deck.len(),
+        deck_before + 1,
+        "DON!! -1 returns a card to the DON!! deck"
+    );
+    assert_eq!(
+        game.state.player(PlayerId::P1).cost_area.len(),
+        cost_before - 1,
+        "the printed cost only rests its DON!!; the extra cost removes one"
+    );
 }
 
 // Timing reachability used to be checked here. It is now one of the checks in

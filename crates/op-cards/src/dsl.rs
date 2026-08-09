@@ -29,6 +29,7 @@ pub fn your_battlers(up_to: u8) -> Selector {
         zone: Zone::Leader,
         owner: Who::You,
         up_to,
+        at_least: 0,
         filters: Vec::new(),
     }
 }
@@ -38,6 +39,7 @@ pub fn your_characters(up_to: u8) -> Selector {
         zone: Zone::Character,
         owner: Who::You,
         up_to,
+        at_least: 0,
         filters: Vec::new(),
     }
 }
@@ -47,6 +49,7 @@ pub fn opponent_characters(up_to: u8) -> Selector {
         zone: Zone::Character,
         owner: Who::Opponent,
         up_to,
+        at_least: 0,
         filters: Vec::new(),
     }
 }
@@ -59,6 +62,7 @@ pub fn all_characters() -> Selector {
         zone: Zone::Character,
         owner: Who::Both,
         up_to: 0,
+        at_least: 0,
         filters: Vec::new(),
     }
 }
@@ -68,6 +72,7 @@ pub fn your_trash(up_to: u8) -> Selector {
         zone: Zone::Trash,
         owner: Who::You,
         up_to,
+        at_least: 0,
         filters: Vec::new(),
     }
 }
@@ -77,6 +82,7 @@ pub fn your_don(up_to: u8) -> Selector {
         zone: Zone::Cost,
         owner: Who::You,
         up_to,
+        at_least: 0,
         filters: Vec::new(),
     }
 }
@@ -86,6 +92,7 @@ pub fn opponent_don(up_to: u8) -> Selector {
         zone: Zone::Cost,
         owner: Who::Opponent,
         up_to,
+        at_least: 0,
         filters: Vec::new(),
     }
 }
@@ -95,8 +102,18 @@ pub fn your_hand(up_to: u8) -> Selector {
         zone: Zone::Hand,
         owner: Who::You,
         up_to,
+        at_least: 0,
         filters: Vec::new(),
     }
+}
+
+/// Makes a selection mandatory: the player must name exactly `n` cards, or
+/// every legal card if there are fewer. For text that instructs ("trash 1 card
+/// from your hand") rather than offers ("up to 1").
+pub fn exactly(mut sel: Selector, n: u8) -> Selector {
+    sel.up_to = n;
+    sel.at_least = n;
+    sel
 }
 
 /// Adds filters to a selector.
@@ -137,6 +154,12 @@ pub fn is_character() -> Filter {
 
 pub fn of_color(color: Color) -> Filter {
     Filter::HasColor(color)
+}
+
+/// "1 [Page One] card" — by printed name, so it matches every card number
+/// bearing it.
+pub fn named(name: &str) -> Filter {
+    Filter::HasName(name.to_string())
 }
 
 // ---- ops -------------------------------------------------------------------
@@ -182,6 +205,28 @@ pub fn to_hand(key: &str) -> EffectOp {
     EffectOp::MoveTo {
         key: key.to_string(),
         to: Zone::Hand,
+    }
+}
+
+pub fn trash(key: &str) -> EffectOp {
+    EffectOp::MoveTo {
+        key: key.to_string(),
+        to: Zone::Trash,
+    }
+}
+
+/// "Add up to N DON!! cards from your DON!! deck and set them as active"
+/// (`rested: false`) or "and rest them" (`rested: true`).
+pub fn add_don(n: u8, rested: bool) -> EffectOp {
+    EffectOp::AddDon { n, rested }
+}
+
+/// "Trash up to N of your opponent's Life cards" — off the top, no choice; see
+/// [`EffectOp::TrashLife`].
+pub fn trash_opponent_life(n: u8) -> EffectOp {
+    EffectOp::TrashLife {
+        player: Who::Opponent,
+        n,
     }
 }
 
@@ -410,6 +455,14 @@ pub fn life_cost(n: u8) -> ActivationCost {
     }
 }
 
+/// The "DON!! −N" cost: return N DON!! from your field to your DON!! deck.
+pub fn don_minus(n: u8) -> ActivationCost {
+    ActivationCost {
+        don_minus: n,
+        ..ActivationCost::default()
+    }
+}
+
 /// Builds a script from parts, filling in the empty defaults.
 #[derive(Default)]
 pub struct Script(CardScript);
@@ -437,6 +490,13 @@ impl Script {
 
     /// The `[Counter]` effect of an Event card (10-2-4).
     pub fn counter(mut self, ops: Vec<EffectOp>) -> Script {
+        self.0.counter = ops;
+        self
+    }
+
+    /// A `[Counter]` whose text names a cost beyond the card's printed one.
+    pub fn counter_paying(mut self, cost: ActivationCost, ops: Vec<EffectOp>) -> Script {
+        self.0.counter_cost = cost;
         self.0.counter = ops;
         self
     }

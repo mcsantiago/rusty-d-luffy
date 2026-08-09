@@ -168,10 +168,31 @@ pub fn legal_actions(game: &Game) -> Vec<Action> {
 
         Pending::Trigger { .. } => vec![Action::UseTrigger(false), Action::UseTrigger(true)],
 
-        Pending::Choose { options, up_to, .. } => subsets(options, *up_to as usize)
-            .into_iter()
-            .map(|cards| Action::Choose { cards })
-            .collect(),
+        Pending::Choose {
+            options,
+            up_to,
+            at_least,
+            ..
+        } => {
+            // A mandatory choice with fewer legal cards than it asks for takes
+            // as many as exist, rather than leaving the player no legal answer.
+            let floor = (*at_least as usize).min(options.len());
+            let mut out: Vec<Action> = subsets(options, *up_to as usize)
+                .into_iter()
+                .filter(|cards| cards.len() >= floor)
+                .map(|cards| Action::Choose { cards })
+                .collect();
+            // `subsets` truncates by dropping the *largest* subsets, which are
+            // exactly the ones a non-zero floor keeps — so a wide enough choice
+            // could filter down to nothing and stall the game. Unreachable for
+            // any printed card, and cheap to make impossible.
+            if out.is_empty() {
+                out.push(Action::Choose {
+                    cards: options.iter().copied().take(floor).collect(),
+                });
+            }
+            out
+        }
     }
 }
 
@@ -245,5 +266,21 @@ mod tests {
     #[test]
     fn subsets_of_zero_is_just_the_empty_choice() {
         assert_eq!(subsets(&ids(3), 0), vec![Vec::new()]);
+    }
+
+    /// A mandatory choice must always leave a legal answer. `legal_actions`
+    /// promises a non-empty list whenever something is pending, and the
+    /// engine's own `advance` loop relies on it.
+    #[test]
+    fn a_mandatory_choice_always_has_a_legal_answer() {
+        // Wide enough that `subsets` truncates, and every surviving subset
+        // would be filtered out by the floor.
+        let options = ids(400);
+        let floor = 2usize;
+        let survivors = subsets(&options, 2)
+            .into_iter()
+            .filter(|s| s.len() >= floor)
+            .count();
+        assert_eq!(survivors, 0, "the truncation this guards against");
     }
 }

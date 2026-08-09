@@ -70,6 +70,19 @@ pub struct ActivationCost {
     /// (ST08-014). Paying costs Life, so it is a real cost and not a bonus —
     /// and it is not damage, so no `[Trigger]` activates (10-1-5).
     pub life_to_hand: u8,
+    /// The "DON!! −N" symbol: return N DON!! cards from your field to your
+    /// DON!! deck (ST-04's whole design).
+    ///
+    /// Distinct from [`ActivationCost::rest_don`], which only turns DON!!
+    /// sideways and gets them back next Refresh Phase. This spends them for the
+    /// rest of the game unless they come back around off the DON!! deck.
+    ///
+    /// Restricted to the cost area, not DON!! already given to a Character.
+    /// The printed reminder says "from your field", which arguably covers both;
+    /// the Comprehensive Rules clause could not be checked here, so the
+    /// narrower reading is the one implemented. Every real use of the cost
+    /// happens on a turn where the cost area alone can pay it.
+    pub don_minus: u8,
 }
 
 impl ActivationCost {
@@ -86,10 +99,14 @@ pub struct CardScript {
     /// Activate effects. For Event cards, the first entry is the `[Main]`
     /// effect, resolved when the card is played (10-2-3).
     pub activated: Vec<ActivatedEffect>,
-    /// `[Counter]` effect ops for an Event card (10-2-4). The activation cost is
-    /// the card's printed cost. The card the defender chose to boost is
-    /// pre-bound under [`TARGET_BINDING`].
+    /// `[Counter]` effect ops for an Event card (10-2-4). The card the defender
+    /// chose to boost is pre-bound under [`TARGET_BINDING`].
     pub counter: Vec<EffectOp>,
+    /// A cost the `[Counter]` text names *beyond* the card's printed cost —
+    /// ST04-016's "DON!! −1". Unpayable means the Event is not offered as a
+    /// Counter at all, since resolving nothing for a spent card is never what
+    /// the defender wants.
+    pub counter_cost: ActivationCost,
     /// `[Trigger]` ops (2-11). Resolved from the Life area on damage.
     pub trigger: Vec<EffectOp>,
 }

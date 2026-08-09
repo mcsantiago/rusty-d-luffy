@@ -92,6 +92,13 @@ pub enum Pending {
         /// Cards that satisfy the selector right now.
         options: Vec<CardInstanceId>,
         up_to: u8,
+        /// Fewest cards a legal answer may name. 0 for the usual "up to N"
+        /// (8-4-4-1); non-zero where the text is an instruction rather than an
+        /// offer, e.g. "trash 1 card from your hand" (ST04-005).
+        ///
+        /// Capped at the number of options: a mandatory choice with too few
+        /// legal cards takes as many as there are rather than deadlocking.
+        at_least: u8,
     },
 }
 

@@ -255,6 +255,7 @@ pub fn matches_filters(
         Filter::NotSelf => card != source,
         Filter::IsCategory(cat) => def.category == *cat,
         Filter::HasColor(color) => def.colors.contains(color),
+        Filter::HasName(name) => def.name == *name,
     })
 }
 

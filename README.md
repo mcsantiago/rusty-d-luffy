@@ -1,7 +1,7 @@
 # OnePieceSim
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
-[![Card coverage: 4/59 sets scripted](https://img.shields.io/badge/card_sets-4%2F59_scripted-orange)](#coverage-of-the-source)
+[![Card coverage: 5/59 sets scripted](https://img.shields.io/badge/card_sets-5%2F59_scripted-orange)](#coverage-of-the-source)
 
 <p align="center">
   <img src="docs/screenshot.png" alt="The desktop client on turn 5. Each player's zones are laid out facing each other across the middle of the table: leader, character area, stage, life, deck and trash, with the DON!! cost areas furthest apart at the top and bottom. Three characters are in play for the near player, one for the far player, each showing its current power. The player's hand runs along the bottom edge and a turn-by-turn game log fills the right-hand column." width="900">
@@ -250,8 +250,8 @@ every other phase. Playable against the AI on macOS, Windows and Linux; the
 binaries are unsigned, so both Gatekeeper and SmartScreen will warn on first
 launch. Card data is not bundled and is fetched on first run.
 
-Implemented: the rules kernel, ST-01, ST-02, ST-06 and ST-08 at full script
-coverage, the legal-action generator, heuristic and ISMCTS agents, static
+Implemented: the rules kernel, ST-01, ST-02, ST-04, ST-06 and ST-08 at full
+script coverage, the legal-action generator, heuristic and ISMCTS agents, static
 validation of card scripts, session replay and verification, and both clients —
 desktop and terminal.
 
@@ -279,6 +279,14 @@ These are deliberate and localised; each is commented at its site.
   ST08-014 is the only card affected.
 - ST08-013 pays its own K.O. for a trade whose K.O. an effect could in
   principle prevent. No card in the implemented pool can produce that board.
+- "DON!! −N" returns DON!! from the cost area only, not DON!! already given to a
+  Character. The printed reminder says "from your field", which arguably covers
+  both; the Comprehensive Rules could not be consulted, so the narrower reading
+  is what ST-04 implements. Which DON!! goes is not offered as a choice —
+  rested first, since an active one is still spendable this turn.
+- ST04-001 trashes the *top* of the opponent's Life rather than offering a pick.
+  Life is a secret area (3-1-4): the cards are face down and indistinguishable,
+  so the choice decides nothing, and enumerating it would leak their ids.
 
 ## Contributing
 

@@ -271,6 +271,7 @@ mod tests {
                 zone: Zone::Character,
                 owner: Who::Opponent,
                 up_to: 1,
+                at_least: 0,
                 filters: vec![Filter::IsCategory(Category::Character)],
             },
         }

@@ -211,6 +211,19 @@ pub enum EffectOp {
     /// half of "you may X. If you do, Y." (ST08-013), where the optionality of
     /// X is a `Choose` the player may answer with nothing.
     RequireBound { key: String },
+    /// Add `n` DON!! cards from the DON!! deck to the cost area (ST04-008 and
+    /// friends). `rested` decides which way up they arrive; "set it as active"
+    /// makes the DON!! spendable this turn, which is the whole point of the
+    /// purple deck.
+    AddDon { n: u8, rested: bool },
+    /// Trash `n` Life cards from the top of a player's Life area (ST04-001).
+    ///
+    /// No choice is offered, and that is deliberate rather than lazy. Life is a
+    /// secret area (3-1-4): the cards are face down and indistinguishable, so
+    /// picking among them decides nothing — while enumerating them as options
+    /// would put their `CardInstanceId`s in front of the choosing player and
+    /// leak the contents to anyone holding the decklist.
+    TrashLife { player: Who, n: u8 },
     /// Trash the effect's source if it is still in no area. Appended by the
     /// engine after a `[Trigger]`'s ops so that a Trigger which played or
     /// otherwise relocated the card does not then trash it (10-1-5-3).
@@ -234,6 +247,8 @@ impl EffectOp {
             EffectOp::PlayBound { .. } => "PlayBound",
             EffectOp::DigTop { .. } => "DigTop",
             EffectOp::RequireIf { .. } => "RequireIf",
+            EffectOp::AddDon { .. } => "AddDon",
+            EffectOp::TrashLife { .. } => "TrashLife",
             EffectOp::TrashIfInLimbo => "TrashIfInLimbo",
             EffectOp::RequireBound { .. } => "RequireBound",
         }
@@ -261,6 +276,8 @@ impl EffectOp {
             | EffectOp::SelectAll { .. }
             | EffectOp::DigTop { .. }
             | EffectOp::Draw { .. }
+            | EffectOp::AddDon { .. }
+            | EffectOp::TrashLife { .. }
             | EffectOp::RequireIf { .. }
             | EffectOp::TrashIfInLimbo => None,
         }
@@ -281,6 +298,8 @@ impl EffectOp {
             | EffectOp::GiveDon { .. }
             | EffectOp::MoveTo { .. }
             | EffectOp::PlayBound { .. }
+            | EffectOp::AddDon { .. }
+            | EffectOp::TrashLife { .. }
             | EffectOp::RequireIf { .. }
             | EffectOp::RequireBound { .. }
             | EffectOp::TrashIfInLimbo => None,
@@ -306,6 +325,10 @@ pub struct Selector {
     /// `Some(n)` means "up to n"; the player may always choose fewer, including
     /// zero, when the text says "up to" (8-4-4-1).
     pub up_to: u8,
+    /// Fewest cards the player must name. 0 — the default, and what "up to"
+    /// means — lets them decline entirely. Set it where the text instructs
+    /// rather than offers: "trash 1 card from your hand" (ST04-005).
+    pub at_least: u8,
     pub filters: Vec<Filter>,
 }
 
@@ -325,6 +348,10 @@ pub enum Filter {
     /// Matches a card of this colour ("1 **black** Character card", ST08-014's
     /// `[Trigger]`). A card may be multi-coloured, so this is "has", not "is".
     HasColor(crate::card::Color),
+    /// Matches a card by printed name, e.g. "1 [Page One] card" (ST04-002).
+    /// Names, not card numbers: several numbers share a name and the text means
+    /// any of them (2-14-3).
+    HasName(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -79,6 +79,14 @@ pub fn line(event: &PlayerEvent, game: &Game, viewer: PlayerId) -> Option<String
             Some(_) => "You lose".into(),
             None => "Draw".into(),
         },
+        // Worth a line where routine DON!! placement is not: this DON!! is gone
+        // from the field, and the cost area alone does not say where to.
+        E::DonSpentToDonDeck { player, count } => {
+            format!(
+                "{} returned {count} DON!! to their DON!! deck",
+                who(*player)
+            )
+        }
         // Phase changes, DON!! placement and resting are noise; the board
         // already shows their result.
         _ => return None,
@@ -92,7 +100,19 @@ pub fn question(pending: &Pending) -> String {
         Pending::Block { .. } => "You are being attacked — block?".into(),
         Pending::Counter { .. } => "Counter step".into(),
         Pending::Trigger { .. } => "That life card has a [Trigger]".into(),
-        Pending::Choose { up_to, .. } => format!("Choose up to {up_to}"),
+        // "up to" is an offer the player may decline; a non-zero floor is an
+        // instruction, and saying "up to" there would suggest otherwise.
+        Pending::Choose {
+            up_to, at_least, ..
+        } => {
+            if *at_least == 0 {
+                format!("Choose up to {up_to}")
+            } else if at_least == up_to {
+                format!("Choose {up_to}")
+            } else {
+                format!("Choose {at_least} to {up_to}")
+            }
+        }
     }
 }
 
