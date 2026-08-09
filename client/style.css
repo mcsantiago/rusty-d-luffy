@@ -168,7 +168,9 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
 .pips { color: var(--accent); letter-spacing: 2px; }
 
 .row { display: flex; align-items: flex-start; gap: 18px; min-height: var(--card-h); }
-.characters { display: flex; gap: 10px; flex: 1; flex-wrap: wrap; }
+/* Centred in the space between the Leader and the Stage, so a board fills
+   outwards from the middle rather than growing off to one side. */
+.characters { display: flex; gap: 10px; flex: 1; flex-wrap: wrap; justify-content: center; }
 .leader-slot, .stage-slot { flex: 0 0 auto; }
 
 .divider {
@@ -192,8 +194,9 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
   letter-spacing: 0.08em;
   color: var(--muted);
   margin-bottom: 6px;
+  text-align: center;
 }
-.hand { display: flex; gap: 8px; flex-wrap: wrap; }
+.hand { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
 
 /* ---- cards ---- */
 
@@ -308,7 +311,9 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
   min-height: 0;
 }
 
-#prompt { padding: 14px; border-bottom: 1px solid var(--line); }
+/* Below the log, so what you are being asked sits nearest the board and the
+   scrollback grows away from it. */
+#prompt { padding: 14px; border-top: 1px solid var(--line); flex: 0 0 auto; }
 #question { margin: 0 0 12px; font-size: 14px; font-weight: 600; }
 
 #options { display: flex; flex-direction: column; gap: 6px; max-height: 46vh; overflow: auto; }
