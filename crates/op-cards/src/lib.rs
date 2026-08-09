@@ -6,6 +6,7 @@
 //! [`op_core::card::CardDb`], so a card with no script simply behaves as a
 //! vanilla body — which is correct for the many cards that have no text.
 
+pub mod decks;
 pub mod dsl;
 pub mod sets;
 
@@ -66,7 +67,9 @@ pub fn all_scripts() -> Vec<(&'static str, CardScript)> {
     let mut out = Vec::new();
     out.extend(sets::st01::scripts());
     out.extend(sets::st02::scripts());
+    out.extend(sets::st04::scripts());
     out.extend(sets::st06::scripts());
+    out.extend(sets::st08::scripts());
     out
 }
 
@@ -97,5 +100,19 @@ pub fn validate_all_scripts() -> Vec<(String, Diagnostic)> {
 pub const KEYWORD_ONLY: &[&str] = &[
     "ST01-006", // [Blocker]
     "ST02-004", // [Blocker]
+    "ST04-011", // [Blocker]
     "ST06-007", // [Blocker]
 ];
+
+#[cfg(test)]
+mod tests {
+    /// Two sets may not claim the same card number: `Cards::new` indexes by
+    /// `CardDefId`, so the later entry would silently overwrite the earlier one.
+    #[test]
+    fn no_card_number_is_scripted_twice() {
+        let mut seen = std::collections::BTreeSet::new();
+        for (number, _) in super::all_scripts() {
+            assert!(seen.insert(number), "{number} has two scripts");
+        }
+    }
+}

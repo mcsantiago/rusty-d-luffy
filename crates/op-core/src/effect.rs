@@ -36,6 +36,10 @@ pub enum ModKind {
     /// "This Character cannot be K.O.'d by effects." Losing a battle still
     /// K.O.s it (10-2-1-1) — only effect-driven K.O. is prevented.
     CannotBeKoedByEffect,
+    /// "This Character cannot be K.O.'d in battle by Leaders" (ST08-002). The
+    /// complement of [`ModKind::CannotBeKoedByEffect`]: this one stops the
+    /// battle K.O. of 7-1-4-1-2, and only when the attacker is a Leader.
+    CannotBeKoedInBattleByLeader,
     GrantKeyword(Keyword),
     /// The opponent cannot activate `[Blocker]` against this card's attack
     /// (ST01-012, ST01-016).
@@ -67,6 +71,10 @@ pub enum Timing {
     OnYourOpponentsAttack,
     OnBlock,
     OnKo,
+    /// "When a Character is K.O.'d" — fires on every card in play, for *any*
+    /// Character leaving via a K.O., either player's (ST08-001). Distinct from
+    /// [`Timing::OnKo`], which is the card's own K.O.
+    OnCharacterKoed,
     EndOfYourTurn,
     EndOfYourOpponentsTurn,
     Trigger,
@@ -87,6 +95,7 @@ impl Timing {
             Timing::OnPlay
             | Timing::WhenAttacking
             | Timing::OnYourOpponentsAttack
+            | Timing::OnCharacterKoed
             | Timing::EndOfYourTurn
             | Timing::EndOfYourOpponentsTurn
             | Timing::EndOfBattle => true,
@@ -181,6 +190,19 @@ pub enum EffectOp {
     },
     /// Stop resolving unless the condition holds (8-3-3 "if" clauses).
     RequireIf { cond: Condition },
+    /// Add `n` DON!! cards from the DON!! deck to the cost area (ST04-008 and
+    /// friends). `rested` decides which way up they arrive; "set it as active"
+    /// makes the DON!! spendable this turn, which is the whole point of the
+    /// purple deck.
+    AddDon { n: u8, rested: bool },
+    /// Trash `n` Life cards from the top of a player's Life area (ST04-001).
+    ///
+    /// No choice is offered, and that is deliberate rather than lazy. Life is a
+    /// secret area (3-1-4): the cards are face down and indistinguishable, so
+    /// picking among them decides nothing — while enumerating them as options
+    /// would put their `CardInstanceId`s in front of the choosing player and
+    /// leak the contents to anyone holding the decklist.
+    TrashLife { player: Who, n: u8 },
     /// Trash the effect's source if it is still in no area. Appended by the
     /// engine after a `[Trigger]`'s ops so that a Trigger which played or
     /// otherwise relocated the card does not then trash it (10-1-5-3).
@@ -202,6 +224,8 @@ impl EffectOp {
             EffectOp::PlayBound { .. } => "PlayBound",
             EffectOp::DigTop { .. } => "DigTop",
             EffectOp::RequireIf { .. } => "RequireIf",
+            EffectOp::AddDon { .. } => "AddDon",
+            EffectOp::TrashLife { .. } => "TrashLife",
             EffectOp::TrashIfInLimbo => "TrashIfInLimbo",
         }
     }
@@ -222,9 +246,12 @@ impl EffectOp {
             | EffectOp::GiveDon { key, .. }
             | EffectOp::MoveTo { key, .. }
             | EffectOp::PlayBound { key } => Some(key),
-            EffectOp::Choose { .. }
-            | EffectOp::DigTop { .. }
+            // A selector whose pool is a binding reads that key.
+            EffectOp::Choose { select, .. } => select.from.as_deref(),
+            EffectOp::DigTop { .. }
             | EffectOp::Draw { .. }
+            | EffectOp::AddDon { .. }
+            | EffectOp::TrashLife { .. }
             | EffectOp::RequireIf { .. }
             | EffectOp::TrashIfInLimbo => None,
         }
@@ -242,6 +269,8 @@ impl EffectOp {
             | EffectOp::GiveDon { .. }
             | EffectOp::MoveTo { .. }
             | EffectOp::PlayBound { .. }
+            | EffectOp::AddDon { .. }
+            | EffectOp::TrashLife { .. }
             | EffectOp::RequireIf { .. }
             | EffectOp::TrashIfInLimbo => None,
         }
@@ -253,16 +282,31 @@ impl EffectOp {
 pub enum Who {
     You,
     Opponent,
+    /// Both players. Card text that says plain "Characters" rather than "your"
+    /// or "your opponent's" reaches the whole board (ST08-005).
+    Both,
 }
+
+/// "However many there are". Both counts are capped at the pool, so setting
+/// each to `ALL` leaves one legal answer and `Choose` binds without asking.
+pub const ALL: u8 = u8::MAX;
 
 /// A filtered request for cards, resolved against the state at choice time.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Selector {
     pub zone: Zone,
     pub owner: Who,
+    /// `Some(key)` draws the pool from that binding rather than `zone`/`owner`,
+    /// keeping only cards still on the field (8-1-3-1-3). For pools the state
+    /// cannot re-derive at choice time, such as `[BATTLED]`.
+    pub from: Option<String>,
     /// `Some(n)` means "up to n"; the player may always choose fewer, including
     /// zero, when the text says "up to" (8-4-4-1).
     pub up_to: u8,
+    /// Fewest cards the player must name. 0 — the default, and what "up to"
+    /// means — lets them decline entirely. Set it where the text instructs
+    /// rather than offers: "trash 1 card from your hand" (ST04-005).
+    pub at_least: u8,
     pub filters: Vec<Filter>,
 }
 
@@ -279,10 +323,20 @@ pub enum Filter {
     NotSelf,
     /// Restricts to a card category, e.g. Characters only.
     IsCategory(crate::card::Category),
+    /// Matches a card of this colour ("1 **black** Character card", ST08-014's
+    /// `[Trigger]`). A card may be multi-coloured, so this is "has", not "is".
+    HasColor(crate::card::Color),
+    /// Matches a card by printed name, e.g. "1 [Page One] card" (ST04-002).
+    /// Names, not card numbers: several numbers share a name and the text means
+    /// any of them (2-14-3).
+    HasName(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Condition {
+    /// The "If you do," half of "you may X. If you do, Y." Reads false outside
+    /// a resolving frame, where there are no bindings to test.
+    Bound(String),
     /// `[DON!! xN]` — at least N DON!! given to the source card (10-2-9).
     DonAttached(u8),
     /// `[Your Turn]` (10-2-11).
@@ -299,6 +353,16 @@ pub enum Condition {
     AnyCharacterWithCost(u8),
 }
 
+/// An auto effect's cost, offered to its controller before the effect runs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingCost {
+    pub cost: crate::script::ActivationCost,
+    /// So `[Once Per Turn]` is consumed only on payment: a declined effect
+    /// never activated.
+    pub slot: u8,
+    pub once_per_turn: bool,
+}
+
 /// A suspended effect in mid-resolution.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EffectFrame {
@@ -306,6 +370,9 @@ pub struct EffectFrame {
     pub source: CardInstanceId,
     pub controller: PlayerId,
     pub ops: Vec<EffectOp>,
+    /// 8-3-1-4: a cost the controller has not agreed to yet. While set, the
+    /// frame runs no ops. Only auto effects arrive here.
+    pub pending_cost: Option<PendingCost>,
     /// Instruction pointer — where to resume after a suspension.
     pub ip: usize,
     /// Cards chosen so far, by binding key.
@@ -322,6 +389,7 @@ impl EffectFrame {
             source,
             controller,
             ops,
+            pending_cost: None,
             ip: 0,
             bindings: vec![(SELF_BINDING.to_string(), vec![source])],
         }

@@ -1,7 +1,7 @@
 # OnePieceSim
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
-[![Card coverage: 3/59 sets scripted](https://img.shields.io/badge/card_sets-3%2F59_scripted-orange)](#coverage-of-the-source)
+[![Card coverage: 5/59 sets scripted](https://img.shields.io/badge/card_sets-5%2F59_scripted-orange)](#coverage-of-the-source)
 
 <p align="center">
   <img src="docs/screenshot.png" alt="The desktop client on turn 5. Each player's zones are laid out facing each other across the middle of the table: leader, character area, stage, life, deck and trash, with the DON!! cost areas furthest apart at the top and bottom. Three characters are in play for the near player, one for the far player, each showing its current power. The player's hand runs along the bottom edge and a turn-by-turn game log fills the right-hand column." width="900">
@@ -250,10 +250,10 @@ every other phase. Playable against the AI on macOS, Windows and Linux; the
 binaries are unsigned, so both Gatekeeper and SmartScreen will warn on first
 launch. Card data is not bundled and is fetched on first run.
 
-Implemented: the rules kernel, ST-01, ST-02 and ST-06 at full script coverage,
-the legal-action generator, heuristic and ISMCTS agents, static validation of
-card scripts, session replay and verification, and both clients — desktop and
-terminal.
+Implemented: the rules kernel, ST-01, ST-02, ST-04, ST-06 and ST-08 at full
+script coverage, the legal-action generator, heuristic and ISMCTS agents, static
+validation of card scripts, session replay and verification, and both clients —
+desktop and terminal.
 
 Not yet built: PyO3 bindings and the Gymnasium environment, and the authoritative
 multiplayer server and web client. Both sit on top of the existing kernel — the
@@ -264,15 +264,30 @@ rollback needed.
 
 These are deliberate and localised; each is commented at its site.
 
-- Playing into a full Character area is rejected rather than offering the
-  trash-to-make-room choice of 3-7-6-1.
 - `DigTop` returns unchosen cards to the bottom of the deck in draw order; the
   card text permits any order, but the ordering is unobservable and enumerating
   permutations would inflate the action space for search and RL.
-- Activation costs that trash from hand take the leftmost cards rather than
-  prompting. Only ST02-001 uses this, for a single card.
+- An auto effect's hand cost takes the leftmost cards rather than asking which.
+  Whether to pay at all is now a real choice (8-3-1-4), which is the half that
+  was spending resources nobody agreed to spend; picking *which* card wants a
+  second decision point and is not built. Affects ST04-008, ST06-002 and
+  ST08-005.
 - An unscripted `[Trigger]` is treated as absent rather than offering a choice
   that would do nothing.
+- An Event whose `[Main]` text names a further cost ("You may … : …") pays it
+  whenever it can. Declining would resolve nothing for DON!! already spent, so
+  it is never a choice worth offering; playing the Event is the decision.
+  ST08-014 is the only card affected.
+- ST08-013 pays its own K.O. for a trade whose K.O. an effect could in
+  principle prevent. No card in the implemented pool can produce that board.
+- "DON!! −N" returns DON!! from the cost area only, not DON!! already given to a
+  Character. The printed reminder says "from your field", which arguably covers
+  both; the Comprehensive Rules could not be consulted, so the narrower reading
+  is what ST-04 implements. Which DON!! goes is not offered as a choice —
+  rested first, since an active one is still spendable this turn.
+- ST04-001 trashes the *top* of the opponent's Life rather than offering a pick.
+  Life is a secret area (3-1-4): the cards are face down and indistinguishable,
+  so the choice decides nothing, and enumerating it would leak their ids.
 
 ## Contributing
 

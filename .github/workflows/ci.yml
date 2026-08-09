@@ -87,11 +87,17 @@ jobs:
             librsvg2-dev libayatana-appindicator3-dev libxdo-dev \
             build-essential curl file patchelf
 
-      # The card-level tests skip themselves without data/, so fetching is what
-      # makes them meaningful. Card data only — the art is ~750 MB and no test
-      # reads a single image.
+      # Card data only — the art is ~750 MB and no test reads an image. The pack
+      # list comes from the built-in decks, so a newly scripted set is fetched
+      # because it is playable rather than because someone edited this file.
       - name: Fetch card data
-        run: cargo run --release -p op-ingest --bin op-fetch -- --data-dir data --packs ST-01 ST-02 ST-06
+        # Explicit, because Windows runners default to PowerShell and the
+        # command substitution below is bash.
+        shell: bash
+        run: |
+          PACKS=$(cargo run -q --release -p op-cards --bin packs)
+          echo "fetching packs: $PACKS"
+          cargo run --release -p op-ingest --bin op-fetch -- --data-dir data --packs $PACKS
 
       # Release, not debug: the ISMCTS strength matches are ~200s optimised and
       # do not finish in a reasonable time unoptimised.

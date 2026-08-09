@@ -9,8 +9,8 @@
 //! A card's script should read close to its printed text. Where it cannot, the
 //! divergence is worth a comment naming the rule involved.
 
-use op_core::card::{Category, Keyword};
-use op_core::effect::{Condition, Duration, EffectOp, Filter, Selector, Who, SELF_BINDING};
+use op_core::card::{Category, Color, Keyword};
+use op_core::effect::{Condition, Duration, EffectOp, Filter, Selector, Who, ALL, SELF_BINDING};
 
 // Re-exported so a card script only ever needs `use crate::dsl::*`.
 pub use op_core::effect::Duration::{ThisBattle, ThisTurn};
@@ -28,7 +28,9 @@ pub fn your_battlers(up_to: u8) -> Selector {
     Selector {
         zone: Zone::Leader,
         owner: Who::You,
+        from: None,
         up_to,
+        at_least: 0,
         filters: Vec::new(),
     }
 }
@@ -37,7 +39,9 @@ pub fn your_characters(up_to: u8) -> Selector {
     Selector {
         zone: Zone::Character,
         owner: Who::You,
+        from: None,
         up_to,
+        at_least: 0,
         filters: Vec::new(),
     }
 }
@@ -46,7 +50,34 @@ pub fn opponent_characters(up_to: u8) -> Selector {
     Selector {
         zone: Zone::Character,
         owner: Who::Opponent,
+        from: None,
         up_to,
+        at_least: 0,
+        filters: Vec::new(),
+    }
+}
+
+/// Every Character in play, both sides — plain "Characters" in card text, as
+/// opposed to "your" or "your opponent's". Pair it with [`select_all`]; `up_to`
+/// is left at 0 because a text that reaches the whole board never counts.
+pub fn all_characters() -> Selector {
+    Selector {
+        zone: Zone::Character,
+        owner: Who::Both,
+        from: None,
+        up_to: 0,
+        at_least: 0,
+        filters: Vec::new(),
+    }
+}
+
+pub fn your_trash(up_to: u8) -> Selector {
+    Selector {
+        zone: Zone::Trash,
+        owner: Who::You,
+        from: None,
+        up_to,
+        at_least: 0,
         filters: Vec::new(),
     }
 }
@@ -55,7 +86,9 @@ pub fn your_don(up_to: u8) -> Selector {
     Selector {
         zone: Zone::Cost,
         owner: Who::You,
+        from: None,
         up_to,
+        at_least: 0,
         filters: Vec::new(),
     }
 }
@@ -64,7 +97,9 @@ pub fn opponent_don(up_to: u8) -> Selector {
     Selector {
         zone: Zone::Cost,
         owner: Who::Opponent,
+        from: None,
         up_to,
+        at_least: 0,
         filters: Vec::new(),
     }
 }
@@ -73,9 +108,20 @@ pub fn your_hand(up_to: u8) -> Selector {
     Selector {
         zone: Zone::Hand,
         owner: Who::You,
+        from: None,
         up_to,
+        at_least: 0,
         filters: Vec::new(),
     }
+}
+
+/// Makes a selection mandatory: the player must name exactly `n` cards, or
+/// every legal card if there are fewer. For text that instructs ("trash 1 card
+/// from your hand") rather than offers ("up to 1").
+pub fn exactly(mut sel: Selector, n: u8) -> Selector {
+    sel.up_to = n;
+    sel.at_least = n;
+    sel
 }
 
 /// Adds filters to a selector.
@@ -114,12 +160,89 @@ pub fn is_character() -> Filter {
     Filter::IsCategory(Category::Character)
 }
 
+pub fn of_color(color: Color) -> Filter {
+    Filter::HasColor(color)
+}
+
+/// "1 [Page One] card" — by printed name, so it matches every card number
+/// bearing it.
+pub fn named(name: &str) -> Filter {
+    Filter::HasName(name.to_string())
+}
+
 // ---- ops -------------------------------------------------------------------
 
 pub fn choose(key: &str, select: Selector) -> EffectOp {
     EffectOp::Choose {
         key: key.to_string(),
         select,
+    }
+}
+
+/// "**All** Characters with a cost of 1 or less" — a `choose` whose floor is
+/// the whole pool, so the engine binds without asking.
+pub fn select_all(key: &str, mut select: Selector) -> EffectOp {
+    select.up_to = ALL;
+    select.at_least = ALL;
+    EffectOp::Choose {
+        key: key.to_string(),
+        select,
+    }
+}
+
+/// "Up to `up_to` of the cards bound under `from`" — a `choose` whose pool is a
+/// binding rather than a zone query, for pools like [`BATTLED`].
+pub fn choose_from(key: &str, from: &str, up_to: u8) -> EffectOp {
+    EffectOp::Choose {
+        key: key.to_string(),
+        select: Selector {
+            zone: Zone::Character,
+            owner: Who::You,
+            from: Some(from.to_string()),
+            up_to,
+            at_least: 0,
+            filters: Vec::new(),
+        },
+    }
+}
+
+/// The "If you do," half of "you may X. If you do, Y." — stops unless the
+/// player took the optional half, which is a `choose` they may answer with
+/// nothing.
+pub fn require_bound(key: &str) -> EffectOp {
+    EffectOp::RequireIf {
+        cond: Condition::Bound(key.to_string()),
+    }
+}
+
+/// "Add … to your hand" / "Return … to the owner's hand". `MoveTo` sends a card
+/// to its *owner's* zone, which is what both phrasings mean.
+pub fn to_hand(key: &str) -> EffectOp {
+    EffectOp::MoveTo {
+        key: key.to_string(),
+        to: Zone::Hand,
+    }
+}
+
+pub fn trash(key: &str) -> EffectOp {
+    EffectOp::MoveTo {
+        key: key.to_string(),
+        to: Zone::Trash,
+    }
+}
+
+/// "Add up to N DON!! cards from your DON!! deck and set them as active"
+/// (`rested: false`) or "and rest them" (`rested: true`).
+pub fn add_don(n: u8, rested: bool) -> EffectOp {
+    EffectOp::AddDon { n, rested }
+}
+
+/// "Trash up to N of your opponent's Life cards" — off the top, no choice; see
+/// [`EffectOp::TrashLife`].
+pub fn trash_opponent_life(n: u8) -> EffectOp {
+    EffectOp::TrashLife {
+        player: Who::Opponent,
+        n,
     }
 }
 
@@ -213,6 +336,9 @@ pub const THIS: &str = SELF_BINDING;
 
 /// The card a `[Counter]` Event was pointed at.
 pub const TARGET: &str = op_core::script::TARGET_BINDING;
+
+/// The card this one battled. Supplied to `[End of Battle]` effects only.
+pub const BATTLED: &str = op_core::script::BATTLED_BINDING;
 
 // ---- conditions ------------------------------------------------------------
 
@@ -332,6 +458,24 @@ pub fn cost(rest_don: u8, rest_self: bool, trash_from_hand: u8) -> ActivationCos
         rest_don,
         rest_self,
         trash_from_hand,
+        ..ActivationCost::default()
+    }
+}
+
+/// "You may add N cards from the top of your Life cards to your hand:"
+/// (ST08-014). Paying loses Life, so this is a cost like any other.
+pub fn life_cost(n: u8) -> ActivationCost {
+    ActivationCost {
+        life_to_hand: n,
+        ..ActivationCost::default()
+    }
+}
+
+/// The "DON!! −N" cost: return N DON!! from your field to your DON!! deck.
+pub fn don_minus(n: u8) -> ActivationCost {
+    ActivationCost {
+        don_minus: n,
+        ..ActivationCost::default()
     }
 }
 
@@ -362,6 +506,13 @@ impl Script {
 
     /// The `[Counter]` effect of an Event card (10-2-4).
     pub fn counter(mut self, ops: Vec<EffectOp>) -> Script {
+        self.0.counter = ops;
+        self
+    }
+
+    /// A `[Counter]` whose text names a cost beyond the card's printed one.
+    pub fn counter_paying(mut self, cost: ActivationCost, ops: Vec<EffectOp>) -> Script {
+        self.0.counter_cost = cost;
         self.0.counter = ops;
         self
     }

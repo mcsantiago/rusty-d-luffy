@@ -37,6 +37,9 @@ pub struct Characteristics {
     pub cost: i32,
     /// Effects cannot K.O. this card; battle still can (10-2-1-1).
     pub cannot_be_koed_by_effect: bool,
+    /// A Leader that wins a battle against this card does not K.O. it
+    /// (ST08-002). A Character attacker still does.
+    pub cannot_be_koed_in_battle_by_leader: bool,
     pub keywords: Vec<Keyword>,
     pub cannot_be_blocked: bool,
     /// The opponent may not block with a `[Blocker]` whose power is at or above
@@ -82,6 +85,7 @@ pub fn derive_all(state: &GameState, db: &CardDb, scripts: &dyn ScriptSource) ->
                 power: def.power.unwrap_or(0),
                 cost: def.cost as i32,
                 cannot_be_koed_by_effect: false,
+                cannot_be_koed_in_battle_by_leader: false,
                 keywords: def.keywords.clone(),
                 cannot_be_blocked: false,
                 blocker_power_ceiling: None,
@@ -124,7 +128,7 @@ pub fn derive_all(state: &GameState, db: &CardDb, scripts: &dyn ScriptSource) ->
                     continue;
                 }
                 for effect in &scripts.script(card.def).permanent {
-                    if !conditions_hold(state, db, &table, source_id, &effect.conditions) {
+                    if !conditions_hold(state, db, &table, source_id, None, &effect.conditions) {
                         continue;
                     }
                     for target in targets_of(state, db, source_id, &effect.scope) {
@@ -151,6 +155,7 @@ fn apply(ch: &mut Characteristics, kind: ModKind) {
             ch.cost += delta;
         }
         ModKind::CannotBeKoedByEffect => ch.cannot_be_koed_by_effect = true,
+        ModKind::CannotBeKoedInBattleByLeader => ch.cannot_be_koed_in_battle_by_leader = true,
         ModKind::GrantKeyword(kw) => {
             if !ch.keywords.contains(&kw) {
                 ch.keywords.push(kw);
@@ -192,15 +197,20 @@ fn targets_of(
 ///
 /// `table` is the partially-derived characteristics table, so conditions that
 /// read power see the layers resolved so far — which is what 8-4-6 asks for.
+///
+/// `frame` is the resolving effect where there is one; conditions that read a
+/// binding are false without it.
 pub fn conditions_hold(
     state: &GameState,
     db: &CardDb,
     _table: &[Characteristics],
     source: CardInstanceId,
+    frame: Option<&crate::effect::EffectFrame>,
     conditions: &[Condition],
 ) -> bool {
     let card = state.card(source);
     conditions.iter().all(|c| match c {
+        Condition::Bound(key) => frame.is_some_and(|f| !f.bound(key).is_empty()),
         Condition::DonAttached(n) => card.attached_don.len() >= *n as usize,
         Condition::YourTurn => state.turn_player == card.controller,
         Condition::OpponentsTurn => state.turn_player != card.controller,
@@ -249,6 +259,8 @@ pub fn matches_filters(
         Filter::IsRested(want) => state.card(card).rested == *want,
         Filter::NotSelf => card != source,
         Filter::IsCategory(cat) => def.category == *cat,
+        Filter::HasColor(color) => def.colors.contains(color),
+        Filter::HasName(name) => def.name == *name,
     })
 }
 

@@ -63,6 +63,8 @@ pub enum Action {
     /// Answer an effect's request to choose cards. May be empty when the text
     /// says "up to" (8-4-4-1).
     Choose { cards: Vec<CardInstanceId> },
+    /// Pay an auto effect's activation cost, or decline it (8-3-1-4).
+    PayCost(bool),
 }
 
 /// What the engine is currently waiting for. Stored in `GameState` because a
@@ -85,6 +87,15 @@ pub enum Pending {
         player: PlayerId,
         card: CardInstanceId,
     },
+    /// 8-3-1-4: an auto effect's cost, which the controller may decline.
+    /// Activated effects never land here; choosing to activate is the agreement.
+    PayCost {
+        player: PlayerId,
+        /// The card whose effect is asking.
+        source: CardInstanceId,
+        /// What it wants, so a client can name the price.
+        cost: crate::script::ActivationCost,
+    },
     Choose {
         player: PlayerId,
         /// Binding key the answer is stored under in the suspended frame.
@@ -92,6 +103,13 @@ pub enum Pending {
         /// Cards that satisfy the selector right now.
         options: Vec<CardInstanceId>,
         up_to: u8,
+        /// Fewest cards a legal answer may name. 0 for the usual "up to N"
+        /// (8-4-4-1); non-zero where the text is an instruction rather than an
+        /// offer, e.g. "trash 1 card from your hand" (ST04-005).
+        ///
+        /// Capped at the number of options: a mandatory choice with too few
+        /// legal cards takes as many as there are rather than deadlocking.
+        at_least: u8,
     },
 }
 
@@ -103,6 +121,7 @@ impl Pending {
             | Pending::Block { player }
             | Pending::Counter { player }
             | Pending::Trigger { player, .. }
+            | Pending::PayCost { player, .. }
             | Pending::Choose { player, .. } => *player,
         }
     }

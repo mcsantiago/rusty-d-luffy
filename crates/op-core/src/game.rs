@@ -10,7 +10,7 @@ use crate::derive::{self, Derived};
 use crate::effect::{Duration, EffectFrame, ModKind, Modifier, Timing};
 use crate::event::{GameEvent, PlayerEvent};
 use crate::ids::{CardInstanceId, PlayerId};
-use crate::script::ScriptSource;
+use crate::script::{ScriptSource, BATTLED_BINDING};
 use crate::state::{BattleState, BattleStep, DamageState, GameOver, GameState, Phase, Placement};
 use crate::zone::Zone;
 
@@ -254,6 +254,56 @@ impl Game {
                 Ok(())
             }
 
+            (Pending::PayCost { player, .. }, Action::PayCost(pay)) => {
+                let player = *player;
+                let idx =
+                    self.state
+                        .stack
+                        .frames
+                        .len()
+                        .checked_sub(1)
+                        .ok_or(IllegalAction::Illegal(
+                            "no effect is waiting on a cost".into(),
+                        ))?;
+                let Some(pc) = self.state.stack.frames[idx].pending_cost.take() else {
+                    return Err(IllegalAction::Illegal(
+                        "that effect is not waiting on a cost".into(),
+                    ));
+                };
+                let source = self.state.stack.frames[idx].source;
+                if !pay {
+                    // 8-3-1-4: refused, so the effect never activates.
+                    self.state.stack.frames.remove(idx);
+                    self.state.pending = None;
+                    return Ok(());
+                }
+                // An earlier effect in the same window may have spent it.
+                if !self.can_pay(player, source, &pc.cost) {
+                    self.state.stack.frames.remove(idx);
+                    self.state.pending = None;
+                    return Ok(());
+                }
+                // Simplification: a hand cost takes the leftmost cards.
+                let discard: Vec<CardInstanceId> = self
+                    .state
+                    .player(player)
+                    .hand
+                    .iter()
+                    .take(pc.cost.trash_from_hand as usize)
+                    .copied()
+                    .collect();
+                self.pay(player, source, &pc.cost, &discard, events);
+                if pc.once_per_turn {
+                    self.state.card_mut(source).used_once_per_turn.push(pc.slot);
+                }
+                events.push(GameEvent::EffectActivated {
+                    source,
+                    controller: player,
+                });
+                self.state.pending = None;
+                Ok(())
+            }
+
             (Pending::MainAction { player }, _) => self.main_action(*player, action, events),
 
             (Pending::Block { player }, Action::Block { blocker }) => {
@@ -284,6 +334,7 @@ impl Game {
                     key,
                     options,
                     up_to,
+                    at_least,
                 },
                 Action::Choose { cards },
             ) => {
@@ -292,6 +343,19 @@ impl Game {
                         "chose {} cards, at most {up_to} allowed",
                         cards.len()
                     )));
+                }
+                let floor = (*at_least as usize).min(options.len());
+                if cards.len() < floor {
+                    return Err(IllegalAction::Illegal(format!(
+                        "chose {} cards, at least {floor} required",
+                        cards.len()
+                    )));
+                }
+                let mut seen = cards.clone();
+                seen.sort();
+                seen.dedup();
+                if seen.len() != cards.len() {
+                    return Err(IllegalAction::Illegal("named a card twice".into()));
                 }
                 if let Some(bad) = cards.iter().find(|c| !options.contains(c)) {
                     return Err(IllegalAction::Illegal(format!(
@@ -464,14 +528,43 @@ impl Game {
             Category::Event => {
                 // 8-4-2: the Event is trashed, then its effect is carried out.
                 // The [Main] effect is stored as the card's first activated
-                // effect, and needs no further cost.
-                let ops = self
+                // effect. Its printed cost is the DON!! already spent above,
+                // but the text may name a further cost of its own — ST08-014
+                // asks for a Life card.
+                let main = self
                     .scripts
                     .script(self.state.card(card).def)
                     .activated
                     .first()
-                    .map(|a| a.ops.clone())
-                    .unwrap_or_default();
+                    .cloned();
+                let extra = main.as_ref().map(|a| a.cost.clone()).unwrap_or_default();
+                // 8-3-1-3: a cost that cannot be paid in full cannot be paid at
+                // all, and then the effect does not resolve. The card is still
+                // played and trashed.
+                //
+                // Diverges from "You may ...:" in one direction only: with the
+                // cost payable, the engine pays. Declining would resolve
+                // nothing at all for DON!! already spent, so it is never a
+                // choice a player would take — and playing the Event is itself
+                // the decision. Same simplification as an auto effect with a
+                // cost; see `queue_autos`.
+                let paying = extra.is_free() || self.can_pay(player, card, &extra);
+                let ops = match &main {
+                    Some(a) if paying => a.ops.clone(),
+                    _ => Vec::new(),
+                };
+                if paying && !extra.is_free() {
+                    let discard: Vec<CardInstanceId> = self
+                        .state
+                        .player(player)
+                        .hand
+                        .iter()
+                        .filter(|&&c| c != card)
+                        .take(extra.trash_from_hand as usize)
+                        .copied()
+                        .collect();
+                    self.pay(player, card, &extra, &discard, events);
+                }
                 self.state
                     .move_card(card, player, Zone::Trash, Placement::Top);
                 events.push(GameEvent::CardPlayed {
@@ -524,7 +617,7 @@ impl Game {
             ));
         }
         // 8-4-1-1: conditions must be met before activation.
-        if !derive::conditions_hold(&self.state, &self.db, &[], card, &effect.conditions) {
+        if !derive::conditions_hold(&self.state, &self.db, &[], card, None, &effect.conditions) {
             return Err(IllegalAction::Illegal(
                 "the effect's conditions are not met".into(),
             ));
@@ -582,6 +675,12 @@ impl Game {
         if self.state.player(player).hand.len() < cost.trash_from_hand as usize {
             return false;
         }
+        if self.state.player(player).life.len() < cost.life_to_hand as usize {
+            return false;
+        }
+        if self.state.player(player).cost_area.len() < cost.don_minus as usize {
+            return false;
+        }
         true
     }
 
@@ -608,6 +707,47 @@ impl Game {
             self.state
                 .move_card(card, player, Zone::Trash, Placement::Top);
         }
+        // Life cards come off the top and go to hand face-up. This is not
+        // damage, so no `[Trigger]` activates (10-1-5 ties Triggers to damage).
+        for _ in 0..cost.life_to_hand {
+            let Some(&top) = self.state.player(player).life.first() else {
+                break;
+            };
+            self.state
+                .move_card(top, player, Zone::Hand, Placement::Top);
+            events.push(GameEvent::LifeTaken {
+                player,
+                card: top,
+                banished: false,
+            });
+        }
+        if cost.don_minus > 0 {
+            let spent = self.return_don(player, cost.don_minus);
+            events.push(GameEvent::DonSpentToDonDeck {
+                player,
+                count: spent,
+            });
+        }
+    }
+
+    /// Sends `n` DON!! from `player`'s cost area back to the bottom of their
+    /// DON!! deck, and reports how many actually went.
+    ///
+    /// Rested DON!! go first. The player is never asked which: an active DON!!
+    /// can still be spent this turn and a rested one cannot, so keeping the
+    /// active ones is the choice they would make every time.
+    fn return_don(&mut self, player: PlayerId, n: u8) -> u8 {
+        let mut pool: Vec<CardInstanceId> = self.state.player(player).cost_area.to_vec();
+        pool.sort_by_key(|&d| self.state.card(d).is_active());
+        let mut returned = 0;
+        for don in pool.into_iter().take(n as usize) {
+            self.state.lift(don);
+            self.state.card_mut(don).rested = false;
+            self.state
+                .put(don, player, Zone::DonDeck, Placement::Bottom);
+            returned += 1;
+        }
+        returned
     }
 
     // ---- battle ------------------------------------------------------------
@@ -820,13 +960,14 @@ impl Game {
             .copied()
             .filter(|&c| {
                 let def = self.db.get(self.state.card(c).def);
+                let script = self.scripts.script(self.state.card(c).def);
                 def.category == Category::Event
-                    && !self
-                        .scripts
-                        .script(self.state.card(c).def)
-                        .counter
-                        .is_empty()
+                    && !script.counter.is_empty()
                     && def.cost as usize <= affordable
+                    // 8-3-1-3: an extra cost the [Counter] text names has to be
+                    // payable in full or the Event does nothing at all.
+                    && (script.counter_cost.is_free()
+                        || self.can_pay(defender, c, &script.counter_cost))
             })
             .collect()
     }
@@ -856,11 +997,13 @@ impl Game {
             self.state.card_mut(don).rested = true;
         }
 
-        let ops = self
-            .scripts
-            .script(self.state.card(card).def)
-            .counter
-            .clone();
+        let script = self.scripts.script(self.state.card(card).def);
+        let ops = script.counter.clone();
+        let extra = script.counter_cost.clone();
+        if !extra.is_free() {
+            // `legal_counter_events` already refused anything unpayable.
+            self.pay(player, card, &extra, &[], events);
+        }
         // 8-4-2: the Event is trashed, then its effect is carried out.
         self.state
             .move_card(card, player, Zone::Trash, Placement::Top);
@@ -924,8 +1067,17 @@ impl Game {
                 });
             }
             _ => {
-                // 7-1-4-1-2: the Character is K.O.'d.
-                self.knock_out(b.target, events);
+                // 7-1-4-1-2: the Character is K.O.'d — unless it is protected
+                // from exactly this. ST08-002's protection is narrower than
+                // `cannot_be_koed_by_effect`: it stops the *battle* K.O., and
+                // only when a Leader won the battle.
+                let attacker_is_leader =
+                    self.db.get(self.state.card(b.attacker).def).category == Category::Leader;
+                let protected =
+                    attacker_is_leader && derived.get(b.target).cannot_be_koed_in_battle_by_leader;
+                if !protected {
+                    self.knock_out(b.target, events);
+                }
                 self.enter_battle_step(BattleStep::EndOfBattle, events);
             }
         }
@@ -1033,10 +1185,21 @@ impl Game {
     }
 
     fn knock_out(&mut self, card: CardInstanceId, events: &mut Vec<GameEvent>) {
+        let was_character = self.db.get(self.state.card(card).def).category == Category::Character;
         let owner = self.state.card(card).owner;
         self.state
             .move_card(card, owner, Zone::Trash, Placement::Top);
         events.push(GameEvent::KnockedOut { card });
+
+        // "When a Character is K.O.'d" watches the whole board, not the card
+        // that left it, so every card in play gets the timing (ST08-001).
+        // Trashing a Character to make room for a sixth (3-7-6-1) is not a
+        // K.O. and does not come through here.
+        if was_character {
+            for watcher in self.state.all_in_play() {
+                self.queue_autos(Timing::OnCharacterKoed, watcher, events);
+            }
+        }
     }
 
     fn end_battle(&mut self, events: &mut Vec<GameEvent>) {
@@ -1046,7 +1209,21 @@ impl Game {
             let target_is_character =
                 self.db.get(self.state.card(b.target).def).category == Category::Character;
             if target_is_character {
-                self.queue_autos(Timing::EndOfBattle, b.attacker, events);
+                // Both participants, because "a battle in which this Character
+                // battles your opponent's Character" (ST02-010, ST08-013) reads
+                // the same whichever side declared the attack. A participant
+                // the battle just K.O.'d has left its area, and 8-1-3-1-3 stops
+                // its effect there.
+                for (participant, other) in [(b.attacker, b.target), (b.target, b.attacker)] {
+                    if self.state.card(participant).zone.is_field() {
+                        self.queue_autos_with(
+                            Timing::EndOfBattle,
+                            participant,
+                            &[(BATTLED_BINDING, vec![other])],
+                            events,
+                        );
+                    }
+                }
             }
         }
         // 7-1-5-3/4: effects lasting "during this battle" become invalid.
@@ -1440,6 +1617,16 @@ impl Game {
             // never advance and the effect would replay forever.
             let idx = self.state.stack.frames.len() - 1;
 
+            // An unpaid cost is a question, not a fee.
+            if let Some(pc) = &frame.pending_cost {
+                self.state.pending = Some(Pending::PayCost {
+                    player: frame.controller,
+                    source: frame.source,
+                    cost: pc.cost.clone(),
+                });
+                return;
+            }
+
             if frame.ip >= frame.ops.len() {
                 self.state.stack.frames.remove(idx);
                 return;
@@ -1484,11 +1671,19 @@ impl Game {
                     self.state.stack.frames[idx].bind(&key, Vec::new());
                     return OpOutcome::Advance;
                 }
+                // One legal answer is not a decision: a floor covering the
+                // whole pool means every candidate, so do not stage a choice.
+                let floor = (select.at_least as usize).min(options.len());
+                if floor == options.len() {
+                    self.state.stack.frames[idx].bind(&key, options);
+                    return OpOutcome::Advance;
+                }
                 self.state.pending = Some(Pending::Choose {
                     player: frame.controller,
                     key,
                     options,
                     up_to: select.up_to,
+                    at_least: select.at_least,
                 });
                 OpOutcome::Suspend
             }
@@ -1549,11 +1744,12 @@ impl Game {
             }
 
             Op::Draw { player, n } => {
-                let who = self.who(frame.controller, player);
-                for _ in 0..n {
-                    match draw_one(&mut self.state, who) {
-                        Some(card) => events.push(GameEvent::Drew { player: who, card }),
-                        None => break,
+                for who in self.players_of(frame.controller, player) {
+                    for _ in 0..n {
+                        match draw_one(&mut self.state, who) {
+                            Some(card) => events.push(GameEvent::Drew { player: who, card }),
+                            None => break,
+                        }
                     }
                 }
                 OpOutcome::Advance
@@ -1587,6 +1783,56 @@ impl Game {
                             player: frame.controller,
                             don,
                             to: target,
+                        });
+                    }
+                }
+                OpOutcome::Advance
+            }
+
+            Op::AddDon { n, rested } => {
+                let mut added = 0;
+                for _ in 0..n {
+                    // 6-4-2/6-4-3: an empty DON!! deck simply supplies nothing.
+                    let Some(don) = self
+                        .state
+                        .player(frame.controller)
+                        .don_deck
+                        .first()
+                        .copied()
+                    else {
+                        break;
+                    };
+                    self.state.lift(don);
+                    self.state
+                        .put(don, frame.controller, Zone::Cost, Placement::Bottom);
+                    self.state.card_mut(don).rested = rested;
+                    added += 1;
+                }
+                if added > 0 {
+                    events.push(GameEvent::DonPlaced {
+                        player: frame.controller,
+                        count: added,
+                    });
+                }
+                OpOutcome::Advance
+            }
+
+            Op::TrashLife { player, n } => {
+                for victim in self.players_of(frame.controller, player) {
+                    for _ in 0..n {
+                        let Some(&top) = self.state.player(victim).life.first() else {
+                            break;
+                        };
+                        self.state
+                            .move_card(top, victim, Zone::Trash, Placement::Top);
+                        // Not damage: no `[Trigger]` (10-1-5) and nothing to
+                        // hand. Reported as a plain move rather than as
+                        // `LifeTaken`, whose `banished` flag names the keyword
+                        // (10-1-3) and is not what happened here.
+                        events.push(GameEvent::CardMoved {
+                            card: top,
+                            from: Zone::Life,
+                            to: Zone::Trash,
                         });
                     }
                 }
@@ -1708,6 +1954,8 @@ impl Game {
                     key,
                     options,
                     up_to,
+                    // "reveal *up to* 1" — a dig may always be declined.
+                    at_least: 0,
                 });
                 OpOutcome::Suspend
             }
@@ -1728,6 +1976,7 @@ impl Game {
                     &self.db,
                     &[],
                     frame.source,
+                    Some(frame),
                     std::slice::from_ref(&cond),
                 );
                 let _ = derived;
@@ -1741,10 +1990,22 @@ impl Game {
         }
     }
 
-    fn who(&self, controller: PlayerId, who: crate::effect::Who) -> PlayerId {
+    /// The players a [`Who`] names, relative to an effect's controller.
+    ///
+    /// A list rather than one player because card text that says plain
+    /// "Characters" reaches both sides (ST08-005).
+    ///
+    /// [`Who`]: crate::effect::Who
+    fn players_of(&self, controller: PlayerId, who: crate::effect::Who) -> Vec<PlayerId> {
         match who {
-            crate::effect::Who::You => controller,
-            crate::effect::Who::Opponent => controller.opponent(),
+            crate::effect::Who::You => vec![controller],
+            crate::effect::Who::Opponent => vec![controller.opponent()],
+            // Turn player first, so the pool order does not depend on which
+            // seat happens to control the effect.
+            crate::effect::Who::Both => {
+                let first = self.state.turn_player;
+                vec![first, first.opponent()]
+            }
         }
     }
 
@@ -1824,31 +2085,59 @@ impl Game {
         frame: &crate::effect::EffectFrame,
         select: &crate::effect::Selector,
     ) -> Vec<CardInstanceId> {
-        let owner = self.who(frame.controller, select.owner);
         let derived = self.derived();
-        let pool: Vec<CardInstanceId> = match select.zone {
-            // "your Leader or 1 of your Characters" is by far the most common
-            // target set, and spans two areas.
-            Zone::Leader => self.state.battlers(owner),
-            other => self.state.player(owner).zone(other).to_vec(),
+        let keep = |me: &Self, c: CardInstanceId| {
+            derive::matches_filters(
+                &me.state,
+                &me.db,
+                &derived,
+                frame.source,
+                c,
+                &select.filters,
+            )
         };
-        pool.into_iter()
-            .filter(|&c| {
-                derive::matches_filters(
-                    &self.state,
-                    &self.db,
-                    &derived,
-                    frame.source,
-                    c,
-                    &select.filters,
-                )
-            })
-            .collect()
+
+        // A pool carried by the frame, for candidates the state can no longer
+        // re-derive. Only cards still where the effect can act on them:
+        // 8-1-3-1-3 drops the rest.
+        if let Some(from) = &select.from {
+            return frame
+                .bound(from)
+                .iter()
+                .copied()
+                .filter(|&c| self.state.card(c).zone.is_field() && keep(self, c))
+                .collect();
+        }
+
+        let mut pool: Vec<CardInstanceId> = Vec::new();
+        for owner in self.players_of(frame.controller, select.owner) {
+            match select.zone {
+                // "your Leader or 1 of your Characters" is by far the most
+                // common target set, and spans two areas.
+                Zone::Leader => pool.extend(self.state.battlers(owner)),
+                other => pool.extend(self.state.player(owner).zone(other).iter().copied()),
+            }
+        }
+        pool.into_iter().filter(|&c| keep(self, c)).collect()
     }
 
     /// Pushes any auto effects on `card` whose timing has just been met
     /// (8-1-3-1). Conditions are checked at activation time (8-3-2).
     fn queue_autos(&mut self, timing: Timing, card: CardInstanceId, events: &mut Vec<GameEvent>) {
+        self.queue_autos_with(timing, card, &[], events);
+    }
+
+    /// As [`Game::queue_autos`], with extra bindings pre-supplied to the frame.
+    ///
+    /// For context the effect cannot recover from the state once it resolves —
+    /// see [`BATTLED_BINDING`].
+    fn queue_autos_with(
+        &mut self,
+        timing: Timing,
+        card: CardInstanceId,
+        supplied: &[(&str, Vec<CardInstanceId>)],
+        events: &mut Vec<GameEvent>,
+    ) {
         let def = self.state.card(card).def;
         let controller = self.state.card(card).controller;
         let effects: Vec<_> = self
@@ -1870,40 +2159,42 @@ impl Game {
             {
                 continue;
             }
-            if !derive::conditions_hold(&self.state, &self.db, &[], card, &effect.conditions) {
+            if !derive::conditions_hold(&self.state, &self.db, &[], card, None, &effect.conditions)
+            {
                 continue;
             }
-            // 8-3-1-3: a cost that cannot be paid in full cannot be paid at all.
+            // 8-3-1-3: a cost that cannot be paid in full cannot be paid at all,
+            // so an unaffordable one stops the effect here rather than asking.
+            let mut pending_cost = None;
             if !effect.cost.is_free() {
                 if !self.can_pay(controller, card, &effect.cost) {
                     continue;
                 }
-                // An auto effect fires without an action to carry a choice, so
-                // a hand cost still takes the leftmost card. Only ST06-002 is
-                // affected today; a real choice needs the effect to suspend.
-                let discard: Vec<CardInstanceId> = self
-                    .state
-                    .player(controller)
-                    .hand
-                    .iter()
-                    .take(effect.cost.trash_from_hand as usize)
-                    .copied()
-                    .collect();
-                self.pay(controller, card, &effect.cost, &discard, events);
+                // 8-3-1-4: the cost is the controller's to decline. Pushed
+                // unpaid; it announces itself only once paid.
+                pending_cost = Some(crate::effect::PendingCost {
+                    cost: effect.cost.clone(),
+                    slot: effect.slot,
+                    once_per_turn: effect.once_per_turn,
+                });
+            } else {
+                if effect.once_per_turn {
+                    self.state
+                        .card_mut(card)
+                        .used_once_per_turn
+                        .push(effect.slot);
+                }
+                events.push(GameEvent::EffectActivated {
+                    source: card,
+                    controller,
+                });
             }
-            if effect.once_per_turn {
-                self.state
-                    .card_mut(card)
-                    .used_once_per_turn
-                    .push(effect.slot);
+            let mut frame = EffectFrame::new(card, controller, effect.ops.clone());
+            frame.pending_cost = pending_cost;
+            for (key, cards) in supplied {
+                frame.bind(key, cards.clone());
             }
-            events.push(GameEvent::EffectActivated {
-                source: card,
-                controller,
-            });
-            self.state
-                .stack
-                .push(EffectFrame::new(card, controller, effect.ops.clone()));
+            self.state.stack.push(frame);
         }
     }
 

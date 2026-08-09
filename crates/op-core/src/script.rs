@@ -66,6 +66,23 @@ pub struct ActivationCost {
     pub rest_self: bool,
     /// Trash this many cards from hand.
     pub trash_from_hand: u8,
+    /// "You may add N cards from the top of your Life cards to your hand:"
+    /// (ST08-014). Paying costs Life, so it is a real cost and not a bonus —
+    /// and it is not damage, so no `[Trigger]` activates (10-1-5).
+    pub life_to_hand: u8,
+    /// The "DON!! −N" symbol: return N DON!! cards from your field to your
+    /// DON!! deck (ST-04's whole design).
+    ///
+    /// Distinct from [`ActivationCost::rest_don`], which only turns DON!!
+    /// sideways and gets them back next Refresh Phase. This spends them for the
+    /// rest of the game unless they come back around off the DON!! deck.
+    ///
+    /// Restricted to the cost area, not DON!! already given to a Character.
+    /// The printed reminder says "from your field", which arguably covers both;
+    /// the Comprehensive Rules clause could not be checked here, so the
+    /// narrower reading is the one implemented. Every real use of the cost
+    /// happens on a turn where the cost area alone can pay it.
+    pub don_minus: u8,
 }
 
 impl ActivationCost {
@@ -82,10 +99,14 @@ pub struct CardScript {
     /// Activate effects. For Event cards, the first entry is the `[Main]`
     /// effect, resolved when the card is played (10-2-3).
     pub activated: Vec<ActivatedEffect>,
-    /// `[Counter]` effect ops for an Event card (10-2-4). The activation cost is
-    /// the card's printed cost. The card the defender chose to boost is
-    /// pre-bound under [`TARGET_BINDING`].
+    /// `[Counter]` effect ops for an Event card (10-2-4). The card the defender
+    /// chose to boost is pre-bound under [`TARGET_BINDING`].
     pub counter: Vec<EffectOp>,
+    /// A cost the `[Counter]` text names *beyond* the card's printed cost —
+    /// ST04-016's "DON!! −1". Unpayable means the Event is not offered as a
+    /// Counter at all, since resolving nothing for a spent card is never what
+    /// the defender wants.
+    pub counter_cost: ActivationCost,
     /// `[Trigger]` ops (2-11). Resolved from the Life area on damage.
     pub trigger: Vec<EffectOp>,
 }
@@ -93,6 +114,15 @@ pub struct CardScript {
 /// Binding key under which the engine pre-supplies a target the player already
 /// picked outside the effect, e.g. the card a `[Counter]` Event boosts.
 pub const TARGET_BINDING: &str = "target";
+
+/// Binding key under which an [`crate::effect::Timing::EndOfBattle`] effect is
+/// handed the *other* participant in the battle that just ended.
+///
+/// It has to travel with the frame: `state.battle` is cleared as the battle
+/// ends, before the effects it queued get to resolve, so a script that went
+/// looking for "the Character I battled" at resolution time would find nothing
+/// and silently do nothing.
+pub const BATTLED_BINDING: &str = "battled";
 
 impl CardScript {
     pub fn is_vanilla(&self) -> bool {

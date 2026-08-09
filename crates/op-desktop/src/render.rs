@@ -79,10 +79,44 @@ pub fn line(event: &PlayerEvent, game: &Game, viewer: PlayerId) -> Option<String
             Some(_) => "You lose".into(),
             None => "Draw".into(),
         },
+        // Worth a line where routine DON!! placement is not: this DON!! is gone
+        // from the field, and the cost area alone does not say where to.
+        E::DonSpentToDonDeck { player, count } => {
+            format!(
+                "{} returned {count} DON!! to their DON!! deck",
+                who(*player)
+            )
+        }
         // Phase changes, DON!! placement and resting are noise; the board
         // already shows their result.
         _ => return None,
     })
+}
+
+/// Names an activation cost in the player's terms, so "Pay … to activate?" is
+/// answerable without knowing the card's text by heart.
+pub fn cost_label(cost: &op_core::script::ActivationCost) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if cost.don_minus > 0 {
+        parts.push(format!("DON!! -{}", cost.don_minus));
+    }
+    if cost.rest_don > 0 {
+        parts.push(format!("rest {} DON!!", cost.rest_don));
+    }
+    if cost.rest_self {
+        parts.push("rest this card".into());
+    }
+    if cost.trash_from_hand > 0 {
+        parts.push(format!("trash {} from hand", cost.trash_from_hand));
+    }
+    if cost.life_to_hand > 0 {
+        parts.push(format!("take {} Life card(s) into hand", cost.life_to_hand));
+    }
+    if parts.is_empty() {
+        "nothing".into()
+    } else {
+        parts.join(" and ")
+    }
 }
 
 pub fn question(pending: &Pending) -> String {
@@ -92,7 +126,20 @@ pub fn question(pending: &Pending) -> String {
         Pending::Block { .. } => "You are being attacked — block?".into(),
         Pending::Counter { .. } => "Counter step".into(),
         Pending::Trigger { .. } => "That life card has a [Trigger]".into(),
-        Pending::Choose { up_to, .. } => format!("Choose up to {up_to}"),
+        Pending::PayCost { cost, .. } => format!("Pay {} to activate?", cost_label(cost)),
+        // "up to" is an offer the player may decline; a non-zero floor is an
+        // instruction, and saying "up to" there would suggest otherwise.
+        Pending::Choose {
+            up_to, at_least, ..
+        } => {
+            if *at_least == 0 {
+                format!("Choose up to {up_to}")
+            } else if at_least == up_to {
+                format!("Choose {up_to}")
+            } else {
+                format!("Choose {at_least} to {up_to}")
+            }
+        }
     }
 }
 
@@ -104,6 +151,8 @@ pub fn action_label(action: &Action, game: &Game) -> String {
     match action {
         Action::Mulligan(true) => "Mulligan".into(),
         Action::Mulligan(false) => "Keep".into(),
+        Action::PayCost(true) => "Pay the cost".into(),
+        Action::PayCost(false) => "Don't pay".into(),
         Action::EndMainPhase => "End turn".into(),
         Action::PlayCard { card, replacing } => {
             let suffix = if game.play_finds_targets(*card) {

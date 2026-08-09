@@ -100,7 +100,16 @@ pub enum GameEvent {
         don: CardInstanceId,
         to: CardInstanceId,
     },
+    /// 6-2-3: DON!! given to cards goes back to the cost area at end of turn.
+    /// The player keeps it.
     DonReturned {
+        player: PlayerId,
+        count: u8,
+    },
+    /// The "DON!! −N" cost: DON!! leaves the field for the DON!! deck. The
+    /// opposite of [`GameEvent::DonReturned`] in effect — the player is down
+    /// that much DON!! until it comes back around off the deck.
+    DonSpentToDonDeck {
         player: PlayerId,
         count: u8,
     },
@@ -223,6 +232,10 @@ pub enum PlayerEvent {
         player: PlayerId,
         count: u8,
     },
+    DonSpentToDonDeck {
+        player: PlayerId,
+        count: u8,
+    },
 
     CardPlayed {
         player: PlayerId,
@@ -336,6 +349,10 @@ impl GameEvent {
                 to: vis(to),
             },
             GameEvent::DonReturned { player, count } => PlayerEvent::DonReturned { player, count },
+            // Both areas involved are open (3-3-2), so nothing is redacted.
+            GameEvent::DonSpentToDonDeck { player, count } => {
+                PlayerEvent::DonSpentToDonDeck { player, count }
+            }
 
             // A played card lands in an open area, or is an Event card trashed
             // on activation (8-4-2) — public either way.

@@ -9,7 +9,7 @@ use std::sync::Arc;
 use op_ai::{play_out, Agent, HeuristicAgent, IsmctsAgent, IsmctsConfig};
 use op_cards::Cards;
 use op_core::card::CardDb;
-use op_core::{legal_actions, Action, DeckList, Game, GameConfig, PlayerId};
+use op_core::{legal_actions, Action, Game, GameConfig, PlayerId};
 
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -24,66 +24,9 @@ impl Agent for RandomAgent {
     }
 }
 
-fn deck(leader: &str, spec: &[(&str, usize)]) -> DeckList {
-    let mut cards = Vec::new();
-    for (number, n) in spec {
-        for _ in 0..*n {
-            cards.push(number.to_string());
-        }
-    }
-    DeckList {
-        leader: leader.into(),
-        cards,
-    }
-}
-
-fn st01() -> DeckList {
-    deck(
-        "ST01-001",
-        &[
-            ("ST01-002", 4),
-            ("ST01-003", 4),
-            ("ST01-004", 4),
-            ("ST01-005", 2),
-            ("ST01-006", 4),
-            ("ST01-007", 4),
-            ("ST01-008", 2),
-            ("ST01-009", 4),
-            ("ST01-010", 2),
-            ("ST01-011", 4),
-            ("ST01-012", 2),
-            ("ST01-013", 4),
-            ("ST01-014", 4),
-            ("ST01-015", 2),
-            ("ST01-016", 2),
-            ("ST01-017", 2),
-        ],
-    )
-}
-
-fn st02() -> DeckList {
-    deck(
-        "ST02-001",
-        &[
-            ("ST02-002", 4),
-            ("ST02-003", 4),
-            ("ST02-004", 4),
-            ("ST02-005", 4),
-            ("ST02-006", 2),
-            ("ST02-007", 4),
-            ("ST02-008", 4),
-            ("ST02-009", 2),
-            ("ST02-010", 2),
-            ("ST02-011", 4),
-            ("ST02-012", 4),
-            ("ST02-013", 2),
-            ("ST02-014", 2),
-            ("ST02-015", 4),
-            ("ST02-016", 2),
-            ("ST02-017", 2),
-        ],
-    )
-}
+// Shared with the clients and the op-cards suite, so a change to what ST-01
+// contains cannot silently alter what these matches measure.
+use op_cards::decks::{st01, st02};
 
 type Scripts = Arc<dyn op_core::script::ScriptSource + Send + Sync>;
 
