@@ -357,8 +357,11 @@ fn a_rested_don_source_takes_the_rested_don_and_not_an_active_one() {
     }
 }
 
-/// The same effect with nothing rested to take. "Up to 1" makes giving zero
-/// legal, so this resolves and simply gives nothing — the failure it guards
+/// The same effect with nothing rested to take. It gives nothing because the
+/// pool is empty, not because anyone chose zero: the engine takes `n` greedily
+/// and never offers the count as a decision, so "up to" is honoured here only
+/// by coincidence. (4-8-1 and 8-4-4-1 say the player picks between 0 and n;
+/// that gap is pre-existing and tracked separately.) The failure this guards
 /// against is the engine helping itself to an active DON!! instead.
 #[test]
 fn a_rested_don_source_gives_nothing_when_every_don_is_active() {

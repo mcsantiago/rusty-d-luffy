@@ -600,9 +600,10 @@ fn st01_001_gives_itself_the_rested_don_and_never_an_active_one() {
     assert!(don[..2].iter().all(|&d| game.state.card(d).is_active()));
 }
 
-/// The same effect with every DON!! active. "Up to 1" keeps the activation
-/// legal and it simply gives nothing; what it must not do is take an active
-/// DON!! the player is still holding for costs.
+/// The same effect with every DON!! active. The activation stays legal and
+/// gives nothing, because no rested DON!! exists to select — not because the
+/// count was declined; the engine takes it greedily and never asks. What it
+/// must not do is take an active DON!! the player is still holding for costs.
 #[test]
 fn st01_001_gives_nothing_while_every_don_is_active() {
     let Some((db, cards)) = load() else { return };
