@@ -484,6 +484,13 @@ function renderLife(side, prefix) {
     c.innerHTML = `<div class="back"></div>`;
     box.appendChild(c);
   }
+
+  // Counted like the deck and the trash, so the three piles read alike — and
+  // Life is the one whose number decides the game.
+  const count = document.createElement("div");
+  count.className = "trash-count life-count";
+  count.textContent = side.life_count;
+  box.appendChild(count);
 }
 
 /** The deck, as a face-down pile with its count. */
@@ -530,9 +537,6 @@ function renderSide(view, side, prefix) {
   if (side.stage) stage.appendChild(cardSlot(side.stage, { small: true, yours }));
 }
 
-function lifePips(n) {
-  return `<span class="pips">${"●".repeat(n)}${"○".repeat(Math.max(0, 5 - n))}</span> ${n}`;
-}
 
 /** One action, as a button. Shared by the sidebar and the card menus so a
  *  given action looks and behaves the same wherever it is offered. */
@@ -1189,14 +1193,9 @@ function render(snap) {
   $("session-id").title = "session id — matches the log filename";
   $("phase-label").textContent = `${view.phase} phase · turn ${view.turn}`;
 
-  $("opp-life").innerHTML = `life ${lifePips(view.opponent.life_count)}`;
-  $("opp-hand").textContent = `hand ${view.opponent.hand_count}`;
-  $("opp-deck").textContent = `deck ${view.opponent.deck_count}`;
-  $("opp-don").textContent = `${view.opponent.don_active} active DON!!`;
-
-  $("you-life").innerHTML = `life ${lifePips(view.you.life_count)}`;
-  $("you-deck").textContent = `deck ${view.you.deck_count}`;
-  $("you-don").textContent = `${view.you.don_active} active DON!!`;
+  // Everything else these used to spell out — life, deck, DON!! — is on the
+  // board now as the pile or the row itself. A hidden hand is the exception.
+  $("opp-hand").textContent = `opponent hand ${view.opponent.hand_count}`;
 
   renderSide(view, view.opponent, "opp");
   renderSide(view, view.you, "you");

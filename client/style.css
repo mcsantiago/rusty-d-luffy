@@ -11,10 +11,13 @@
   --accent: #d9484b;
   --accent-2: #f0b429;
   --good: #4ea36b;
-  /* One card size for the whole board, scaled to the window. Every zone
-     derives from these rather than hardcoding its own, so nothing drifts.
-     The 1.4 ratio is the physical card's. */
-  --card-w: clamp(56px, 5.6vw, 92px);
+  /* One card size for the whole board. Every zone derives from it rather than
+     hardcoding its own, so nothing drifts, and the 1.4 ratio is the physical
+     card's.
+     Tied to whichever window dimension is tighter: width alone let a short
+     window keep full-size cards and scroll instead, and a board you scroll is
+     one you cannot read at a glance — both mats have to be on screen. */
+  --card-w: clamp(46px, min(5.6vw, 8.4vh), 92px);
   --card-h: calc(var(--card-w) * 1.4);
   --card-gap: clamp(4px, 0.55vw, 10px);
   --zone-pad: clamp(4px, 0.5vw, 9px);
@@ -153,62 +156,52 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
     radial-gradient(ellipse at 50% 40%, #1d2b3a 0%, var(--felt) 70%);
 }
 
-.side-meta {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  font-size: 12px;
-  color: var(--muted);
-}
-
-.side-meta .who {
-  font-weight: 700;
-  color: var(--ink);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  font-size: 11px;
-}
-
-.pips { color: var(--accent); letter-spacing: 2px; }
-
 /* ---- the playmat ----
 
    A named grid per player rather than a stack of rows, so every zone has a
-   fixed home that does not move as the board fills. The two mats are mirrored
-   about the divider: Character areas nearest it, cost areas furthest apart.
+   fixed home that does not move as the board fills.
 
-       you                       opponent
-   +----+-------------+----+  +----+-------------+----+
-   |life| characters  |deck|  |dond|  cost area  |tras|
-   |life|leader stage |tras|  |life|leader stage |deck|
-   |dond|  cost area  |tras|  |life| characters  |deck|
-   +----+-------------+----+  +----+-------------+----+                     */
+   Leader and Stage flank the Character area, the way they sit on the mat.
+   Six columns: the two middle ones are the battlefield, and splitting them
+   lets the bottom row divide into a cost area and a hand of comparable width
+   without either being one card wide.
+
+   The mats are mirrored about the divider — Character areas nearest it, cost
+   areas furthest apart, as across a table. The opponent has no hand to show,
+   so their cost area takes the whole far edge.
+
+       you                                  opponent
+   +----+----+---------+----+----+     +----+----+---------+----+----+
+   |life| ldr| chars   |stg |deck|     |dond|     cost area          |
+   |life| ldr| chars   |stg |tras|     |life| ldr| chars   |stg |tras|
+   |dond| cost    |    hand      |     |life| ldr| chars   |stg |deck|
+   +----+----+---------+----+----+     +----+----+---------+----+----+   */
 
 .mat {
   display: grid;
   gap: var(--card-gap);
   grid-template-columns:
-    calc(var(--card-w) * 0.78)
+    calc(var(--card-w) * 0.9)    /* life, laid sideways */
+    auto                          /* leader */
+    minmax(0, 1fr)                /* characters */
     minmax(0, 1fr)
-    minmax(0, 1fr)
-    calc(var(--card-w) * 0.9);
+    auto                          /* stage */
+    calc(var(--card-w) * 0.9);    /* deck / trash */
   align-items: stretch;
 }
 
 .mat.you {
   grid-template-areas:
-    "life    characters characters deck"
-    "life    leader     stage      trash"
-    "dondeck cost       cost       trash";
+    "life    leader characters characters stage deck"
+    "life    leader characters characters stage trash"
+    "dondeck cost   cost       hand       hand  hand";
 }
 
-/* Reversed, not rotated: the opponent's cost area is the far edge of the
-   table and their Characters the near one. */
 .mat.opponent {
   grid-template-areas:
-    "dondeck cost       cost       trash"
-    "life    leader     stage      deck"
-    "life    characters characters deck";
+    "dondeck cost   cost       cost       cost  cost"
+    "life    leader characters characters stage trash"
+    "life    leader characters characters stage deck";
 }
 
 .z-life { grid-area: life; }
@@ -219,6 +212,7 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
 .z-trash { grid-area: trash; }
 .z-cost { grid-area: cost; }
 .z-dondeck { grid-area: dondeck; }
+.z-hand { grid-area: hand; }
 
 .zone {
   position: relative;
@@ -258,10 +252,9 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
   height: 100%;
 }
 
-/* Leader and Stage meet at the middle: the Leader ends its column and the
-   Stage starts the next, so they sit together whatever the window width. */
-.z-leader { display: flex; justify-content: flex-end; align-items: center; }
-.z-stage { display: flex; justify-content: flex-start; align-items: center; }
+/* Flanking the battlefield, each hugging its side of it. */
+.z-leader { display: flex; justify-content: center; align-items: center; }
+.z-stage { display: flex; justify-content: center; align-items: center; }
 .leader-slot, .stage-slot, .deck-slot, .trash-slot, .don-deck-slot { flex: 0 0 auto; }
 
 /* An empty Stage still holds its place, or the Leader would slide sideways
@@ -283,20 +276,37 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
    backs. Overlapped upwards into a pile rather than absolutely placed, so the
    stack sizes itself and never escapes its zone. */
 .z-life { display: flex; align-items: center; justify-content: center; }
+/* Laid sideways, as they are on the mat. Face-down cards have no art or text
+   to turn, so a landscape rectangle *is* a sideways card — no rotation, which
+   would leave the layout box upright and the stack as tall as before. Five of
+   them then cost a short side plus four overlaps instead of five long sides. */
 .life-stack {
   display: flex;
   flex-direction: column;
   align-items: center;
-  width: calc(var(--card-w) * 0.68);
+  width: calc(var(--card-w) * 0.86);
 }
 .life-stack.none { opacity: 0.3; }
-.life-card {
-  width: calc(var(--card-w) * 0.68);
-  height: calc(var(--card-w) * 0.68 * 1.4);
-  flex: 0 0 auto;
-  margin-top: calc(var(--card-w) * -0.68 * 1.4 + 15px);
+
+/* Anchored to the zone rather than the pile, and lifted above it: the cards
+   carry explicit z-indexes so they stack, which paints the top one over any
+   badge sitting inside. */
+.life-count {
+  right: 6px;
+  bottom: 5px;
+  z-index: 2;
 }
-.life-card:first-child { margin-top: 0; }
+/* Qualified with .card deliberately: these elements carry both classes, and
+   the .card block below sets a portrait width and height at the same
+   specificity — so on a bare .life-card it wins on order and the stack comes
+   out upright. */
+.card.life-card {
+  width: calc(var(--card-w) * 0.86);
+  height: calc(var(--card-w) * 0.86 / 1.4);
+  flex: 0 0 auto;
+  margin-top: calc(var(--card-w) * -0.86 / 1.4 + 18px);
+}
+.card.life-card:first-child { margin-top: 0; }
 
 /* Room for ten DON!! without a second row at full size, and controlled
    overlap rather than overflow when there is not. */
@@ -327,16 +337,15 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
   padding: 4px 0;
 }
 
-#hand-area { margin-top: 12px; }
-.hand-label {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--muted);
-  margin-bottom: 6px;
-  text-align: center;
+.z-hand { display: flex; align-items: center; }
+.hand {
+  display: flex;
+  gap: var(--card-gap);
+  flex-wrap: wrap;
+  justify-content: center;
+  width: 100%;
+  min-height: var(--card-h);
 }
-.hand { display: flex; gap: var(--card-gap); flex-wrap: wrap; justify-content: center; }
 
 /* ---- cards ---- */
 

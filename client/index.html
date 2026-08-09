@@ -70,6 +70,8 @@
       <header id="topbar">
         <span id="turn-label"></span>
         <span id="phase-label" class="muted"></span>
+        <!-- The one count with no place on the board: their hand is hidden. -->
+        <span id="opp-hand" class="muted"></span>
         <span id="session-id" class="session-id"></span>
         <button id="show-debug" class="ghost">Debug</button>
         <button id="new-game" class="ghost">New game</button>
@@ -82,13 +84,6 @@
              come from data-label via ::before, so they survive the innerHTML
              the renderers use to rebuild each zone. -->
         <div class="mat opponent" id="opponent-side">
-          <div class="side-meta">
-            <span class="who">Opponent</span>
-            <span class="stat" id="opp-life"></span>
-            <span class="stat" id="opp-hand"></span>
-            <span class="stat" id="opp-deck"></span>
-            <span class="stat" id="opp-don"></span>
-          </div>
           <div class="zone z-dondeck" data-label="DON!! Deck">
             <div class="don-deck-slot" id="opp-don-deck"></div>
           </div>
@@ -142,17 +137,11 @@
           <div class="zone z-cost" data-label="Cost Area">
             <div class="don-row" id="you-don-row"></div>
           </div>
-          <div class="side-meta">
-            <span class="who">You</span>
-            <span class="stat" id="you-life"></span>
-            <span class="stat" id="you-deck"></span>
-            <span class="stat" id="you-don"></span>
+          <!-- In the mat, beside the cost area: the two things you spend from
+               on your own turn, side by side. -->
+          <div class="zone z-hand" data-label="Hand" id="hand-area">
+            <div class="hand" id="hand"></div>
           </div>
-        </div>
-
-        <div id="hand-area">
-          <div class="hand-label">Hand</div>
-          <div class="hand" id="hand"></div>
         </div>
       </section>
 
