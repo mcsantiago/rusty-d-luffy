@@ -95,6 +95,9 @@ jobs:
       # it is what left ST-04 and ST-08 without data, failing their tests with
       # `UnknownCard` rather than skipping them.
       - name: Fetch card data
+        # Explicit, because Windows runners default to PowerShell and the
+        # command substitution below is bash.
+        shell: bash
         run: |
           PACKS=$(cargo run -q --release -p op-cards --bin packs)
           echo "fetching packs: $PACKS"
