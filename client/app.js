@@ -56,6 +56,9 @@ const lastCause = new Map();
 /** The cards in the battle currently being resolved, if any. */
 let battleAttacker = null;
 let battleDefender = null;
+/** The attack being aimed, or null: `{ attacker, targets }`, where `targets`
+ *  maps a target's instance id to the option that attacks it. */
+let targeting = null;
 
 const $ = (id) => document.getElementById(id);
 
@@ -162,6 +165,14 @@ function cardEl(
   el.addEventListener("mouseleave", unhoverMenu);
   el.addEventListener("click", (e) => {
     e.stopPropagation();
+    // While aiming, the board is the target picker and a click on it declares
+    // the attack rather than opening the card's own menu.
+    if (targeting) {
+      const opt = targeting.targets.get(card.id);
+      cancelTargeting();
+      if (opt) choose(opt.index);
+      return;
+    }
     pinMenu(card, el, yours);
   });
   return el;
@@ -285,7 +296,11 @@ async function openMenu(card, el, yours) {
   if (options.length === 0 && yours) {
     list.innerHTML = `<div class="menu-none">No actions from this card</div>`;
   }
-  fillOptions(list, options);
+  // Every attack this card can make becomes one button; the rest are per-action
+  // as before.
+  const attacks = options.filter((o) => o.kind === "attack");
+  if (attacks.length > 0) list.appendChild(attackButton(card.id, attacks));
+  fillOptions(list, options.filter((o) => o.kind !== "attack"));
   list.hidden = options.length === 0 && !yours;
 
   menu.classList.toggle("pinned", pinned);
@@ -322,9 +337,18 @@ $("card-menu").addEventListener("click", (e) => e.stopPropagation());
 // The cursor leaving the card to reach the menu must not close it.
 $("card-menu").addEventListener("mouseenter", () => clearTimeout(closeTimer));
 $("card-menu").addEventListener("mouseleave", unhoverMenu);
-document.addEventListener("click", closeMenu);
+// A click that reaches the document missed every card, so it is a miss in both
+// senses: it dismisses the menu and calls off an attack being aimed.
+document.addEventListener("click", () => {
+  cancelTargeting();
+  closeMenu();
+});
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") closeMenu();
+  if (e.key !== "Escape") return;
+  // Escape backs out one step at a time: out of aiming first, since that is
+  // the mode the board is in, and only then out of the menu.
+  if (targeting) cancelTargeting();
+  else closeMenu();
 });
 
 /** A card plus any DON!! given to it.
@@ -598,6 +622,79 @@ function optionButton(opt) {
 
 function fillOptions(container, options) {
   for (const opt of options) container.appendChild(optionButton(opt));
+}
+
+// ---- aiming an attack -------------------------------------------------------
+//
+// The engine offers an attack as one action per (attacker, target) pair, so a
+// filled board is a dozen near-identical buttons reading "Attack X into Y". This
+// is the same collapse `renderChoose` does below for Choose, for the same
+// reason: turn a list of combinations back into what the player is doing, which
+// is picking an attacker and then picking what it hits.
+//
+// The eligible targets are read off the options the engine sent. They are never
+// recomputed from the rules here — a second opinion in JS about what may be
+// attacked is exactly the divergence this must not introduce.
+
+/** The distinct targets among an attacker's options, each mapped to the option
+ *  that hits it. `Action::Attack` sends `[attacker, target]` as its cards. */
+function attackTargets(attacks) {
+  const targets = new Map();
+  for (const opt of attacks) {
+    const target = opt.cards[1];
+    if (target != null && !targets.has(target)) targets.set(target, opt);
+  }
+  return targets;
+}
+
+/** The one Attack button that stands in for all of them. */
+function attackButton(attackerId, attacks) {
+  const targets = attackTargets(attacks);
+
+  const b = document.createElement("button");
+  b.className = "opt attack";
+  b.textContent = "Attack";
+  b.addEventListener("click", () => beginTargeting(attackerId, targets));
+  // Hover previews the reach without entering the mode, so "what can this
+  // hit?" does not cost a click in and a click back out.
+  b.addEventListener("mouseenter", () => {
+    highlighted = new Set([attackerId, ...targets.keys()]);
+    applyHighlight();
+  });
+  b.addEventListener("mouseleave", () => {
+    highlighted = new Set();
+    applyHighlight();
+  });
+  return b;
+}
+
+function beginTargeting(attackerId, targets) {
+  targeting = { attacker: attackerId, targets };
+  highlighted = new Set();
+  closeMenu();
+  applyHighlight();
+  applyTargeting();
+}
+
+function cancelTargeting() {
+  if (!targeting) return;
+  targeting = null;
+  applyTargeting();
+}
+
+/** Marks the attacker and its eligible targets in place.
+ *
+ * In place rather than by re-render, for the same reason as `applyHighlight`:
+ * rebuilding the board under the cursor re-fires the hover that got us here.
+ */
+function applyTargeting() {
+  const targets = targeting ? targeting.targets : new Map();
+  document.body.classList.toggle("aiming", !!targeting);
+  for (const el of document.querySelectorAll(".card")) {
+    const id = Number(el.dataset.id);
+    el.classList.toggle("targetable", targets.has(id));
+    el.classList.toggle("aimer", !!targeting && id === targeting.attacker);
+  }
 }
 
 /** Whether the full list is expanded. Kept across renders: a disclosure that
@@ -1126,6 +1223,11 @@ function render(snap) {
   // mulligan no card has actions and none should look inert.
   cardsCanAct = snap.pending_kind === "main" && !view.battle;
   beatsNow = snap.battle_beats ?? [];
+
+  // An option index only means anything against the decision it was read from,
+  // so an aim in progress cannot survive a new snapshot.
+  targeting = null;
+  document.body.classList.remove("aiming");
 
   menus = new Map();
   cardless = [];
