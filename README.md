@@ -240,15 +240,20 @@ cargo run -p op-cards --bin coverage -- EB01  # what EB01 still needs, with text
 
 ## Status
 
-**v0.1.1** — a rules-correctness patch over the first tagged release: an effect
-reading "rested DON!! card" now selects a rested DON!! rather than resting an
-active one. Playable against the AI on macOS, Windows and Linux; the binaries
-are unsigned, so both Gatekeeper and SmartScreen will warn on first launch.
-Card data is not bundled and is fetched on first run.
+**v0.2.0** — the desktop client is now card-centric: actions are offered from
+the card they belong to, the board is laid out as a board, and decisions show
+the cards they are about rather than naming them. Session logs replay and
+verify against the engine, so any recorded game is a regression test. Two
+rules fixes: an effect reading "rested DON!! card" selects a rested DON!!
+rather than resting an active one, and the End Phase announces itself like
+every other phase. Playable against the AI on macOS, Windows and Linux; the
+binaries are unsigned, so both Gatekeeper and SmartScreen will warn on first
+launch. Card data is not bundled and is fetched on first run.
 
 Implemented: the rules kernel, ST-01, ST-02 and ST-06 at full script coverage,
 the legal-action generator, heuristic and ISMCTS agents, static validation of
-card scripts, and both clients — desktop and terminal.
+card scripts, session replay and verification, and both clients — desktop and
+terminal.
 
 Not yet built: PyO3 bindings and the Gymnasium environment, and the authoritative
 multiplayer server and web client. Both sit on top of the existing kernel — the
