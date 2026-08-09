@@ -87,11 +87,8 @@ pub enum Pending {
         player: PlayerId,
         card: CardInstanceId,
     },
-    /// An auto effect wants an activation cost paid before it resolves.
-    ///
-    /// 8-3-1-4: a cost worded with "may" is the controller's to decline, and
-    /// declining means the effect is not activated at all. An *activated*
-    /// effect never lands here — choosing `ActivateEffect` is the agreement.
+    /// 8-3-1-4: an auto effect's cost, which the controller may decline.
+    /// Activated effects never land here; choosing to activate is the agreement.
     PayCost {
         player: PlayerId,
         /// The card whose effect is asking.

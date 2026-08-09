@@ -287,12 +287,8 @@ pub enum Who {
     Both,
 }
 
-/// `up_to`/`at_least` value meaning "however many there are".
-///
-/// Both are capped at the size of the pool, so this reads as "all of them".
-/// Setting both to `ALL` leaves exactly one legal answer — every candidate — and
-/// [`EffectOp::Choose`] then binds without asking, which is what "K.O. **all**
-/// Characters with a cost of 1 or less" (ST08-005) means.
+/// "However many there are". Both counts are capped at the pool, so setting
+/// each to `ALL` leaves one legal answer and `Choose` binds without asking.
 pub const ALL: u8 = u8::MAX;
 
 /// A filtered request for cards, resolved against the state at choice time.
@@ -300,16 +296,9 @@ pub const ALL: u8 = u8::MAX;
 pub struct Selector {
     pub zone: Zone,
     pub owner: Who,
-    /// Draw the pool from a binding instead of a zone query.
-    ///
-    /// `None` is the ordinary case: `zone` and `owner` name the pool. `Some(key)`
-    /// takes the cards already bound under `key`, keeping only those still on
-    /// the field (8-1-3-1-3), and ignores `zone`/`owner`.
-    ///
-    /// Exists because some pools cannot be re-derived from the state when the
-    /// choice is made: `[BATTLED]` is the case in hand, since the battle is over
-    /// by the time an `EndOfBattle` effect resolves, so the participants have to
-    /// travel with the frame (ST08-013).
+    /// `Some(key)` draws the pool from that binding rather than `zone`/`owner`,
+    /// keeping only cards still on the field (8-1-3-1-3). For pools the state
+    /// cannot re-derive at choice time, such as `[BATTLED]`.
     pub from: Option<String>,
     /// `Some(n)` means "up to n"; the player may always choose fewer, including
     /// zero, when the text says "up to" (8-4-4-1).
@@ -345,13 +334,8 @@ pub enum Filter {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Condition {
-    /// At least one card is bound under `key` in the resolving frame — the
-    /// "If you do," half of "you may X. If you do, Y." (ST08-013), where the
-    /// optionality of X is a `Choose` the player may answer with nothing.
-    ///
-    /// Only meaningful inside a resolving effect. A permanent or an auto
-    /// effect's activation conditions are checked with no frame in hand, and
-    /// this reads false there.
+    /// The "If you do," half of "you may X. If you do, Y." Reads false outside
+    /// a resolving frame, where there are no bindings to test.
     Bound(String),
     /// `[DON!! xN]` — at least N DON!! given to the source card (10-2-9).
     DonAttached(u8),
@@ -373,9 +357,8 @@ pub enum Condition {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingCost {
     pub cost: crate::script::ActivationCost,
-    /// The effect's slot, so `[Once Per Turn]` is consumed only when the cost
-    /// is actually paid — a declined effect never activated (8-3-1-4), so it
-    /// has not been used this turn.
+    /// So `[Once Per Turn]` is consumed only on payment: a declined effect
+    /// never activated.
     pub slot: u8,
     pub once_per_turn: bool,
 }
@@ -387,12 +370,8 @@ pub struct EffectFrame {
     pub source: CardInstanceId,
     pub controller: PlayerId,
     pub ops: Vec<EffectOp>,
-    /// A cost the controller has not yet agreed to pay (8-3-1-4).
-    ///
-    /// While this is set the frame runs no ops: the engine asks first, and a
-    /// refusal discards the frame without the effect ever activating. An
-    /// activated effect has no need of it — taking `ActivateEffect` at all is
-    /// the agreement — so only auto effects arrive here.
+    /// 8-3-1-4: a cost the controller has not agreed to yet. While set, the
+    /// frame runs no ops. Only auto effects arrive here.
     pub pending_cost: Option<PendingCost>,
     /// Instruction pointer — where to resume after a suspension.
     pub ip: usize,

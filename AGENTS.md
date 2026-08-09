@@ -119,6 +119,20 @@ scripts before rolling it out.
 **Comments explain why, not what.** Prefer recording the reason a thing is
 surprising over narrating the code.
 
+**One line is the default; four is the ceiling.** The median comment in this
+repo is a single line. A rule citation and the divergence it justifies fit in
+one: `// 8-3-1-4: the cost is the controller's to decline.` If the reasoning
+needs a paragraph, it belongs in the commit message, where it is searchable,
+dated, and does not rot in place as the code moves under it.
+
+Do not write a comment that says what the code used to do, re-argues a decision
+already made in the commit message or an issue, or restates the function name,
+the type, or the next statement. Agents are especially prone to the first two:
+having just done the reasoning, the urge is to leave all of it behind.
+
+Card scripts are the exception — each keeps its printed text above it, and any
+divergence from that text cites its rule.
+
 **A test that cannot fail is not a test.** For anything security- or
 correctness-critical, verify the test fails against the old behaviour before
 trusting it.

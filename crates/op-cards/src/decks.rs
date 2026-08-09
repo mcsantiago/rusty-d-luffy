@@ -1,13 +1,7 @@
 //! The built-in decklists, in one place.
 //!
-//! These lived in four copies — the desktop client, the terminal client, and
-//! the `op-cards` and `op-ai` test suites — which is how ST-04 and ST-08 came
-//! to be fully scripted and tested while the desktop deck picker still offered
-//! three decks. A set is now added once, here, and every consumer sees it.
-//!
-//! This crate is the right home because it is already the one that knows about
-//! individual products: a deck is only playable if its cards are scripted, and
-//! both facts now live side by side.
+//! Every client and test suite reads these, so a set is added once. This crate
+//! is the home because a deck is only playable if its cards are scripted.
 
 use op_core::DeckList;
 

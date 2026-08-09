@@ -198,9 +198,8 @@ fn targets_of(
 /// `table` is the partially-derived characteristics table, so conditions that
 /// read power see the layers resolved so far — which is what 8-4-6 asks for.
 ///
-/// `frame` is the effect being resolved, where there is one. Permanents and an
-/// auto effect's activation conditions are checked with no frame in hand, so a
-/// condition that reads a binding is false for them — see [`Condition::Bound`].
+/// `frame` is the resolving effect where there is one; conditions that read a
+/// binding are false without it.
 pub fn conditions_hold(
     state: &GameState,
     db: &CardDb,

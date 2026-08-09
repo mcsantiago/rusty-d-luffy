@@ -179,11 +179,8 @@ pub fn choose(key: &str, select: Selector) -> EffectOp {
     }
 }
 
-/// Binds everything matching, with no question asked — "**all** Characters
-/// with a cost of 1 or less".
-///
-/// A `choose` whose floor is the whole pool: the only legal answer is every
-/// candidate, so the engine binds without staging a decision.
+/// "**All** Characters with a cost of 1 or less" — a `choose` whose floor is
+/// the whole pool, so the engine binds without asking.
 pub fn select_all(key: &str, mut select: Selector) -> EffectOp {
     select.up_to = ALL;
     select.at_least = ALL;
@@ -193,10 +190,8 @@ pub fn select_all(key: &str, mut select: Selector) -> EffectOp {
     }
 }
 
-/// "Up to `up_to` of the cards bound under `from`." Used where the pool cannot
-/// be re-derived from the board at choice time — see [`BATTLED`].
-///
-/// A `choose` whose pool is a binding rather than a zone query.
+/// "Up to `up_to` of the cards bound under `from`" — a `choose` whose pool is a
+/// binding rather than a zone query, for pools like [`BATTLED`].
 pub fn choose_from(key: &str, from: &str, up_to: u8) -> EffectOp {
     EffectOp::Choose {
         key: key.to_string(),

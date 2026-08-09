@@ -272,25 +272,18 @@ impl Game {
                 };
                 let source = self.state.stack.frames[idx].source;
                 if !pay {
-                    // 8-3-1-4: refusing the cost means the effect is not
-                    // activated at all — no announcement, and its
-                    // `[Once Per Turn]` is untouched.
+                    // 8-3-1-4: refused, so the effect never activates.
                     self.state.stack.frames.remove(idx);
                     self.state.pending = None;
                     return Ok(());
                 }
-                // The cost may have stopped being payable while the question
-                // was outstanding, since an earlier effect in the same window
-                // can spend the same DON!!.
+                // An earlier effect in the same window may have spent it.
                 if !self.can_pay(player, source, &pc.cost) {
                     self.state.stack.frames.remove(idx);
                     self.state.pending = None;
                     return Ok(());
                 }
-                // Known simplification: a hand cost still takes the leftmost
-                // cards rather than asking which. Declining is now possible,
-                // which is the half that was destroying resources; choosing
-                // *which* card wants a second decision point.
+                // Simplification: a hand cost takes the leftmost cards.
                 let discard: Vec<CardInstanceId> = self
                     .state
                     .player(player)
@@ -1624,7 +1617,7 @@ impl Game {
             // never advance and the effect would replay forever.
             let idx = self.state.stack.frames.len() - 1;
 
-            // Before any op runs: an unpaid cost is a question, not a fee.
+            // An unpaid cost is a question, not a fee.
             if let Some(pc) = &frame.pending_cost {
                 self.state.pending = Some(Pending::PayCost {
                     player: frame.controller,
@@ -1678,12 +1671,8 @@ impl Game {
                     self.state.stack.frames[idx].bind(&key, Vec::new());
                     return OpOutcome::Advance;
                 }
-                // No discretion left, so do not stage a decision: once the
-                // floor reaches the whole pool the only legal answer is every
-                // candidate. "K.O. **all** Characters with a cost of 1 or less"
-                // (ST08-005) is not a choice, and offering it as one would put a
-                // pointless subset enumeration in front of the player and the
-                // search alike.
+                // One legal answer is not a decision: a floor covering the
+                // whole pool means every candidate, so do not stage a choice.
                 let floor = (select.at_least as usize).min(options.len());
                 if floor == options.len() {
                     self.state.stack.frames[idx].bind(&key, options);
@@ -2181,11 +2170,8 @@ impl Game {
                 if !self.can_pay(controller, card, &effect.cost) {
                     continue;
                 }
-                // 8-3-1-4: the cost is the controller's to decline, and
-                // declining means the effect is not activated. The frame is
-                // pushed unpaid and parks on `Pending::PayCost`; only when it
-                // is paid does the effect announce itself and consume its
-                // `[Once Per Turn]`.
+                // 8-3-1-4: the cost is the controller's to decline. Pushed
+                // unpaid; it announces itself only once paid.
                 pending_cost = Some(crate::effect::PendingCost {
                     cost: effect.cost.clone(),
                     slot: effect.slot,
