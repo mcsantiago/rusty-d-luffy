@@ -610,14 +610,16 @@ impl Session {
                 _ => None,
             });
 
-        // The frame on top of the stack is the one that suspended for this
-        // choice, so its source is the card doing the asking.
-        let choose_source = choose_up_to.and(self.game.state.stack.top()).map(|frame| {
-            self.db
-                .get(self.game.state.card(frame.source).def)
-                .number
-                .clone()
-        });
+        // The frame at the front of the resolution queue is the one that
+        // suspended for this choice, so its source is the card doing the asking.
+        let choose_source = choose_up_to
+            .and(self.game.state.resolution.current())
+            .map(|frame| {
+                self.db
+                    .get(self.game.state.card(frame.source).def)
+                    .number
+                    .clone()
+            });
 
         Snapshot {
             view,

@@ -6,7 +6,8 @@
 mod common;
 
 use common::{deck_of, game_with, TestCards, TestScripts};
-use op_core::effect::DonSource;
+use op_core::effect::{DonSource, EffectOp, Timing, Who, SELF_BINDING};
+use op_core::script::{ActivationCost, AutoEffect, CardScript};
 use op_core::state::Placement;
 use op_core::zone::Zone;
 use op_core::{Action, BattleStep, Game, GameEvent, GameOver, Pending, Phase, PlayerId};
@@ -1387,5 +1388,182 @@ fn rule_7_1_battle_runs_attack_block_counter_damage_end_in_order() {
             BattleStep::Damage,
             BattleStep::EndOfBattle,
         ]
+    );
+}
+
+// ---- 8-6 Order of Effect Resolution ---------------------------------------
+
+/// A card whose whole script is one unconditional, free auto effect.
+fn auto_script(timing: Timing, ops: Vec<EffectOp>) -> CardScript {
+    CardScript {
+        auto: vec![AutoEffect {
+            timing,
+            conditions: Vec::new(),
+            cost: ActivationCost::default(),
+            ops,
+            slot: 0,
+            once_per_turn: false,
+        }],
+        ..CardScript::default()
+    }
+}
+
+fn kos_itself() -> EffectOp {
+    EffectOp::Ko {
+        key: SELF_BINDING.to_string(),
+    }
+}
+
+fn draw_for(player: Who) -> EffectOp {
+    EffectOp::Draw { player, n: 1 }
+}
+
+/// Where in `events` the first matching event landed.
+fn position_of(events: &[GameEvent], pred: impl Fn(&GameEvent) -> bool, what: &str) -> usize {
+    events
+        .iter()
+        .position(pred)
+        .unwrap_or_else(|| panic!("expected {what} in {events:#?}"))
+}
+
+fn ko_at(events: &[GameEvent]) -> usize {
+    position_of(
+        events,
+        |e| matches!(e, GameEvent::KnockedOut { .. }),
+        "a K.O.",
+    )
+}
+
+fn draw_at(events: &[GameEvent], player: PlayerId) -> usize {
+    position_of(
+        events,
+        |e| matches!(e, GameEvent::Drew { player: p, .. } if *p == player),
+        &format!("a draw by {player:?}"),
+    )
+}
+
+/// 8-6-3: an effect whose activation timing is fulfilled *during* another
+/// effect's resolution activates after that resolution finishes. It does not
+/// pre-empt the ops the triggering effect has left to run.
+///
+/// The shipped shape is ST08-013, whose "K.O. the battled Character, then K.O.
+/// itself" fulfils ST08-001's "when a Character is K.O.'d" half-way through.
+#[test]
+fn rule_8_6_3_a_mid_resolution_trigger_waits_for_the_effect_that_caused_it() {
+    let cards = TestCards::new();
+    // K.O.s itself and then draws: the K.O. fulfils the watcher's timing with
+    // an op still outstanding, which is the whole test.
+    let actor = auto_script(
+        Timing::EndOfYourTurn,
+        vec![kos_itself(), draw_for(Who::You)],
+    );
+    // Draws for the *opponent*, so the two draws are told apart by player.
+    let watcher = auto_script(Timing::OnCharacterKoed, vec![draw_for(Who::Opponent)]);
+
+    let (mut game, _) = game_with(
+        &cards,
+        TestScripts::default()
+            .with(cards.def("CHR-5K"), actor)
+            .with(cards.def("CHR-7K"), watcher),
+        7,
+        ("LDR-001", deck_of("CHR-2K", 30)),
+        ("LDR-002", deck_of("CHR-2K", 30)),
+    );
+    to_main(&mut game);
+    put_in_play(&mut game, PlayerId::P0, "CHR-5K");
+    put_in_play(&mut game, PlayerId::P0, "CHR-7K");
+
+    let events = game.step(Action::EndMainPhase).unwrap().events;
+
+    let ko = ko_at(&events);
+    let own_draw = draw_at(&events, PlayerId::P0);
+    let triggered_draw = draw_at(&events, PlayerId::P1);
+
+    assert!(ko < own_draw, "the effect K.O.s before it draws");
+    assert!(
+        own_draw < triggered_draw,
+        "8-6-3: the triggered effect must wait for the rest of the effect that \
+         triggered it, but its draw landed at {triggered_draw} and the \
+         triggering effect's own draw at {own_draw}"
+    );
+}
+
+/// 8-6-1-1: where A and B are both already waiting and resolving A fulfils C's
+/// timing, C resolves after B — a newly triggered effect joins the back of the
+/// queue, not the front.
+#[test]
+fn rule_8_6_1_1_a_newly_triggered_effect_goes_behind_one_already_waiting() {
+    let cards = TestCards::new();
+    let first = auto_script(Timing::EndOfYourTurn, vec![kos_itself()]);
+    let second = auto_script(Timing::EndOfYourTurn, vec![draw_for(Who::You)]);
+    let triggered = auto_script(Timing::OnCharacterKoed, vec![draw_for(Who::Opponent)]);
+
+    let (mut game, _) = game_with(
+        &cards,
+        TestScripts::default()
+            .with(cards.def("CHR-5K"), first)
+            .with(cards.def("CHR-7K"), second)
+            .with(cards.def("CHR-2K"), triggered),
+        7,
+        ("LDR-001", deck_of("CHR-BLOCK", 30)),
+        ("LDR-002", deck_of("CHR-BLOCK", 30)),
+    );
+    to_main(&mut game);
+    // Both end-of-turn effects are waiting before either resolves.
+    put_in_play(&mut game, PlayerId::P0, "CHR-5K");
+    put_in_play(&mut game, PlayerId::P0, "CHR-7K");
+    put_in_play(&mut game, PlayerId::P0, "CHR-2K");
+
+    let events = game.step(Action::EndMainPhase).unwrap().events;
+
+    let ko = ko_at(&events);
+    let already_waiting = draw_at(&events, PlayerId::P0);
+    let newly_triggered = draw_at(&events, PlayerId::P1);
+
+    assert!(
+        ko < already_waiting,
+        "the first end-of-turn effect resolves before the second"
+    );
+    assert!(
+        already_waiting < newly_triggered,
+        "8-6-1-1: an effect triggered mid-resolution resolves after one that \
+         was already waiting, but it cut in at {newly_triggered} ahead of \
+         {already_waiting}"
+    );
+}
+
+/// 8-6-1: when both players' timings are fulfilled at once, the turn player
+/// resolves first.
+///
+/// `all_in_play` walks the turn player's board first for exactly this reason,
+/// which only means anything if the queue preserves collection order.
+#[test]
+fn rule_8_6_1_the_turn_players_effect_resolves_before_their_opponents() {
+    let cards = TestCards::new();
+    let actor = auto_script(Timing::EndOfYourTurn, vec![kos_itself()]);
+    // Both watchers draw for their own controller, so the order of the two
+    // draws *is* the order the two effects resolved in.
+    let watcher = auto_script(Timing::OnCharacterKoed, vec![draw_for(Who::You)]);
+
+    let (mut game, _) = game_with(
+        &cards,
+        TestScripts::default()
+            .with(cards.def("CHR-5K"), actor)
+            .with(cards.def("CHR-7K"), watcher.clone())
+            .with(cards.def("CHR-2K"), watcher),
+        7,
+        ("LDR-001", deck_of("CHR-BLOCK", 30)),
+        ("LDR-002", deck_of("CHR-BLOCK", 30)),
+    );
+    to_main(&mut game);
+    put_in_play(&mut game, PlayerId::P0, "CHR-5K");
+    put_in_play(&mut game, PlayerId::P0, "CHR-7K");
+    put_in_play(&mut game, PlayerId::P1, "CHR-2K");
+
+    let events = game.step(Action::EndMainPhase).unwrap().events;
+
+    assert!(
+        draw_at(&events, PlayerId::P0) < draw_at(&events, PlayerId::P1),
+        "8-6-1: the turn player's watcher must resolve before their opponent's"
     );
 }
