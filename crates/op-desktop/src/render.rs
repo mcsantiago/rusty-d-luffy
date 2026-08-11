@@ -3,7 +3,7 @@
 //! Event rendering takes a [`PlayerEvent`], so a card the viewer may not
 //! identify has no id to look up and cannot be named by accident.
 
-use op_core::{Action, CardRef, Game, Pending, PlayerEvent, PlayerId};
+use op_core::{Action, CardRef, DonClass, Game, Pending, PlayerEvent, PlayerId};
 
 pub fn line(event: &PlayerEvent, game: &Game, viewer: PlayerId) -> Option<String> {
     use PlayerEvent as E;
@@ -156,14 +156,36 @@ pub fn candidate_label(id: op_core::CardInstanceId, game: &Game) -> String {
     if def.category != op_core::card::Category::Don {
         return def.name.clone();
     }
-    match game.don_holder(id) {
-        Some(holder) => format!(
+    match game.don_class(id) {
+        DonClass::Given(holder) => format!(
             "DON!! on {}",
             game.db().get(game.state.card(holder).def).name
         ),
-        None if game.state.card(id).is_active() => "DON!! (active)".into(),
-        None => "DON!! (rested)".into(),
+        DonClass::Active => "DON!! (active)".into(),
+        DonClass::Rested => "DON!! (rested)".into(),
     }
+}
+
+/// Counts each class once — "2 rested, 1 on Zoro" — because naming ten
+/// interchangeable DON!! one at a time is the same phrase ten times over.
+fn don_tally(
+    dons: &[op_core::CardInstanceId],
+    game: &Game,
+    whence: impl Fn(DonClass) -> String,
+) -> String {
+    let mut tally: Vec<(DonClass, usize)> = Vec::new();
+    for &d in dons {
+        let class = game.don_class(d);
+        match tally.iter_mut().find(|(c, _)| *c == class) {
+            Some((_, n)) => *n += 1,
+            None => tally.push((class, 1)),
+        }
+    }
+    tally
+        .into_iter()
+        .map(|(class, n)| format!("{n} {}", whence(class)))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 pub fn action_label(action: &Action, game: &Game) -> String {
@@ -248,18 +270,12 @@ pub fn action_label(action: &Action, game: &Game) -> String {
             let names: Vec<String> = cards.iter().map(|&c| name(c)).collect();
             names.join(", ")
         }
-        // DON!! cards are interchangeable, so the option is named by where each
-        // one sits — which is the entire substance of the choice.
-        Action::ReturnDon { dons } => {
-            let whence: Vec<String> = dons
-                .iter()
-                .map(|&d| match game.don_holder(d) {
-                    Some(holder) => format!("on {}", name(holder)),
-                    None if game.state.card(d).is_active() => "active".into(),
-                    None => "rested".into(),
-                })
-                .collect();
-            whence.join(", ")
-        }
+        // DON!! cards are interchangeable, so the option is named by where they
+        // sit — which is the entire substance of the choice.
+        Action::ReturnDon { dons } => don_tally(dons, game, |class| match class {
+            DonClass::Given(holder) => format!("on {}", name(holder)),
+            DonClass::Active => "active".into(),
+            DonClass::Rested => "rested".into(),
+        }),
     }
 }

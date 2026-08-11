@@ -215,21 +215,17 @@ fn pay_cost(game: &mut Game) {
     game.step(Action::PayCost(true)).unwrap();
 }
 
-/// Names the DON!! a pending `DON!! −X` takes back.
+/// Answers a pending `DON!! −X`, if it asked at all.
 ///
-/// Which ones go is the player's choice (3-9-2, 8-3-1-6), so the cost stops to
-/// ask whenever the pool is wider than the cost. Takes the engine's leading
-/// answer, which is the rested cost-area DON!! it used to take silently — so
-/// these tests pin the same outcome as before, now through the decision that
-/// exists to reach it. As with `pay_cost`, the assertion is the point: if the
-/// prompt stops appearing they should fail rather than quietly go back to
-/// testing a forced selection.
+/// Which DON!! go is the player's choice (3-9-2, 8-3-1-6), but only where they
+/// differ: a pool of interchangeable DON!! has one answer and is paid without
+/// stopping. Takes the engine's leading answer, the rested cost-area DON!! it
+/// took silently before, so these tests pin the same outcome either way.
+/// `st04_a_uniform_don_pool_pays_without_asking` is what holds the gate itself.
 fn return_don(game: &mut Game) {
-    assert!(
-        matches!(game.pending(), Some(Pending::ReturnDon { .. })),
-        "expected a DON!! −X prompt, got {:?}",
-        game.pending()
-    );
+    if !matches!(game.pending(), Some(Pending::ReturnDon { .. })) {
+        return;
+    }
     let answer = legal_actions(game)
         .into_iter()
         .next()
@@ -853,6 +849,51 @@ fn st04_don_minus_returns_don_to_the_don_deck_rather_than_resting_it() {
         game.state.player(PlayerId::P0).don_deck.len(),
         deck_before + 7,
         "and went back to the DON!! deck"
+    );
+}
+
+/// Interchangeable DON!! are paid without asking: every answer reaches the same
+/// position, down to the state hash, so there is nothing to decide (3-9-2).
+///
+/// The gate used to be "pool wider than the cost", which stopped the game on
+/// one-answer decisions — a wasted ply per search node, a record per log, and a
+/// modal asking a human to hand-pick seven identical cards.
+#[test]
+fn st04_a_uniform_don_pool_pays_without_asking() {
+    let Some((db, cards)) = load() else { return };
+    let mut game = st04_at_main(db, cards, 5, 14);
+    let leader = game.state.player(PlayerId::P0).leader.unwrap();
+
+    let cost_before = game.state.player(PlayerId::P0).cost_area.len();
+    assert!(
+        cost_before > 7,
+        "a pool wider than the cost is the case that used to prompt"
+    );
+    assert!(
+        game.state
+            .player(PlayerId::P0)
+            .cost_area
+            .iter()
+            .all(|&d| game.state.card(d).is_active()),
+        "and it has to be uniform for there to be nothing to decide"
+    );
+
+    game.step(Action::ActivateEffect {
+        card: leader,
+        slot: 0,
+        discard: Vec::new(),
+    })
+    .unwrap();
+
+    assert!(
+        !matches!(game.pending(), Some(Pending::ReturnDon { .. })),
+        "one distinguishable answer is not a decision, got {:?}",
+        game.pending()
+    );
+    assert_eq!(
+        game.state.player(PlayerId::P0).cost_area.len(),
+        cost_before - 7,
+        "and the cost was paid anyway"
     );
 }
 

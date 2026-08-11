@@ -702,7 +702,7 @@ fn action_ids(action: &Action) -> Vec<crate::ids::CardInstanceId> {
         Action::Attack { attacker, target } => vec![*attacker, *target],
         Action::Block { blocker: Some(c) } => vec![*c],
         Action::Counter { card, to } | Action::CounterEvent { card, to } => vec![*card, *to],
-        Action::Choose { cards } => cards.clone(),
+        Action::Choose { cards } | Action::ReturnDon { dons: cards } => cards.clone(),
         _ => Vec::new(),
     }
 }

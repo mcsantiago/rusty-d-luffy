@@ -95,6 +95,18 @@ pub struct PlayerOutcome {
     pub pending: Option<Pending>,
 }
 
+/// Where a DON!! sits, which is the only thing telling two of them apart.
+/// See [`Game::don_class`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DonClass {
+    /// Rested in the cost area: it cannot be spent again this turn anyway.
+    Rested,
+    /// Given to a card (6-5-5-1), so it is on that holder, not in the cost area.
+    Given(CardInstanceId),
+    /// Active in the cost area, and so still spendable this turn.
+    Active,
+}
+
 /// A game in progress.
 ///
 /// The card database and scripts are immutable and shared; all mutable state is
@@ -324,10 +336,11 @@ impl Game {
                 }
                 // Naming the same DON!! twice would otherwise pay the cost once
                 // and report it paid in full.
-                let mut seen = dons.clone();
-                seen.sort();
-                seen.dedup();
-                if seen.len() != dons.len() {
+                if dons
+                    .iter()
+                    .enumerate()
+                    .any(|(i, d)| dons[i + 1..].contains(d))
+                {
                     return Err(IllegalAction::Illegal(
                         "the same DON!! card named twice".into(),
                     ));
@@ -716,26 +729,26 @@ impl Game {
         if self.state.player(player).life.len() < cost.life_to_hand as usize {
             return false;
         }
-        if self.returnable_don(player).len() < cost.don_minus as usize {
+        // Guarded: `returnable_don` allocates and sorts, and `can_pay` runs per
+        // candidate card at every search node, where almost no cost has one.
+        if cost.don_minus > 0 && self.returnable_don(player).len() < cost.don_minus as usize {
             return false;
         }
         true
     }
 
-    /// Every DON!! a `DON!! −X` may take.
-    ///
-    /// 8-3-1-6, repeated verbatim by 10-2-10-1: the cards come "from their
-    /// Leader area, Character area, and cost area". A DON!! that has been given
-    /// (6-5-5-1) is lifted out of `cost_area` and lives in the holder's
-    /// `attached_don`, so reading the cost area alone misses every one of them
-    /// — which both refuses costs the player can afford and narrows the choice
-    /// 3-9-2 gives them.
-    ///
-    /// Ordered cost area before given, and rested before active within the cost
-    /// area. Only determinism is load-bearing (a rules path must not depend on
-    /// map order), but this order also puts the DON!! a player is most likely
-    /// to surrender first, which is what survives if `legal_actions` ever has
-    /// to truncate.
+    /// What distinguishes one DON!! from another when a `DON!! −X` asks which
+    /// to return. Two DON!! of the same class are interchangeable down to the
+    /// state hash, so this is the whole substance of that decision — and the
+    /// only equivalence a client, a label or a validator may rely on.
+    pub fn don_class(&self, don: CardInstanceId) -> DonClass {
+        match self.don_holder(don) {
+            Some(holder) => DonClass::Given(holder),
+            None if self.state.card(don).is_active() => DonClass::Active,
+            None => DonClass::Rested,
+        }
+    }
+
     /// The card a DON!! has been given to, or `None` if it is loose in the cost
     /// area.
     ///
@@ -750,6 +763,10 @@ impl Game {
             .find(|&c| self.state.card(c).attached_don.contains(&don))
     }
 
+    /// Every DON!! a `DON!! −X` may take: 8-3-1-6 takes them "from their Leader
+    /// area, Character area, and cost area", and a given DON!! (6-5-5-1) lives
+    /// on its holder rather than in the cost area. Ordered rested-before-active
+    /// so the leading answer surrenders what the player can least use.
     pub(crate) fn returnable_don(&self, player: PlayerId) -> Vec<CardInstanceId> {
         let mut pool: Vec<CardInstanceId> = self.state.player(player).cost_area.to_vec();
         pool.sort_by_key(|&d| self.state.card(d).is_active());
@@ -813,7 +830,17 @@ impl Game {
             // against a board that has since shrunk; take what there is rather
             // than deadlock.
             let n = (cost.don_minus as usize).min(pool.len());
-            if pool.len() > n {
+            // Only ask when the pool holds DON!! that differ. Within one class
+            // they are interchangeable down to the state hash, so a bigger pool
+            // than the cost is not by itself a decision.
+            let mixed = {
+                let mut classes = pool
+                    .iter()
+                    .map(|&d| (self.don_holder(d), self.state.card(d).rested));
+                let first = classes.next();
+                classes.any(|c| Some(c) != first)
+            };
+            if pool.len() > n && mixed {
                 return Some(Pending::ReturnDon {
                     player,
                     source: card,

@@ -779,10 +779,9 @@ function renderChoose(snap) {
 
   const upTo = snap.choose_up_to;
   const atLeast = snap.choose_at_least ?? 0;
-  // Sent by the engine side, in the board's order, each with a label for the
-  // candidates the board cannot draw. Deriving them here from the options only
-  // worked while every candidate appeared as a subset of one, which a decision
-  // with a floor above 1 — a DON!! −X of 2 or more — does not offer.
+  // The whole pool, sent by the engine side with a label and a class each:
+  // the board cannot draw a given DON!!, and cannot tell which picks are
+  // equivalent.
   const candidates = snap.choose_candidates ?? [];
 
   const index = cardIndex(snap.view);
@@ -839,11 +838,33 @@ function renderChoose(snap) {
   modal.hidden = animating();
 }
 
-/** Submits a set of cards by finding the option that names exactly them. */
+/** The multiset of classes a pick covers, as a sorted key. */
+function classKey(ids, candidates) {
+  return ids
+    .map((id) => candidates.find((c) => c.id === id)?.class ?? String(id))
+    .sort()
+    .join("|");
+}
+
+/**
+ * Submits a set of cards by finding the option that names them.
+ *
+ * Falls back to matching by class, because the engine offers one representative
+ * per class for interchangeable cards: picking the other of two identical
+ * rested DON!! is the same answer, and must not be refused.
+ */
 function submitChoice(cards, snap) {
-  const opt = snap.options.find((o) => sameSet(o.cards, cards));
+  const candidates = snap.choose_candidates ?? [];
+  const want = classKey(cards, candidates);
+  const opt =
+    snap.options.find((o) => sameSet(o.cards, cards)) ??
+    snap.options.find(
+      (o) => o.cards.length === cards.length && classKey(o.cards, candidates) === want,
+    );
   if (!opt) {
-    $("question").textContent = "That combination is not on offer";
+    // Into the modal, not the board behind it: the overlay is opaque, so a
+    // refusal written to #question is invisible and Confirm looks inert.
+    $("choose-sub").textContent = "That combination is not on offer.";
     return;
   }
   picked = [];

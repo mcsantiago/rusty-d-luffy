@@ -62,6 +62,25 @@ pub struct Choice {
 pub struct ChoiceCandidate {
     pub id: u32,
     pub label: String,
+    /// Cards sharing a class are interchangeable, so a pick differing from an
+    /// offered option only within a class is the same answer. See
+    /// [`choice_class`].
+    pub class: String,
+}
+
+/// A key for cards a decision treats as interchangeable, letting the client
+/// canonicalise a pick the engine offered only one representative of. Anything
+/// that is not a DON!! is its own class, so matching there stays exact.
+fn choice_class(id: op_core::CardInstanceId, game: &Game) -> String {
+    let def = game.db().get(game.state.card(id).def);
+    if def.category != op_core::Category::Don {
+        return id.0.to_string();
+    }
+    match game.don_class(id) {
+        op_core::DonClass::Given(holder) => format!("given:{}", holder.0),
+        op_core::DonClass::Active => "active".into(),
+        op_core::DonClass::Rested => "rested".into(),
+    }
 }
 
 /// One thing that has happened in the battle now being resolved.
@@ -653,19 +672,29 @@ impl Session {
         }
         .map(|card| self.db.get(self.game.state.card(card).def).number.clone());
 
-        // The union of every offered subset, in the engine's order. Not the
-        // singletons: a decision with a floor above 1 offers no subset of one.
+        // Every card the decision may take. Read from the pending itself where
+        // it publishes one: a `ReturnDon` offers one representative per class,
+        // so the union of the offered sets is a strict subset of the pool and
+        // would hide DON!! the player may legally pick.
         let mut choose_candidates: Vec<ChoiceCandidate> = Vec::new();
         if choose_up_to.is_some() {
-            for choice in &options {
-                for &id in &choice.cards {
-                    if choose_candidates.iter().any(|c| c.id == id) {
-                        continue;
-                    }
-                    let label =
-                        crate::render::candidate_label(op_core::CardInstanceId(id), &self.game);
-                    choose_candidates.push(ChoiceCandidate { id, label });
+            let pool: Vec<u32> = match mine {
+                Some(Pending::ReturnDon { options, .. }) => options.iter().map(|d| d.0).collect(),
+                _ => options
+                    .iter()
+                    .flat_map(|choice| choice.cards.iter().copied())
+                    .collect(),
+            };
+            for id in pool {
+                if choose_candidates.iter().any(|c| c.id == id) {
+                    continue;
                 }
+                let card = op_core::CardInstanceId(id);
+                choose_candidates.push(ChoiceCandidate {
+                    id,
+                    label: crate::render::candidate_label(card, &self.game),
+                    class: choice_class(card, &self.game),
+                });
             }
         }
 

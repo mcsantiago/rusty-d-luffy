@@ -4,11 +4,16 @@
 //! against it, the RL env uses it as an action mask, and search agents use it
 //! as the move generator. Keeping them on the same implementation is what stops
 //! the three from disagreeing about what is legal.
+//!
+//! The one place this enumerates *up to equivalence* is `ReturnDon`, where
+//! interchangeable DON!! would otherwise multiply one choice into hundreds of
+//! id-sets. `Game::apply` still accepts any of them, so a consumer validating
+//! by membership must canonicalise with `Game::don_class` first.
 
 use crate::action::{Action, Pending};
 use crate::card::Category;
 use crate::derive;
-use crate::game::Game;
+use crate::game::{DonClass, Game};
 use crate::ids::CardInstanceId;
 use crate::zone::Zone;
 
@@ -192,31 +197,17 @@ pub fn legal_actions(game: &Game) -> Vec<Action> {
     }
 }
 
-/// What makes one DON!! different from another for the purpose of choosing:
-/// the card it was given to, if any, and whether it is rested.
-type DonClass = (Option<CardInstanceId>, bool);
-
-/// Every legal answer to a `ReturnDon`, one per *distinguishable* answer.
-///
-/// DON!! cards are interchangeable. Two rested DON!! in the cost area differ
-/// only by id: return either and the position is the same, down to the state
-/// hash. Enumerating subsets of ids would offer ST04-001's `DON!! −7` over ten
-/// DON!! as C(10,7) = 120 answers where there are two or three real ones, and
-/// hand a search 120 branches that all lead to the same node — diluting its
-/// statistics 40-fold over a decision that barely matters.
-///
-/// What distinguishes a DON!! is where it sits: loose in the cost area and
-/// whether it is rested, or given to a particular card. So the answers are
-/// enumerated over those classes, one representative per combination of counts.
-/// Classes are taken greedily-first, which makes the leading answer the rested
-/// cost-area DON!! — the same one the engine used to take without asking.
+/// Every answer to a `ReturnDon` that differs from the others, one per
+/// distribution over [`DonClass`] rather than per subset of ids — C(10,7) is
+/// 120 id-sets and two or three real choices. Callers holding an id-set must
+/// canonicalise it with `don_class` rather than compare ids to these.
 fn return_don_actions(game: &Game, options: &[CardInstanceId], n: u8) -> Vec<Action> {
     let n = (n as usize).min(options.len());
 
     // Grouped in the pool's order, so the enumeration is deterministic.
     let mut classes: Vec<(DonClass, Vec<CardInstanceId>)> = Vec::new();
     for &don in options {
-        let key = (game.don_holder(don), game.state.card(don).rested);
+        let key = game.don_class(don);
         match classes.iter_mut().find(|(k, _)| *k == key) {
             Some((_, group)) => group.push(don),
             None => classes.push((key, vec![don])),

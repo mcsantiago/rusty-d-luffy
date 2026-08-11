@@ -6,7 +6,7 @@
 
 use op_core::card::CardDb;
 use op_core::view::{PlayerSide, PlayerView, VisibleCard};
-use op_core::{Action, CardRef, Game, PlayerEvent, PlayerId};
+use op_core::{Action, CardRef, DonClass, Game, PlayerEvent, PlayerId};
 
 const RULE: &str = "──────────────────────────────────────────────────────────────";
 
@@ -216,13 +216,23 @@ pub fn action(action: &Action, game: &Game) -> String {
         }
         // One DON!! is much like another, so the option is named by where it
         // sits: that is the whole of what the player is choosing between.
+        // Counted per class, not per card: ten interchangeable DON!! named one
+        // at a time is the same phrase ten times, wrapped over three lines.
         Action::ReturnDon { dons } => {
-            let whence: Vec<String> = dons
-                .iter()
-                .map(|&d| match game.don_holder(d) {
-                    Some(holder) => format!("given to {}", name(holder)),
-                    None if game.state.card(d).is_active() => "active in cost area".into(),
-                    None => "rested in cost area".into(),
+            let mut tally: Vec<(DonClass, usize)> = Vec::new();
+            for &d in dons {
+                let class = game.don_class(d);
+                match tally.iter_mut().find(|(c, _)| *c == class) {
+                    Some((_, n)) => *n += 1,
+                    None => tally.push((class, 1)),
+                }
+            }
+            let whence: Vec<String> = tally
+                .into_iter()
+                .map(|(class, n)| match class {
+                    DonClass::Given(holder) => format!("{n} given to {}", name(holder)),
+                    DonClass::Active => format!("{n} active in cost area"),
+                    DonClass::Rested => format!("{n} rested in cost area"),
                 })
                 .collect();
             format!("return DON!!: {}", whence.join("; "))

@@ -8,7 +8,7 @@ use rand::Rng;
 
 use op_core::card::Category;
 use op_core::derive::Derived;
-use op_core::{legal_actions, Action, Game, PlayerId};
+use op_core::{legal_actions, Action, DonClass, Game, PlayerId};
 
 use crate::Agent;
 
@@ -162,6 +162,18 @@ fn shape(action: &Action, game: &Game) -> f64 {
                 _ => 0.0,
             }
         }
+        // The evaluation counts DON!! but not whether they are spendable, so
+        // every way of paying a `DON!! −X` scores the same and the tie breaks
+        // at random. Surrender rested first: an active DON!! still buys a card
+        // this turn, and one given away is already holding up an attack.
+        Action::ReturnDon { dons } => dons
+            .iter()
+            .map(|&d| match game.don_class(d) {
+                DonClass::Rested => 0.0,
+                DonClass::Active => -0.3,
+                DonClass::Given(_) => -0.2,
+            })
+            .sum(),
         _ => 0.0,
     }
 }
