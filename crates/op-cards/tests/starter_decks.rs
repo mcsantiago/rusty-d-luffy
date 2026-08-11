@@ -3,6 +3,8 @@
 //! Skipped when `data/` is unpopulated; run
 //! `python3 tools/ingest/fetch_cards.py` first.
 
+mod common;
+
 use std::sync::Arc;
 
 use op_cards::Cards;
@@ -23,8 +25,7 @@ use op_cards::decks::{st01, st02, st04, st06, st08};
 type Scripts = Arc<dyn ScriptSource + Send + Sync>;
 
 fn load() -> Option<(Arc<CardDb>, Scripts)> {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/cards");
-    let db = CardDb::load_dir(dir).ok()?;
+    let db = common::card_db()?;
     let cards: Scripts = Arc::new(Cards::new(&db));
     Some((Arc::new(db), cards))
 }

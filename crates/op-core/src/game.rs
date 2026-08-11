@@ -819,37 +819,44 @@ impl Game {
         blocker: Option<CardInstanceId>,
         events: &mut Vec<GameEvent>,
     ) -> Result<(), IllegalAction> {
-        if let Some(blocker) = blocker {
-            let legal = self.legal_blockers();
-            if !legal.contains(&blocker) {
-                return Err(IllegalAction::Illegal("that card cannot block".into()));
-            }
-            let old_target = self.state.battle.as_ref().unwrap().target;
-            // 10-1-4-1: resting the blocker makes it the new target.
-            self.state.card_mut(blocker).rested = true;
-            events.push(GameEvent::Rested { card: blocker });
-            if let Some(b) = &mut self.state.battle {
-                b.target = blocker;
-                b.blocker_used = true;
-            }
-            events.push(GameEvent::Blocked {
-                blocker,
-                replacing: old_target,
-            });
-            // 7-1-2-2 and 10-2-15-1: activating a [Blocker] is what fulfils
-            // [On Block], so it fires here rather than from a battle step —
-            // the Block Step is also entered when nobody blocks.
-            //
-            // Queued before the step advances, so the frames resolve while the
-            // battle still reads as the Block Step. If one of them moves the
-            // attacker or the new target, `tick_battle`'s standing check sees
-            // it against the zones snapshotted on entering the Counter Step and
-            // jumps to the end of the battle, which is 7-1-2-3.
-            self.queue_autos(Timing::OnBlock, blocker, events);
-        }
         let _ = player;
         self.state.pending = None;
-        self.enter_battle_step(BattleStep::Counter, events);
+
+        // Declining resolves nothing, so the Block Step is over here.
+        let Some(blocker) = blocker else {
+            self.enter_battle_step(BattleStep::Counter, events);
+            return Ok(());
+        };
+
+        let legal = self.legal_blockers();
+        if !legal.contains(&blocker) {
+            return Err(IllegalAction::Illegal("that card cannot block".into()));
+        }
+        let old_target = self.state.battle.as_ref().unwrap().target;
+        // 10-1-4-1: resting the blocker makes it the new target.
+        self.state.card_mut(blocker).rested = true;
+        events.push(GameEvent::Rested { card: blocker });
+        let blocker_zone = self.state.card(blocker).zone;
+        if let Some(b) = &mut self.state.battle {
+            b.target = blocker;
+            b.blocker_used = true;
+            // Re-baselined with the target, or the between-step check would read
+            // the blocker's zone against the zone of the card it replaced and
+            // call an ordinary block a departure.
+            b.target_zone = blocker_zone;
+        }
+        events.push(GameEvent::Blocked {
+            blocker,
+            replacing: old_target,
+        });
+        // 7-1-2-2 and 10-2-15-1: activating a [Blocker] is what fulfils
+        // [On Block], so it fires here rather than from a battle step — the
+        // Block Step is also entered when nobody blocks.
+        self.queue_autos(Timing::OnBlock, blocker, events);
+        // The step deliberately does not advance: the queued frames resolve
+        // first, and `tick_battle` then applies 7-1-2-3 to what they did. Ending
+        // the Block Step here would announce a Counter Step before knowing
+        // whether the battle survives to have one.
         Ok(())
     }
 
