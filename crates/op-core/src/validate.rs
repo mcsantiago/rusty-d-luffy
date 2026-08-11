@@ -465,7 +465,8 @@ mod tests {
 
     #[test]
     fn timings_the_engine_never_fires_are_rejected() {
-        for timing in [Timing::OnKo, Timing::OnBlock, Timing::Trigger] {
+        // [On Block] left this list when `resolve_block` began firing it.
+        for timing in [Timing::OnKo, Timing::Trigger] {
             let script = CardScript {
                 auto: vec![auto(
                     timing,

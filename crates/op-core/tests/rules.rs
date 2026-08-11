@@ -1389,3 +1389,190 @@ fn rule_7_1_battle_runs_attack_block_counter_damage_end_in_order() {
         ]
     );
 }
+
+/// A [Blocker] whose only text is an [On Block] draw, for the three tests
+/// below. Built here rather than inline so they differ only in what they do.
+#[cfg(test)]
+fn draws_on_block() -> op_core::script::CardScript {
+    use op_core::effect::{EffectOp, Who};
+
+    op_core::script::CardScript {
+        auto: vec![op_core::script::AutoEffect {
+            timing: op_core::effect::Timing::OnBlock,
+            conditions: vec![],
+            cost: op_core::script::ActivationCost::default(),
+            ops: vec![EffectOp::Draw {
+                player: Who::You,
+                n: 1,
+            }],
+            slot: 0,
+            once_per_turn: false,
+        }],
+        ..Default::default()
+    }
+}
+
+/// 7-1-2-2 and 10-2-15-1: activating a [Blocker] is what fulfils [On Block].
+#[test]
+fn rule_7_1_2_2_activating_a_blocker_fires_on_block() {
+    let cards = TestCards::new();
+    let scripts = TestScripts::default().with(cards.def("CHR-BLOCK"), draws_on_block());
+    let (mut game, _) = game_with(
+        &cards,
+        scripts,
+        7,
+        ("LDR-001", deck_of("CHR-7K", 30)),
+        ("LDR-002", deck_of("CHR-BLOCK", 30)),
+    );
+    to_main(&mut game);
+    end_turn(&mut game);
+    end_turn(&mut game);
+
+    let attacker = put_in_play(&mut game, PlayerId::P0, "CHR-7K");
+    put_in_play(&mut game, PlayerId::P1, "CHR-BLOCK");
+    game.state.card_mut(attacker).played_on_turn = None;
+    let enemy_leader = game.state.player(PlayerId::P1).leader.unwrap();
+
+    // Deck size, not hand size: taking damage also puts a Life card in hand
+    // (10-1-5-2), so hand size cannot tell a draw from a life card. Only a
+    // draw comes off the deck.
+    let before = game.state.player(PlayerId::P1).deck.len();
+    game.step(Action::Attack {
+        attacker,
+        target: enemy_leader,
+    })
+    .unwrap();
+    let blocker = game.legal_blockers()[0];
+    game.step(Action::Block {
+        blocker: Some(blocker),
+    })
+    .unwrap();
+
+    assert_eq!(
+        game.state.player(PlayerId::P1).deck.len(),
+        before - 1,
+        "[On Block] should have drawn for the blocking player"
+    );
+}
+
+/// The other half of the same wiring, and the reason the test above is not
+/// enough on its own: the Block Step is entered whether or not anyone blocks,
+/// so firing on the step rather than the activation would pass that one and
+/// fail this.
+#[test]
+fn rule_7_1_2_2_declining_to_block_fires_nothing() {
+    let cards = TestCards::new();
+    let scripts = TestScripts::default().with(cards.def("CHR-BLOCK"), draws_on_block());
+    let (mut game, _) = game_with(
+        &cards,
+        scripts,
+        7,
+        ("LDR-001", deck_of("CHR-7K", 30)),
+        ("LDR-002", deck_of("CHR-BLOCK", 30)),
+    );
+    to_main(&mut game);
+    end_turn(&mut game);
+    end_turn(&mut game);
+
+    let attacker = put_in_play(&mut game, PlayerId::P0, "CHR-7K");
+    put_in_play(&mut game, PlayerId::P1, "CHR-BLOCK");
+    game.state.card_mut(attacker).played_on_turn = None;
+    let enemy_leader = game.state.player(PlayerId::P1).leader.unwrap();
+
+    // Deck size again, and here it is load-bearing rather than tidy: letting a
+    // 7000-power attacker through costs a Life card, which lands in hand and
+    // would read exactly like the draw this test says must not happen.
+    let before = game.state.player(PlayerId::P1).deck.len();
+    game.step(Action::Attack {
+        attacker,
+        target: enemy_leader,
+    })
+    .unwrap();
+    game.step(Action::Block { blocker: None }).unwrap();
+
+    assert_eq!(
+        game.state.player(PlayerId::P1).deck.len(),
+        before,
+        "no [Blocker] was activated, so nothing should have fired"
+    );
+}
+
+/// 7-1-2-3: if an [On Block] effect moves the attacker out of its area, the
+/// battle skips the Counter Step and ends. ST03-003 is the printed case — it
+/// places a Character at the bottom of the deck, which can be the attacker.
+#[test]
+fn rule_7_1_2_3_an_on_block_effect_removing_the_attacker_ends_the_battle() {
+    use op_core::effect::{EffectOp, Selector, Who, ALL};
+
+    let cards = TestCards::new();
+    let bounce_the_attacker = op_core::script::CardScript {
+        auto: vec![op_core::script::AutoEffect {
+            timing: op_core::effect::Timing::OnBlock,
+            conditions: vec![],
+            cost: op_core::script::ActivationCost::default(),
+            ops: vec![
+                EffectOp::Choose {
+                    key: "a".to_string(),
+                    select: Selector {
+                        zone: Zone::Character,
+                        owner: Who::Opponent,
+                        from: None,
+                        up_to: ALL,
+                        at_least: ALL,
+                        filters: vec![],
+                    },
+                },
+                EffectOp::MoveTo {
+                    key: "a".to_string(),
+                    to: Zone::Hand,
+                },
+            ],
+            slot: 0,
+            once_per_turn: false,
+        }],
+        ..Default::default()
+    };
+    let scripts = TestScripts::default().with(cards.def("CHR-BLOCK"), bounce_the_attacker);
+    let (mut game, _) = game_with(
+        &cards,
+        scripts,
+        7,
+        ("LDR-001", deck_of("CHR-7K", 30)),
+        ("LDR-002", deck_of("CHR-BLOCK", 30)),
+    );
+    to_main(&mut game);
+    end_turn(&mut game);
+    end_turn(&mut game);
+
+    let attacker = put_in_play(&mut game, PlayerId::P0, "CHR-7K");
+    put_in_play(&mut game, PlayerId::P1, "CHR-BLOCK");
+    game.state.card_mut(attacker).played_on_turn = None;
+    let enemy_leader = game.state.player(PlayerId::P1).leader.unwrap();
+
+    game.step(Action::Attack {
+        attacker,
+        target: enemy_leader,
+    })
+    .unwrap();
+    let blocker = game.legal_blockers()[0];
+    let out = game
+        .step(Action::Block {
+            blocker: Some(blocker),
+        })
+        .unwrap();
+
+    assert_eq!(game.state.card(attacker).zone, Zone::Hand);
+    assert!(game.state.battle.is_none(), "the battle should have ended");
+    let steps: Vec<_> = out
+        .events
+        .iter()
+        .filter_map(|e| match e {
+            GameEvent::BattleStepStarted { step } => Some(*step),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        !steps.contains(&BattleStep::Damage),
+        "7-1-2-3 skips to the end of the battle, got {steps:?}"
+    );
+}

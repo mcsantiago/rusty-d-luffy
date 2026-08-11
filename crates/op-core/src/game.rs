@@ -836,6 +836,16 @@ impl Game {
                 blocker,
                 replacing: old_target,
             });
+            // 7-1-2-2 and 10-2-15-1: activating a [Blocker] is what fulfils
+            // [On Block], so it fires here rather than from a battle step —
+            // the Block Step is also entered when nobody blocks.
+            //
+            // Queued before the step advances, so the frames resolve while the
+            // battle still reads as the Block Step. If one of them moves the
+            // attacker or the new target, `tick_battle`'s standing check sees
+            // it against the zones snapshotted on entering the Counter Step and
+            // jumps to the end of the battle, which is 7-1-2-3.
+            self.queue_autos(Timing::OnBlock, blocker, events);
         }
         let _ = player;
         self.state.pending = None;
