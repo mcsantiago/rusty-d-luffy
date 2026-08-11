@@ -129,6 +129,13 @@ pub fn question(pending: &Pending) -> String {
         Pending::PayCost { cost, .. } => format!("Pay {} to activate?", cost_label(cost)),
         // The count is fixed by the cost (8-3-1-6); only which ones is open.
         Pending::ReturnDon { n, .. } => format!("Return {n} DON!! to your DON!! deck"),
+        Pending::Arrange { cards, .. } => format!(
+            "Put {} back on your deck — top or bottom, in any order",
+            match cards.len() {
+                1 => "this card".to_string(),
+                n => format!("these {n} cards"),
+            }
+        ),
         // "up to" is an offer the player may decline; a non-zero floor is an
         // instruction, and saying "up to" there would suggest otherwise.
         Pending::Choose {
@@ -198,6 +205,22 @@ pub fn action_label(action: &Action, game: &Game) -> String {
         Action::Mulligan(false) => "Keep".into(),
         Action::PayCost(true) => "Pay the cost".into(),
         Action::PayCost(false) => "Don't pay".into(),
+        Action::Arrange { top, bottom } => {
+            // Every option here is the same cards in a different arrangement,
+            // so the label has to spell the arrangement out or they all read
+            // alike.
+            let list = |ids: &[op_core::CardInstanceId]| {
+                if ids.is_empty() {
+                    "—".to_string()
+                } else {
+                    ids.iter()
+                        .map(|&id| name(id))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                }
+            };
+            format!("Top: {} · Bottom: {}", list(top), list(bottom))
+        }
         Action::EndMainPhase => "End turn".into(),
         Action::PlayCard { card, replacing } => {
             let suffix = if game.play_finds_targets(*card) {

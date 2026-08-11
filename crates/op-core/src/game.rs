@@ -266,6 +266,53 @@ impl Game {
                 Ok(())
             }
 
+            (Pending::Arrange { player, cards, key }, Action::Arrange { top, bottom }) => {
+                let player = *player;
+                let key = key.clone();
+                // Every looked-at card, each placed exactly once. Rejected
+                // rather than tolerated: a short answer would silently leave
+                // cards in limbo, in no area at all.
+                let mut named: Vec<CardInstanceId> =
+                    top.iter().chain(bottom.iter()).copied().collect();
+                let mut expected = cards.clone();
+                named.sort();
+                expected.sort();
+                if named != expected {
+                    return Err(IllegalAction::Illegal(
+                        "an arrangement must place every card looked at, exactly once".into(),
+                    ));
+                }
+
+                // Both lists read top-to-bottom within their group. The bottom
+                // goes back in order, so its first entry sits above the rest;
+                // the top goes back in reverse, so its first entry ends up
+                // topmost once the later pushes are underneath it.
+                for &card in bottom {
+                    let owner = self.state.card(card).owner;
+                    self.state
+                        .move_card(card, owner, Zone::Deck, Placement::Bottom);
+                }
+                for &card in top.iter().rev() {
+                    let owner = self.state.card(card).owner;
+                    self.state
+                        .move_card(card, owner, Zone::Deck, Placement::Top);
+                }
+
+                let idx =
+                    self.state
+                        .stack
+                        .frames
+                        .len()
+                        .checked_sub(1)
+                        .ok_or(IllegalAction::Illegal(
+                            "no effect is waiting on an arrangement".into(),
+                        ))?;
+                self.state.stack.frames[idx].bind(&key, Vec::new());
+                self.state.pending = None;
+                let _ = player;
+                Ok(())
+            }
+
             (Pending::PayCost { player, .. }, Action::PayCost(pay)) => {
                 let player = *player;
                 let idx =
@@ -2120,6 +2167,37 @@ impl Game {
                         .put(frame.source, owner, Zone::Trash, Placement::Top);
                 }
                 OpOutcome::Advance
+            }
+
+            Op::LookTop { n, key } => {
+                if frame.has_binding(&key) {
+                    // The placement was performed by the action handler; the
+                    // binding exists only to say the question was answered.
+                    return OpOutcome::Advance;
+                }
+                // Lifted into limbo for the same reason `DigTop` does it: the
+                // cards must not be drawable while the decision is pending.
+                let pool: Vec<CardInstanceId> = self
+                    .state
+                    .player(frame.controller)
+                    .deck
+                    .iter()
+                    .take(n as usize)
+                    .copied()
+                    .collect();
+                if pool.is_empty() {
+                    self.state.stack.frames[idx].bind(&key, Vec::new());
+                    return OpOutcome::Advance;
+                }
+                for &card in &pool {
+                    self.state.lift(card);
+                }
+                self.state.pending = Some(Pending::Arrange {
+                    player: frame.controller,
+                    cards: pool,
+                    key,
+                });
+                OpOutcome::Suspend
             }
 
             Op::RequireIf { cond } => {

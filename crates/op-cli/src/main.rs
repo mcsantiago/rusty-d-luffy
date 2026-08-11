@@ -241,6 +241,10 @@ fn question(pending: &op_core::Pending) -> String {
         P::ReturnDon { n, .. } => {
             format!("Return {n} DON!! card(s) to your DON!! deck — which?")
         }
+        P::Arrange { cards, .. } => format!(
+            "Put these {} back on your deck, top or bottom, in any order:",
+            cards.len()
+        ),
         P::Choose { up_to, .. } => format!("Choose up to {up_to}:"),
     }
 }

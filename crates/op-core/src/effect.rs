@@ -188,6 +188,14 @@ pub enum EffectOp {
         up_to: u8,
         filters: Vec<Filter>,
     },
+    /// Look at the top `n` cards of your deck and put them back, each to the
+    /// top or the bottom, in an order the controller picks (ST03-010).
+    ///
+    /// Distinct from [`EffectOp::DigTop`], which takes cards *out* of the deck
+    /// and dumps the remainder on the bottom in draw order. Nothing leaves the
+    /// deck here, and the order is the whole decision — so it is the player's,
+    /// not the engine's.
+    LookTop { n: u8, key: String },
     /// Stop resolving unless the condition holds (8-3-3 "if" clauses).
     RequireIf { cond: Condition },
     /// Add `n` DON!! cards from the DON!! deck to the cost area (ST04-008 and
@@ -223,6 +231,7 @@ impl EffectOp {
             EffectOp::MoveTo { .. } => "MoveTo",
             EffectOp::PlayBound { .. } => "PlayBound",
             EffectOp::DigTop { .. } => "DigTop",
+            EffectOp::LookTop { .. } => "LookTop",
             EffectOp::RequireIf { .. } => "RequireIf",
             EffectOp::AddDon { .. } => "AddDon",
             EffectOp::TrashLife { .. } => "TrashLife",
@@ -249,6 +258,7 @@ impl EffectOp {
             // A selector whose pool is a binding reads that key.
             EffectOp::Choose { select, .. } => select.from.as_deref(),
             EffectOp::DigTop { .. }
+            | EffectOp::LookTop { .. }
             | EffectOp::Draw { .. }
             | EffectOp::AddDon { .. }
             | EffectOp::TrashLife { .. }
@@ -260,7 +270,9 @@ impl EffectOp {
     /// The binding key this op fills in, if any.
     pub fn binds(&self) -> Option<&str> {
         match self {
-            EffectOp::Choose { key, .. } | EffectOp::DigTop { key, .. } => Some(key),
+            EffectOp::Choose { key, .. }
+            | EffectOp::DigTop { key, .. }
+            | EffectOp::LookTop { key, .. } => Some(key),
             EffectOp::Modify { .. }
             | EffectOp::Ko { .. }
             | EffectOp::Rest { .. }

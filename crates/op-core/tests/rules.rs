@@ -1394,6 +1394,129 @@ fn rule_7_1_battle_runs_attack_block_counter_damage_end_in_order() {
     );
 }
 
+/// "Look at 3 cards from the top of your deck and return them to the top or
+/// bottom of the deck in any order" (ST03-010), taken literally: the order is
+/// the player's, both ends of it.
+#[test]
+fn a_look_top_arrangement_is_placed_exactly_as_asked() {
+    use op_core::effect::EffectOp;
+
+    let cards = TestCards::new();
+    // Activated rather than [On Play]: `put_in_play` moves the card straight
+    // into the Character area, so no play-time timing fires from it.
+    let look = op_core::script::CardScript {
+        activated: vec![op_core::script::ActivatedEffect {
+            conditions: vec![],
+            cost: op_core::script::ActivationCost::default(),
+            ops: vec![EffectOp::LookTop {
+                n: 3,
+                key: "l".to_string(),
+            }],
+            slot: 0,
+            once_per_turn: false,
+        }],
+        ..Default::default()
+    };
+    let scripts = TestScripts::default().with(cards.def("CHR-5K"), look);
+    let (mut game, _) = game_with(
+        &cards,
+        scripts,
+        7,
+        ("LDR-001", deck_of("CHR-5K", 30)),
+        ("LDR-002", deck_of("CHR-7K", 30)),
+    );
+    to_main(&mut game);
+
+    let deck_before = game.state.player(PlayerId::P0).deck.clone();
+    let looked: Vec<_> = deck_before[..3].to_vec();
+    let rest: Vec<_> = deck_before[3..].to_vec();
+
+    let source = put_in_play(&mut game, PlayerId::P0, "CHR-5K");
+    game.step(Action::ActivateEffect {
+        card: source,
+        slot: 0,
+        discard: vec![],
+    })
+    .unwrap();
+
+    let pending = game.pending().cloned();
+    let Some(Pending::Arrange { cards: offered, .. }) = pending else {
+        panic!("expected an Arrange decision, got {pending:?}");
+    };
+    assert_eq!(offered, looked, "the top three, top-first");
+
+    // Deliberately not the order they came off in: the middle card is buried,
+    // and the other two come back in swapped order. A placement that ignored
+    // the answer would leave the deck as it was and pass a weaker assertion.
+    let top = vec![looked[2], looked[0]];
+    let bottom = vec![looked[1]];
+    game.step(Action::Arrange {
+        top: top.clone(),
+        bottom: bottom.clone(),
+    })
+    .unwrap();
+
+    let deck_after = game.state.player(PlayerId::P0).deck.clone();
+    let mut expected = top;
+    expected.extend(rest);
+    expected.extend(bottom);
+    assert_eq!(deck_after, expected, "deck read top-to-bottom");
+}
+
+/// An arrangement that leaves a card out is refused rather than tolerated —
+/// accepting it would strand the missing card in limbo, in no area at all.
+#[test]
+fn an_arrangement_that_drops_a_card_is_illegal() {
+    use op_core::effect::EffectOp;
+
+    let cards = TestCards::new();
+    // Activated rather than [On Play]: `put_in_play` moves the card straight
+    // into the Character area, so no play-time timing fires from it.
+    let look = op_core::script::CardScript {
+        activated: vec![op_core::script::ActivatedEffect {
+            conditions: vec![],
+            cost: op_core::script::ActivationCost::default(),
+            ops: vec![EffectOp::LookTop {
+                n: 3,
+                key: "l".to_string(),
+            }],
+            slot: 0,
+            once_per_turn: false,
+        }],
+        ..Default::default()
+    };
+    let scripts = TestScripts::default().with(cards.def("CHR-5K"), look);
+    let (mut game, _) = game_with(
+        &cards,
+        scripts,
+        7,
+        ("LDR-001", deck_of("CHR-5K", 30)),
+        ("LDR-002", deck_of("CHR-7K", 30)),
+    );
+    to_main(&mut game);
+    let source = put_in_play(&mut game, PlayerId::P0, "CHR-5K");
+    game.step(Action::ActivateEffect {
+        card: source,
+        slot: 0,
+        discard: vec![],
+    })
+    .unwrap();
+
+    let Some(Pending::Arrange { cards: offered, .. }) = game.pending().cloned() else {
+        panic!("expected an Arrange decision");
+    };
+
+    let out = game.step(Action::Arrange {
+        top: vec![offered[0]],
+        bottom: vec![offered[1]],
+    });
+    assert!(out.is_err(), "two of three cards placed should be refused");
+    assert!(
+        matches!(game.pending(), Some(Pending::Arrange { .. })),
+        "the decision should still be pending"
+    );
+}
+
 /// A [Blocker] carrying one [On Block] effect built from `ops`.
 fn on_block(ops: Vec<op_core::effect::EffectOp>) -> op_core::script::CardScript {
     op_core::script::CardScript {

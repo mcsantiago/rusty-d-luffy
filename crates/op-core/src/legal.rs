@@ -187,6 +187,7 @@ pub fn legal_actions(game: &Game) -> Vec<Action> {
         // 8-3-1-6: every way of making up the cost. The count is fixed, so
         // unlike a `Choose` there is no "take fewer" answer.
         Pending::ReturnDon { options, n, .. } => return_don_actions(game, options, *n),
+        Pending::Arrange { cards, .. } => arrange_actions(cards),
 
         Pending::Choose {
             options,
@@ -277,6 +278,53 @@ fn subsets_of_size(options: &[CardInstanceId], n: usize) -> Vec<Vec<CardInstance
         .collect()
 }
 
+/// Every way to send the looked-at cards back to the top or the bottom.
+///
+/// "In any order" is taken literally: the answer is two ordered lists, so a
+/// player who has just seen three cards can decide which to bury *and* what
+/// order the survivors sit in. Anything less would be a simplification, and
+/// this one would be felt — unlike `DigTop`'s, the cards here are known.
+///
+/// There are `(n+1)!` arrangements of `n` cards, so this is 24 for the 3 that
+/// ST03-010 looks at. It grows fast enough to need the same cap as `subsets`,
+/// which no printed card comes near: the largest "look at" in the pool is 5,
+/// for 720.
+fn arrange_actions(cards: &[CardInstanceId]) -> Vec<Action> {
+    let mut out = Vec::new();
+    // Walk every ordering, then every split of that ordering into the part
+    // going back on top and the part going to the bottom. Each arrangement is
+    // produced once: the ordering fixes both lists, the split says where the
+    // boundary falls.
+    for order in permutations(cards) {
+        for split in 0..=order.len() {
+            out.push(Action::Arrange {
+                top: order[..split].to_vec(),
+                bottom: order[split..].to_vec(),
+            });
+            if out.len() >= MAX_CHOICE_SUBSETS {
+                return out;
+            }
+        }
+    }
+    out
+}
+
+fn permutations(cards: &[CardInstanceId]) -> Vec<Vec<CardInstanceId>> {
+    if cards.is_empty() {
+        return vec![Vec::new()];
+    }
+    let mut out = Vec::new();
+    for (i, &card) in cards.iter().enumerate() {
+        let mut rest = cards.to_vec();
+        rest.remove(i);
+        for mut tail in permutations(&rest) {
+            tail.insert(0, card);
+            out.push(tail);
+        }
+    }
+    out
+}
+
 /// Every legal answer to a `Choose`.
 ///
 /// Split out of `legal_actions` so the floor and the truncation can be put
@@ -358,6 +406,56 @@ mod tests {
     #[test]
     fn subsets_of_zero_is_just_the_empty_choice() {
         assert_eq!(subsets(&ids(3), 0), vec![Vec::new()]);
+    }
+
+    /// "In any order" means every ordered split, each offered once. Three cards
+    /// give 3! orderings x 4 split points = 24, which is (n+1)!.
+    ///
+    /// The count is asserted alongside the uniqueness because either alone
+    /// would miss half the bug: duplicates inflate the count, and a missing
+    /// arrangement deflates it, and a set-based check sees neither.
+    #[test]
+    fn every_arrangement_is_offered_exactly_once() {
+        let cards = ids(3);
+        let out = arrange_actions(&cards);
+        assert_eq!(out.len(), 24, "3! orderings x 4 splits");
+
+        let mut seen: Vec<(Vec<CardInstanceId>, Vec<CardInstanceId>)> = out
+            .iter()
+            .map(|a| match a {
+                Action::Arrange { top, bottom } => (top.clone(), bottom.clone()),
+                other => panic!("expected Arrange, got {other:?}"),
+            })
+            .collect();
+        let total = seen.len();
+        seen.sort();
+        seen.dedup();
+        assert_eq!(seen.len(), total, "no arrangement may be offered twice");
+
+        // Both extremes are reachable: bury everything, or keep everything.
+        assert!(seen.iter().any(|(t, _)| t.is_empty()));
+        assert!(seen.iter().any(|(_, b)| b.is_empty()));
+        // And every answer accounts for all three cards.
+        assert!(seen.iter().all(|(t, b)| t.len() + b.len() == 3));
+    }
+
+    /// The looked-at cards are never partly placed: an arrangement names all of
+    /// them or the engine rejects it, so nothing can be stranded in limbo.
+    #[test]
+    fn an_arrangement_covers_every_card_it_was_given() {
+        for n in 0..=4u32 {
+            let cards = ids(n);
+            for action in arrange_actions(&cards) {
+                let Action::Arrange { top, bottom } = action else {
+                    unreachable!()
+                };
+                let mut named: Vec<_> = top.iter().chain(bottom.iter()).copied().collect();
+                named.sort();
+                let mut expected = cards.clone();
+                expected.sort();
+                assert_eq!(named, expected, "every card placed exactly once");
+            }
+        }
     }
 
     /// A mandatory choice must always leave a legal answer. `legal_actions`

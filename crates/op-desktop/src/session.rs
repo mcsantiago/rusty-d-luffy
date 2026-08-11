@@ -804,8 +804,9 @@ fn action_subject(action: &Action) -> Option<CardInstanceId> {
         | Action::DoneCountering
         | Action::UseTrigger(_)
         | Action::Choose { .. }
-        // Answered in the choice modal over the DON!! themselves, not from a
-        // menu hung off one card.
+        // Answered in a modal over the cards themselves, not from a menu hung
+        // off one card.
+        | Action::Arrange { .. }
         | Action::ReturnDon { .. } => None,
     }
 }
@@ -819,6 +820,7 @@ fn pending_kind(pending: &Pending) -> &'static str {
         Pending::Trigger { .. } => "trigger",
         Pending::PayCost { .. } => "pay-cost",
         Pending::ReturnDon { .. } => "return-don",
+        Pending::Arrange { .. } => "arrange",
         Pending::Choose { .. } => "choose",
     }
 }

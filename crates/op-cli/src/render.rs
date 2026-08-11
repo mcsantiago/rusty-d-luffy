@@ -145,6 +145,21 @@ pub fn action(action: &Action, game: &Game) -> String {
         Action::Mulligan(false) => "keep this hand".into(),
         Action::PayCost(true) => "pay the cost".into(),
         Action::PayCost(false) => "decline (the effect does not activate)".into(),
+        Action::Arrange { top, bottom } => {
+            // Named in full: the whole decision is which card goes where, so a
+            // count would make every option read the same.
+            let list = |ids: &[op_core::CardInstanceId]| {
+                if ids.is_empty() {
+                    "nothing".to_string()
+                } else {
+                    ids.iter()
+                        .map(|&id| name(id))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                }
+            };
+            format!("top: {} · bottom: {}", list(top), list(bottom))
+        }
         Action::EndMainPhase => "end turn".into(),
         Action::PlayCard { card, replacing } => {
             let suffix = if game.play_finds_targets(*card) {
