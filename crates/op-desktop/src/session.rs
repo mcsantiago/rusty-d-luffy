@@ -47,6 +47,13 @@ pub struct Choice {
     /// The card whose menu this action belongs in. `None` for the card-less
     /// actions, which are the only ones the sidebar must still hold.
     pub subject: Option<u32>,
+    /// For an arrangement, how many of `cards` go on top; the rest go to the
+    /// bottom. `None` for every other action, whose `cards` need no split.
+    ///
+    /// Without it `cards` is lossy: "A on top, B and C underneath" and "A and B
+    /// on top, C underneath" are the same sequence cut in different places, and
+    /// the UI has to name one of them exactly to submit it.
+    pub split: Option<usize>,
     /// Coarse kind, for grouping and styling.
     pub kind: &'static str,
 }
@@ -172,6 +179,14 @@ pub struct Snapshot {
     /// The cards a pending card-picking decision may take, in the engine's
     /// order. Empty when no such decision is pending.
     pub choose_candidates: Vec<ChoiceCandidate>,
+    /// The human owes an arrangement: these cards, top-first as they came off
+    /// the deck, each to be put back on the top or the bottom.
+    ///
+    /// Carried explicitly rather than derived from `options` the way
+    /// `choose_up_to` is. Every option holds all of the cards — they differ
+    /// only in the order and where the split falls — so there is no singleton
+    /// to read the candidate list off, and the draw order would be lost.
+    pub arrange: Option<Vec<u32>>,
     /// The AI owes a decision; the UI should expect a `game://update` shortly.
     pub thinking: bool,
     /// Short identifier for this session, matching its log filename, so a bug
@@ -608,6 +623,7 @@ impl Session {
                     cards: action_cards(action).iter().map(|c| c.0).collect(),
                     subject: action_subject(action).map(|c| c.0),
                     kind: action_kind(action),
+                    split: action_split(action),
                 })
                 .collect()
         } else {
@@ -697,6 +713,23 @@ impl Session {
                 });
             }
         }
+        // The frame on top of the stack is the one that suspended for this
+        // choice, so its source is the card doing the asking.
+        let arrange = self
+            .game
+            .pending()
+            .filter(|p| p.player() == self.human)
+            .and_then(|p| match p {
+                Pending::Arrange { cards, .. } => Some(cards.iter().map(|c| c.0).collect()),
+                _ => None,
+            });
+
+        let choose_source = choose_up_to.and(self.game.state.stack.top()).map(|frame| {
+            self.db
+                .get(self.game.state.card(frame.source).def)
+                .number
+                .clone()
+        });
 
         Snapshot {
             view,
@@ -714,6 +747,7 @@ impl Session {
             choose_up_to,
             choose_at_least,
             choose_candidates,
+            arrange,
             thinking: self.ai_to_act(),
             session_id: self.session_id.clone(),
         }
@@ -780,7 +814,17 @@ fn action_cards(action: &Action) -> Vec<CardInstanceId> {
         Action::Counter { card, to } | Action::CounterEvent { card, to } => vec![*card, *to],
         Action::Choose { cards } => cards.clone(),
         Action::ReturnDon { dons } => dons.clone(),
+        // Top first, then bottom. `Choice::split` says where the boundary is.
+        Action::Arrange { top, bottom } => top.iter().chain(bottom).copied().collect(),
         _ => Vec::new(),
+    }
+}
+
+/// How many of an action's cards belong to the first of two ordered groups.
+fn action_split(action: &Action) -> Option<usize> {
+    match action {
+        Action::Arrange { top, .. } => Some(top.len()),
+        _ => None,
     }
 }
 
@@ -1340,5 +1384,40 @@ mod tests {
         assert_eq!(action_subject(&Action::DoneCountering), None);
         assert_eq!(action_subject(&Action::Mulligan(true)), None);
         assert_eq!(action_subject(&Action::Block { blocker: None }), None);
+    }
+
+    /// The contract the arrange modal is built on: an option's `cards` are the
+    /// top pile followed by the bottom pile, and `split` says where the join
+    /// is. The UI builds an arrangement and then looks for the option that is
+    /// exactly it, so a pair that did not round-trip would leave a legal
+    /// arrangement unsubmittable.
+    #[test]
+    fn an_arrangement_round_trips_through_cards_and_split() {
+        let ids: Vec<CardInstanceId> = (0..3).map(CardInstanceId).collect();
+
+        for split in 0..=ids.len() {
+            let top = ids[..split].to_vec();
+            let bottom = ids[split..].to_vec();
+            let action = Action::Arrange {
+                top: top.clone(),
+                bottom: bottom.clone(),
+            };
+
+            let cards = action_cards(&action);
+            let at = action_split(&action).expect("an arrangement always splits");
+            assert_eq!(at, top.len());
+            assert_eq!(cards[..at], top[..], "the first {at} are the top pile");
+            assert_eq!(cards[at..], bottom[..], "the rest are the bottom pile");
+        }
+    }
+
+    /// Splitting is meaningless for everything else, and saying so keeps the UI
+    /// from having to guess which actions carry two ordered groups.
+    #[test]
+    fn only_an_arrangement_reports_a_split() {
+        let a = CardInstanceId(0);
+        assert_eq!(action_split(&Action::EndMainPhase), None);
+        assert_eq!(action_split(&Action::Choose { cards: vec![a] }), None);
+        assert_eq!(action_split(&Action::GiveDon { to: a }), None);
     }
 }

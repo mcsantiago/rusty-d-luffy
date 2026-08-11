@@ -906,6 +906,48 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
   margin-top: 18px;
 }
 
+/* ---- arranging the top of the deck ----
+
+   Two destinations side by side, because the decision is where each card goes
+   rather than which cards are picked. The piles are laid out in the order the
+   deck will hold them, so the numbers on the cards read as depth. */
+
+.arrange-piles {
+  display: flex;
+  gap: 18px;
+  margin-top: 18px;
+}
+.arrange-pile { flex: 1; min-width: 0; }
+.arrange-slot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  min-height: calc(var(--card-h) + 18px);
+  padding: 8px;
+  border-radius: 9px;
+  border: 1px dashed var(--line);
+  background: rgba(0, 0, 0, 0.18);
+}
+.arrange-empty {
+  color: var(--muted);
+  font-size: 12px;
+  align-self: center;
+  padding: 0 6px;
+}
+.arrange-buttons {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+  justify-content: center;
+}
+.arrange-buttons .opt { padding: 4px 8px; font-size: 12px; }
+/* A placed card is not "picked" in the Choose sense, so the shared rule above
+   would hide its number — and the number is the whole point here, since it is
+   the card's depth in the pile. */
+.arrange-slot .choose-option .choose-rank { display: block; }
+.arrange-slot .choose-option { cursor: default; }
+.arrange-slot .choose-option:hover { transform: none; border-color: transparent; }
+
 /* ---- the full list ----
 
    Every action is reachable from its card, but only once you know which card
