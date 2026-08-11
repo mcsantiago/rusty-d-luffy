@@ -278,9 +278,14 @@ impl EffectOp {
     /// The binding key this op fills in, if any.
     pub fn binds(&self) -> Option<&str> {
         match self {
-            EffectOp::Choose { key, .. }
-            | EffectOp::DigTop { key, .. }
-            | EffectOp::LookTop { key, .. } => Some(key),
+            EffectOp::Choose { key, .. } | EffectOp::DigTop { key, .. } => Some(key),
+            // Deliberately not a binding. `LookTop` writes its key only to
+            // record that the question was answered, and the cards it looked at
+            // go back into the deck rather than being handed to a later op —
+            // so reporting it here would make every correct use of it look like
+            // a dead binding. A script that does try to read the key is then
+            // caught by the unbound-read check instead, which is the honest
+            // diagnosis: there is nothing there to read.
             EffectOp::Modify { .. }
             | EffectOp::Ko { .. }
             | EffectOp::Rest { .. }
@@ -292,6 +297,7 @@ impl EffectOp {
             | EffectOp::AddDon { .. }
             | EffectOp::TrashLife { .. }
             | EffectOp::Shuffle { .. }
+            | EffectOp::LookTop { .. }
             | EffectOp::RequireIf { .. }
             | EffectOp::TrashIfInLimbo => None,
         }

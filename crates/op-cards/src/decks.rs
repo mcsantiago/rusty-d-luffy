@@ -39,6 +39,12 @@ pub const ALL: &[Deck] = &[
         build: st02,
     },
     Deck {
+        id: "ST03",
+        name: "ST-03 The Seven Warlords of the Sea",
+        aliases: &["ST-03", "WARLORDS"],
+        build: st03,
+    },
+    Deck {
         id: "ST04",
         name: "ST-04 Animal Kingdom Pirates",
         aliases: &["ST-04", "ANIMALKINGDOM"],
@@ -120,6 +126,31 @@ pub fn st02() -> DeckList {
             ("ST02-015", 4),
             ("ST02-016", 2),
             ("ST02-017", 2),
+        ],
+    )
+}
+
+/// The official ST-03 The Seven Warlords of the Sea decklist.
+pub fn st03() -> DeckList {
+    build(
+        "ST03-001",
+        &[
+            ("ST03-002", 4),
+            ("ST03-003", 2),
+            ("ST03-004", 2),
+            ("ST03-005", 2),
+            ("ST03-006", 4),
+            ("ST03-007", 2),
+            ("ST03-008", 4),
+            ("ST03-009", 2),
+            ("ST03-010", 4),
+            ("ST03-011", 4),
+            ("ST03-012", 4),
+            ("ST03-013", 4),
+            ("ST03-014", 2),
+            ("ST03-015", 4),
+            ("ST03-016", 4),
+            ("ST03-017", 2),
         ],
     )
 }

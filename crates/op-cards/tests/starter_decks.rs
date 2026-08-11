@@ -20,7 +20,7 @@ use rand::{Rng, SeedableRng};
 
 // The decklists live in `op_cards::decks` so the clients and this suite cannot
 // disagree about what a starter deck contains.
-use op_cards::decks::{st01, st02, st04, st06, st08};
+use op_cards::decks::{st01, st02, st03, st04, st06, st08};
 
 type Scripts = Arc<dyn ScriptSource + Send + Sync>;
 
@@ -76,9 +76,10 @@ fn every_deck_pairing_plays_to_completion() {
         return;
     };
     type Build = fn() -> DeckList;
-    let decks: [(&str, Build); 5] = [
+    let decks: [(&str, Build); 6] = [
         ("ST-01", st01),
         ("ST-02", st02),
+        ("ST-03", st03),
         ("ST-04", st04),
         ("ST-06", st06),
         ("ST-08", st08),
@@ -185,6 +186,10 @@ fn st08_at_main(db: Arc<CardDb>, cards: Scripts, seed: u64, turns: usize) -> Gam
 
 fn st04_at_main(db: Arc<CardDb>, cards: Scripts, seed: u64, turns: usize) -> Game {
     at_main(db, cards, seed, [st04(), st01()], turns)
+}
+
+fn st03_at_main(db: Arc<CardDb>, cards: Scripts, seed: u64, turns: usize) -> Game {
+    at_main(db, cards, seed, [st03(), st01()], turns)
 }
 
 /// Plays a battle out with the defender declining everything, so the test only
@@ -1396,5 +1401,109 @@ fn st04_001_offers_a_choice_of_which_don_to_return() {
         game.state.card(leader).attached_don.len(),
         1,
         "the DON!! the player kept is still on the Leader"
+    );
+}
+
+/// ST-03's signature: five of its cards return a Character "to the **owner's**
+/// hand". Against an opponent's Character that is *their* hand, not the
+/// controller's — bouncing is disruption, not theft. Nothing else in the set
+/// would catch this reading being wrong, because owner and controller are the
+/// same player for every other effect implemented so far.
+#[test]
+fn st03_001_bounce_returns_a_character_to_its_owners_hand() {
+    let Some((db, cards)) = load() else { return };
+    let mut game = st03_at_main(db, cards, 7, 8);
+
+    let leader = game.state.player(PlayerId::P0).leader.unwrap();
+    let victim = put_in_play(&mut game, PlayerId::P1, "ST01-004");
+    let their_hand = game.state.player(PlayerId::P1).hand.len();
+    let your_hand = game.state.player(PlayerId::P0).hand.len();
+
+    game.step(Action::ActivateEffect {
+        card: leader,
+        slot: 0,
+        discard: vec![],
+    })
+    .unwrap();
+    game.step(Action::Choose {
+        cards: vec![victim],
+    })
+    .unwrap();
+
+    assert_eq!(game.state.card(victim).zone, Zone::Hand);
+    assert_eq!(
+        game.state.card(victim).controller,
+        PlayerId::P1,
+        "the card went home, not across the table"
+    );
+    assert_eq!(game.state.player(PlayerId::P1).hand.len(), their_hand + 1);
+    assert_eq!(
+        game.state.player(PlayerId::P0).hand.len(),
+        your_hand,
+        "bouncing must not draw the controller a card"
+    );
+}
+
+/// The same effect reaches your own board: the text says "Character", not "your
+/// opponent's Character", so returning your own is a legal line — replaying an
+/// [On Play] is the reason you would.
+#[test]
+fn st03_001_bounce_can_target_your_own_character() {
+    let Some((db, cards)) = load() else { return };
+    let mut game = st03_at_main(db, cards, 7, 8);
+
+    let leader = game.state.player(PlayerId::P0).leader.unwrap();
+    let mine = put_in_play(&mut game, PlayerId::P0, "ST03-014");
+
+    game.step(Action::ActivateEffect {
+        card: leader,
+        slot: 0,
+        discard: vec![],
+    })
+    .unwrap();
+
+    let legal = legal_actions(&game);
+    assert!(
+        legal.contains(&Action::Choose { cards: vec![mine] }),
+        "your own Character should be a legal bounce target"
+    );
+}
+
+/// ST03-004 searches the trash for a Warlord "other than [Gecko Moria]" — and
+/// ST03-004 *is* Gecko Moria, so the exclusion is about the card doing the
+/// searching. By name rather than card number, so it covers every printing.
+#[test]
+fn st03_004_cannot_return_another_gecko_moria() {
+    let Some((db, cards)) = load() else { return };
+    let mut game = st03_at_main(db, cards, 3, 8);
+
+    // Two Warlords in the trash: another Gecko Moria, and one that is not.
+    let moria = game.db().by_number("ST03-004").unwrap();
+    let other = game.db().by_number("ST03-005").unwrap();
+    let moria = game.state.spawn(moria, PlayerId::P0, Zone::Limbo);
+    let other = game.state.spawn(other, PlayerId::P0, Zone::Limbo);
+    for card in [moria, other] {
+        game.state
+            .move_card(card, PlayerId::P0, Zone::Trash, Placement::Bottom);
+    }
+
+    // Played from hand rather than placed, because [On Play] is what fires the
+    // search — `put_in_play` moves the card without ever playing it.
+    let def = game.db().by_number("ST03-004").unwrap();
+    let source = game.state.spawn(def, PlayerId::P0, Zone::Hand);
+    game.step(Action::PlayCard {
+        card: source,
+        replacing: None,
+    })
+    .unwrap();
+
+    let legal = legal_actions(&game);
+    assert!(
+        legal.contains(&Action::Choose { cards: vec![other] }),
+        "a Warlord that is not Gecko Moria should be offered"
+    );
+    assert!(
+        !legal.contains(&Action::Choose { cards: vec![moria] }),
+        "\"other than [Gecko Moria]\" must exclude every Gecko Moria, not just this one"
     );
 }
