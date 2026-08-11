@@ -1342,6 +1342,17 @@ fn rule_8_3_1_a_hand_cost_is_the_players_choice() {
 
 // ---- battle step sequencing ------------------------------------------------
 
+/// The battle steps a step outcome announced, in order.
+fn battle_steps(out: &op_core::StepOutcome) -> Vec<BattleStep> {
+    out.events
+        .iter()
+        .filter_map(|e| match e {
+            GameEvent::BattleStepStarted { step } => Some(*step),
+            _ => None,
+        })
+        .collect()
+}
+
 #[test]
 fn rule_7_1_battle_runs_attack_block_counter_damage_end_in_order() {
     let cards = TestCards::new();
@@ -1361,22 +1372,15 @@ fn rule_7_1_battle_runs_attack_block_counter_damage_end_in_order() {
     game.state.card_mut(attacker).played_on_turn = None;
     let enemy_leader = game.state.player(PlayerId::P1).leader.unwrap();
 
-    let mut steps = Vec::new();
     let out = game
         .step(Action::Attack {
             attacker,
             target: enemy_leader,
         })
         .unwrap();
-    steps.extend(out.events.iter().filter_map(|e| match e {
-        GameEvent::BattleStepStarted { step } => Some(*step),
-        _ => None,
-    }));
+    let mut steps = battle_steps(&out);
     let out = game.step(Action::Block { blocker: None }).unwrap();
-    steps.extend(out.events.iter().filter_map(|e| match e {
-        GameEvent::BattleStepStarted { step } => Some(*step),
-        _ => None,
-    }));
+    steps.extend(battle_steps(&out));
 
     assert_eq!(
         steps,
@@ -1387,5 +1391,159 @@ fn rule_7_1_battle_runs_attack_block_counter_damage_end_in_order() {
             BattleStep::Damage,
             BattleStep::EndOfBattle,
         ]
+    );
+}
+
+/// A [Blocker] carrying one [On Block] effect built from `ops`.
+fn on_block(ops: Vec<op_core::effect::EffectOp>) -> op_core::script::CardScript {
+    op_core::script::CardScript {
+        auto: vec![op_core::script::AutoEffect {
+            timing: op_core::effect::Timing::OnBlock,
+            conditions: vec![],
+            cost: op_core::script::ActivationCost::default(),
+            ops,
+            slot: 0,
+            once_per_turn: false,
+        }],
+        ..Default::default()
+    }
+}
+
+/// A [Blocker] whose only text is an [On Block] draw.
+fn draws_on_block() -> op_core::script::CardScript {
+    on_block(vec![op_core::effect::EffectOp::Draw {
+        player: op_core::effect::Who::You,
+        n: 1,
+    }])
+}
+
+/// A board where P0's 7000-power attacker faces P1's [Blocker], on a turn where
+/// battles are legal. Returns the game, the attacker and P1's Leader — the
+/// blocker itself comes back from `legal_blockers` once an attack is declared.
+fn on_block_fixture(
+    script: op_core::script::CardScript,
+) -> (Game, op_core::CardInstanceId, op_core::CardInstanceId) {
+    let cards = TestCards::new();
+    let scripts = TestScripts::default().with(cards.def("CHR-BLOCK"), script);
+    let (mut game, _) = game_with(
+        &cards,
+        scripts,
+        7,
+        ("LDR-001", deck_of("CHR-7K", 30)),
+        ("LDR-002", deck_of("CHR-BLOCK", 30)),
+    );
+    to_main(&mut game);
+    end_turn(&mut game);
+    end_turn(&mut game);
+
+    let attacker = put_in_play(&mut game, PlayerId::P0, "CHR-7K");
+    put_in_play(&mut game, PlayerId::P1, "CHR-BLOCK");
+    // Clear summoning sickness so the attacker may declare.
+    game.state.card_mut(attacker).played_on_turn = None;
+    let enemy_leader = game.state.player(PlayerId::P1).leader.unwrap();
+    (game, attacker, enemy_leader)
+}
+
+/// 7-1-2-2 and 10-2-15-1: activating a [Blocker] is what fulfils [On Block].
+#[test]
+fn rule_7_1_2_2_activating_a_blocker_fires_on_block() {
+    let (mut game, attacker, enemy_leader) = on_block_fixture(draws_on_block());
+
+    // Deck size, not hand size: taking damage also puts a Life card in hand
+    // (10-1-5-2), so hand size cannot tell a draw from a life card. Only a
+    // draw comes off the deck.
+    let before = game.state.player(PlayerId::P1).deck.len();
+    game.step(Action::Attack {
+        attacker,
+        target: enemy_leader,
+    })
+    .unwrap();
+    let blocker = game.legal_blockers()[0];
+    game.step(Action::Block {
+        blocker: Some(blocker),
+    })
+    .unwrap();
+
+    assert_eq!(
+        game.state.player(PlayerId::P1).deck.len(),
+        before - 1,
+        "[On Block] should have drawn for the blocking player"
+    );
+}
+
+/// The other half of the same wiring, and the reason the test above is not
+/// enough on its own: the Block Step is entered whether or not anyone blocks,
+/// so firing on the step rather than the activation would pass that one and
+/// fail this.
+#[test]
+fn rule_7_1_2_2_declining_to_block_fires_nothing() {
+    let (mut game, attacker, enemy_leader) = on_block_fixture(draws_on_block());
+
+    // Deck size again, and here it is load-bearing rather than tidy: letting a
+    // 7000-power attacker through costs a Life card, which lands in hand and
+    // would read exactly like the draw this test says must not happen.
+    let before = game.state.player(PlayerId::P1).deck.len();
+    game.step(Action::Attack {
+        attacker,
+        target: enemy_leader,
+    })
+    .unwrap();
+    game.step(Action::Block { blocker: None }).unwrap();
+
+    assert_eq!(
+        game.state.player(PlayerId::P1).deck.len(),
+        before,
+        "no [Blocker] was activated, so nothing should have fired"
+    );
+}
+
+/// 7-1-2-3: if an [On Block] effect moves the attacker out of its area, the
+/// battle skips the Counter Step and ends. ST03-003 is the printed case — it
+/// places a Character at the bottom of the deck, which can be the attacker.
+#[test]
+fn rule_7_1_2_3_an_on_block_effect_removing_the_attacker_ends_the_battle() {
+    use op_core::effect::{EffectOp, Selector, Who, ALL};
+
+    let bounce_the_attacker = on_block(vec![
+        EffectOp::Choose {
+            key: "a".to_string(),
+            select: Selector {
+                zone: Zone::Character,
+                owner: Who::Opponent,
+                from: None,
+                up_to: ALL,
+                at_least: ALL,
+                filters: vec![],
+            },
+        },
+        EffectOp::MoveTo {
+            key: "a".to_string(),
+            to: Zone::Hand,
+        },
+    ]);
+    let (mut game, attacker, enemy_leader) = on_block_fixture(bounce_the_attacker);
+
+    game.step(Action::Attack {
+        attacker,
+        target: enemy_leader,
+    })
+    .unwrap();
+    let blocker = game.legal_blockers()[0];
+    let out = game
+        .step(Action::Block {
+            blocker: Some(blocker),
+        })
+        .unwrap();
+
+    assert_eq!(game.state.card(attacker).zone, Zone::Hand);
+    assert!(game.state.battle.is_none(), "the battle should have ended");
+    // The Counter Step, not just the Damage Step: 7-1-2-3 says the battle
+    // proceeds to the end of the battle rather than to the Counter Step, so a
+    // Counter Step announced to clients and to the log is the rule being
+    // broken even though nothing further happens in it.
+    let steps = battle_steps(&out);
+    assert!(
+        !steps.contains(&BattleStep::Counter) && !steps.contains(&BattleStep::Damage),
+        "7-1-2-3 proceeds straight to the end of the battle, got {steps:?}"
     );
 }

@@ -98,10 +98,10 @@ impl Timing {
             | Timing::OnCharacterKoed
             | Timing::EndOfYourTurn
             | Timing::EndOfYourOpponentsTurn
-            | Timing::EndOfBattle => true,
-            // Declared for the printed keyword, not yet wired: blocking is
-            // resolved from the `Blocker` keyword, without consulting scripts.
-            Timing::OnBlock => false,
+            | Timing::EndOfBattle
+            // 7-1-2-2: activating a [Blocker] is what fulfils this, so it fires
+            // from `resolve_block` rather than from a battle step.
+            | Timing::OnBlock => true,
             // No K.O. hook exists; `knock_out` moves the card and stops.
             Timing::OnKo => false,
             // `[Trigger]` ops live in `CardScript::trigger` and are resolved
