@@ -215,6 +215,28 @@ fn pay_cost(game: &mut Game) {
     game.step(Action::PayCost(true)).unwrap();
 }
 
+/// Names the DON!! a pending `DON!! −X` takes back.
+///
+/// Which ones go is the player's choice (3-9-2, 8-3-1-6), so the cost stops to
+/// ask whenever the pool is wider than the cost. Takes the engine's leading
+/// answer, which is the rested cost-area DON!! it used to take silently — so
+/// these tests pin the same outcome as before, now through the decision that
+/// exists to reach it. As with `pay_cost`, the assertion is the point: if the
+/// prompt stops appearing they should fail rather than quietly go back to
+/// testing a forced selection.
+fn return_don(game: &mut Game) {
+    assert!(
+        matches!(game.pending(), Some(Pending::ReturnDon { .. })),
+        "expected a DON!! −X prompt, got {:?}",
+        game.pending()
+    );
+    let answer = legal_actions(game)
+        .into_iter()
+        .next()
+        .expect("a payable DON!! −X always has a legal answer");
+    game.step(answer).unwrap();
+}
+
 fn put_in_play(game: &mut Game, player: PlayerId, number: &str) -> op_core::CardInstanceId {
     let def = game.db().by_number(number).unwrap();
     let card = game.state.spawn(def, player, Zone::Limbo);
@@ -820,6 +842,7 @@ fn st04_don_minus_returns_don_to_the_don_deck_rather_than_resting_it() {
         discard: Vec::new(),
     })
     .unwrap();
+    return_don(&mut game);
 
     assert_eq!(
         game.state.player(PlayerId::P0).cost_area.len(),
@@ -851,6 +874,7 @@ fn st04_001_trashes_an_opponent_life_card_without_giving_it_to_them() {
         discard: Vec::new(),
     })
     .unwrap();
+    return_don(&mut game);
 
     assert_eq!(game.state.player(PlayerId::P1).life.len(), life_before - 1);
     assert_eq!(game.state.card(doomed).zone, Zone::Trash);
@@ -1011,6 +1035,7 @@ fn st04_002_plays_page_one_from_hand_by_name() {
     })
     .unwrap();
     pay_cost(&mut game);
+    return_don(&mut game);
 
     // The [On Play] offers exactly the [Page One] in hand.
     let Some(Pending::Choose { options, .. }) = game.pending() else {
@@ -1048,6 +1073,7 @@ fn st04_005_must_trash_a_card_after_drawing() {
     })
     .unwrap();
     pay_cost(&mut game);
+    return_don(&mut game);
 
     let Some(Pending::Choose { at_least, .. }) = game.pending() else {
         panic!("expected the mandatory trash, got {:?}", game.pending());
@@ -1109,6 +1135,9 @@ fn st04_016_counter_pays_its_don_minus_on_top_of_the_printed_cost() {
         to: target,
     })
     .unwrap();
+    // The DON!! −1 is chosen before the Counter's effect resolves, so the
+    // power boost is not on the board until this is answered.
+    return_don(&mut game);
 
     assert_eq!(game.derived().power(target), power_before + 4000);
     assert_eq!(
@@ -1206,4 +1235,124 @@ fn st01_001_gives_nothing_while_every_don_is_active() {
 
     assert!(game.state.card(leader).attached_don.is_empty());
     assert_eq!(game.state.player(PlayerId::P0).cost_area, before);
+}
+
+/// 8-3-1-6: a `DON!! −X` takes "from their Leader area, Character area, and
+/// cost area". A given DON!! is lifted out of the cost area and lives on its
+/// holder, so a pool read from the cost area alone refuses costs the player can
+/// afford — and ST04-001's `DON!! −7` is most of a board, which is exactly when
+/// the DON!! has been given away.
+#[test]
+fn st04_001_don_minus_can_be_paid_with_don_already_given_away() {
+    let Some((db, cards)) = load() else { return };
+    let mut game = st04_at_main(db, cards, 5, 14);
+    let leader = game.state.player(PlayerId::P0).leader.unwrap();
+
+    // Give all but three DON!! to the Leader, leaving the cost area short of
+    // the seven the effect asks for.
+    while game.state.player(PlayerId::P0).cost_area.len() > 3 {
+        game.step(Action::GiveDon { to: leader }).unwrap();
+    }
+    let given = game.state.card(leader).attached_don.len();
+    assert!(given >= 4, "the cost area alone must not cover DON!! −7");
+
+    assert!(
+        legal_actions(&game).iter().any(|a| matches!(
+            a,
+            Action::ActivateEffect { card, slot: 0, .. } if *card == leader
+        )),
+        "the effect is affordable across all three areas and must be offered"
+    );
+
+    let deck_before = game.state.player(PlayerId::P0).don_deck.len();
+    game.step(Action::ActivateEffect {
+        card: leader,
+        slot: 0,
+        discard: Vec::new(),
+    })
+    .unwrap();
+
+    // The pool has to reach onto the Leader for the cost to be payable at all.
+    let Some(Pending::ReturnDon { options, n, .. }) = game.pending() else {
+        panic!("expected a DON!! −X prompt, got {:?}", game.pending());
+    };
+    assert_eq!(*n, 7);
+    assert!(
+        options
+            .iter()
+            .any(|d| game.state.card(leader).attached_don.contains(d)),
+        "a given DON!! must be offered"
+    );
+
+    return_don(&mut game);
+    assert_eq!(
+        game.state.player(PlayerId::P0).don_deck.len(),
+        deck_before + 7,
+        "all seven reached the DON!! deck"
+    );
+    // Whatever was taken off the Leader must be off it: a stale id there would
+    // go on granting +1000 power from a card in the DON!! deck (6-5-5-2).
+    for don in &game.state.card(leader).attached_don {
+        assert_ne!(
+            game.state.card(*don).zone,
+            Zone::DonDeck,
+            "a returned DON!! is still attached to the Leader"
+        );
+    }
+}
+
+/// 3-9-2 leaves the selection to the player, and it is a real decision: keeping
+/// a given DON!! keeps +1000 power on the board this turn (6-5-5-2), which
+/// surrendering a rested one in the cost area does not cost.
+#[test]
+fn st04_001_offers_a_choice_of_which_don_to_return() {
+    let Some((db, cards)) = load() else { return };
+    let mut game = st04_at_main(db, cards, 5, 14);
+    let leader = game.state.player(PlayerId::P0).leader.unwrap();
+
+    game.step(Action::GiveDon { to: leader }).unwrap();
+    game.step(Action::ActivateEffect {
+        card: leader,
+        slot: 0,
+        discard: Vec::new(),
+    })
+    .unwrap();
+
+    let answers = legal_actions(&game);
+    assert!(
+        answers.len() > 1,
+        "with more DON!! than the cost takes there is something to decide"
+    );
+    assert!(
+        answers
+            .iter()
+            .all(|a| matches!(a, Action::ReturnDon { dons } if dons.len() == 7)),
+        "every answer names exactly the seven the cost asks for"
+    );
+
+    // Interchangeable DON!! are not separate answers: what distinguishes them
+    // is being given to the Leader or loose in the cost area, so the choice is
+    // over those classes rather than over C(10,7) sets of ids.
+    assert!(
+        answers.len() <= 4,
+        "expected a handful of distinguishable answers, got {}",
+        answers.len()
+    );
+
+    let keeps_the_given = answers
+        .iter()
+        .find(|a| match a {
+            Action::ReturnDon { dons } => !dons
+                .iter()
+                .any(|d| game.state.card(leader).attached_don.contains(d)),
+            _ => false,
+        })
+        .expect("keeping the given DON!! must be on the table")
+        .clone();
+    game.step(keeps_the_given).unwrap();
+    assert_eq!(
+        game.state.card(leader).attached_don.len(),
+        1,
+        "the DON!! the player kept is still on the Leader"
+    );
 }

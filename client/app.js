@@ -778,14 +778,12 @@ function renderChoose(snap) {
   }
 
   const upTo = snap.choose_up_to;
-  // Every candidate appears as a subset of one, so the singletons are the
-  // candidate list — in the engine's order, which is the board's order.
-  const candidates = [];
-  for (const opt of snap.options) {
-    if (opt.cards.length === 1 && !candidates.includes(opt.cards[0])) {
-      candidates.push(opt.cards[0]);
-    }
-  }
+  const atLeast = snap.choose_at_least ?? 0;
+  // Sent by the engine side, in the board's order, each with a label for the
+  // candidates the board cannot draw. Deriving them here from the options only
+  // worked while every candidate appeared as a subset of one, which a decision
+  // with a floor above 1 — a DON!! −X of 2 or more — does not offer.
+  const candidates = snap.choose_candidates ?? [];
 
   const index = cardIndex(snap.view);
   $("choose-title").textContent = snap.question ?? "Choose";
@@ -793,11 +791,13 @@ function renderChoose(snap) {
   $("choose-sub").textContent =
     upTo === 1
       ? "Pick a card."
-      : `Pick up to ${upTo} — ${picked.length} chosen.`;
+      : atLeast === upTo
+        ? `Pick ${upTo} — ${picked.length} chosen.`
+        : `Pick up to ${upTo} — ${picked.length} chosen.`;
 
   const grid = $("choose-grid");
   grid.innerHTML = "";
-  for (const id of candidates) {
+  for (const { id, label } of candidates) {
     const card = index.get(id);
     const holder = document.createElement("div");
     holder.className = "choose-option" + (picked.includes(id) ? " picked" : "");
@@ -805,10 +805,9 @@ function renderChoose(snap) {
     if (card) {
       holder.appendChild(cardEl(card, { plain: true }));
     } else {
-      // A candidate the view does not hold — off-board, mid-effect. The
-      // engine's own label is the only description available for it.
-      const opt = snap.options.find((o) => o.cards.length === 1 && o.cards[0] === id);
-      holder.innerHTML = `<div class="choose-unknown">${opt ? opt.label : id}</div>`;
+      // A candidate the view does not hold — a DON!!, or something off-board
+      // mid-effect. Its label is the only description available for it.
+      holder.innerHTML = `<div class="choose-unknown">${label}</div>`;
     }
 
     holder.appendChild(
@@ -834,7 +833,9 @@ function renderChoose(snap) {
   const canDecline = snap.options.some((o) => o.cards.length === 0);
   $("choose-none").hidden = !canDecline;
   $("choose-confirm").hidden = upTo === 1;
-  $("choose-confirm").disabled = picked.length === 0;
+  // Enabled only on an answer the engine will accept: a floor of 0 needs one
+  // card, a fixed count needs exactly that many.
+  $("choose-confirm").disabled = picked.length < Math.max(atLeast, 1);
   modal.hidden = animating();
 }
 

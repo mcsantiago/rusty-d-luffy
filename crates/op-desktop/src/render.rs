@@ -127,6 +127,8 @@ pub fn question(pending: &Pending) -> String {
         Pending::Counter { .. } => "Counter step".into(),
         Pending::Trigger { .. } => "That life card has a [Trigger]".into(),
         Pending::PayCost { cost, .. } => format!("Pay {} to activate?", cost_label(cost)),
+        // The count is fixed by the cost (8-3-1-6); only which ones is open.
+        Pending::ReturnDon { n, .. } => format!("Return {n} DON!! to your DON!! deck"),
         // "up to" is an offer the player may decline; a non-zero floor is an
         // instruction, and saying "up to" there would suggest otherwise.
         Pending::Choose {
@@ -140,6 +142,27 @@ pub fn question(pending: &Pending) -> String {
                 format!("Choose {at_least} to {up_to}")
             }
         }
+    }
+}
+
+/// Names one card a decision may take, for the choice grid.
+///
+/// DON!! are the interesting case: they are interchangeable, have no art (#29),
+/// and a given one is not in the cost area the view publishes — so where it
+/// sits is both the only thing that distinguishes it and the only thing the
+/// client cannot work out for itself.
+pub fn candidate_label(id: op_core::CardInstanceId, game: &Game) -> String {
+    let def = game.db().get(game.state.card(id).def);
+    if def.category != op_core::card::Category::Don {
+        return def.name.clone();
+    }
+    match game.don_holder(id) {
+        Some(holder) => format!(
+            "DON!! on {}",
+            game.db().get(game.state.card(holder).def).name
+        ),
+        None if game.state.card(id).is_active() => "DON!! (active)".into(),
+        None => "DON!! (rested)".into(),
     }
 }
 
@@ -224,6 +247,19 @@ pub fn action_label(action: &Action, game: &Game) -> String {
         Action::Choose { cards } => {
             let names: Vec<String> = cards.iter().map(|&c| name(c)).collect();
             names.join(", ")
+        }
+        // DON!! cards are interchangeable, so the option is named by where each
+        // one sits — which is the entire substance of the choice.
+        Action::ReturnDon { dons } => {
+            let whence: Vec<String> = dons
+                .iter()
+                .map(|&d| match game.don_holder(d) {
+                    Some(holder) => format!("on {}", name(holder)),
+                    None if game.state.card(d).is_active() => "active".into(),
+                    None => "rested".into(),
+                })
+                .collect();
+            whence.join(", ")
         }
     }
 }

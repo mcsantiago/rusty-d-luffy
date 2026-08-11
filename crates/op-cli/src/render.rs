@@ -214,6 +214,19 @@ pub fn action(action: &Action, game: &Game) -> String {
             let names: Vec<String> = cards.iter().map(|&c| name(c)).collect();
             format!("choose {}", names.join(", "))
         }
+        // One DON!! is much like another, so the option is named by where it
+        // sits: that is the whole of what the player is choosing between.
+        Action::ReturnDon { dons } => {
+            let whence: Vec<String> = dons
+                .iter()
+                .map(|&d| match game.don_holder(d) {
+                    Some(holder) => format!("given to {}", name(holder)),
+                    None if game.state.card(d).is_active() => "active in cost area".into(),
+                    None => "rested in cost area".into(),
+                })
+                .collect();
+            format!("return DON!!: {}", whence.join("; "))
+        }
     }
 }
 

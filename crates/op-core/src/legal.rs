@@ -179,12 +179,96 @@ pub fn legal_actions(game: &Game) -> Vec<Action> {
         // before the question was asked.
         Pending::PayCost { .. } => vec![Action::PayCost(true), Action::PayCost(false)],
 
+        // 8-3-1-6: every way of making up the cost. The count is fixed, so
+        // unlike a `Choose` there is no "take fewer" answer.
+        Pending::ReturnDon { options, n, .. } => return_don_actions(game, options, *n),
+
         Pending::Choose {
             options,
             up_to,
             at_least,
             ..
         } => choose_actions(options, *up_to, *at_least),
+    }
+}
+
+/// What makes one DON!! different from another for the purpose of choosing:
+/// the card it was given to, if any, and whether it is rested.
+type DonClass = (Option<CardInstanceId>, bool);
+
+/// Every legal answer to a `ReturnDon`, one per *distinguishable* answer.
+///
+/// DON!! cards are interchangeable. Two rested DON!! in the cost area differ
+/// only by id: return either and the position is the same, down to the state
+/// hash. Enumerating subsets of ids would offer ST04-001's `DON!! −7` over ten
+/// DON!! as C(10,7) = 120 answers where there are two or three real ones, and
+/// hand a search 120 branches that all lead to the same node — diluting its
+/// statistics 40-fold over a decision that barely matters.
+///
+/// What distinguishes a DON!! is where it sits: loose in the cost area and
+/// whether it is rested, or given to a particular card. So the answers are
+/// enumerated over those classes, one representative per combination of counts.
+/// Classes are taken greedily-first, which makes the leading answer the rested
+/// cost-area DON!! — the same one the engine used to take without asking.
+fn return_don_actions(game: &Game, options: &[CardInstanceId], n: u8) -> Vec<Action> {
+    let n = (n as usize).min(options.len());
+
+    // Grouped in the pool's order, so the enumeration is deterministic.
+    let mut classes: Vec<(DonClass, Vec<CardInstanceId>)> = Vec::new();
+    for &don in options {
+        let key = (game.don_holder(don), game.state.card(don).rested);
+        match classes.iter_mut().find(|(k, _)| *k == key) {
+            Some((_, group)) => group.push(don),
+            None => classes.push((key, vec![don])),
+        }
+    }
+    let groups: Vec<Vec<CardInstanceId>> = classes.into_iter().map(|(_, g)| g).collect();
+
+    let mut out = Vec::new();
+    distribute(&groups, n, 0, &mut Vec::new(), &mut out);
+    if out.is_empty() {
+        out.push(Action::ReturnDon {
+            dons: options.iter().copied().take(n).collect(),
+        });
+    }
+    out
+}
+
+/// Walks every way of taking `n` DON!! across `groups`, emitting one action per
+/// distribution. Larger takes from earlier groups come first.
+fn distribute(
+    groups: &[Vec<CardInstanceId>],
+    n: usize,
+    at: usize,
+    taken: &mut Vec<CardInstanceId>,
+    out: &mut Vec<Action>,
+) {
+    if out.len() >= MAX_CHOICE_SUBSETS {
+        return;
+    }
+    if n == 0 {
+        out.push(Action::ReturnDon {
+            dons: taken.clone(),
+        });
+        return;
+    }
+    // Nothing left to take from, or not enough left to finish: prune rather
+    // than walk a branch that cannot produce a legal answer.
+    let remaining: usize = groups
+        .get(at..)
+        .unwrap_or_default()
+        .iter()
+        .map(Vec::len)
+        .sum();
+    if remaining < n {
+        return;
+    }
+    let group = &groups[at];
+    for k in (0..=group.len().min(n)).rev() {
+        let before = taken.len();
+        taken.extend(group.iter().copied().take(k));
+        distribute(groups, n - k, at + 1, taken, out);
+        taken.truncate(before);
     }
 }
 

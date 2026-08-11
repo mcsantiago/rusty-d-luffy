@@ -238,6 +238,9 @@ fn question(pending: &op_core::Pending) -> String {
         P::PayCost { cost, .. } => {
             format!("Pay {} to activate that effect?", render::cost_label(cost))
         }
+        P::ReturnDon { n, .. } => {
+            format!("Return {n} DON!! card(s) to your DON!! deck — which?")
+        }
         P::Choose { up_to, .. } => format!("Choose up to {up_to}:"),
     }
 }
