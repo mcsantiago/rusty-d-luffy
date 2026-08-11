@@ -2200,6 +2200,18 @@ impl Game {
                 OpOutcome::Suspend
             }
 
+            Op::Shuffle { player } => {
+                for p in self.players_of(frame.controller, player) {
+                    // Through `state.rng` like every other shuffle: a game is a
+                    // pure function of (config, seed, actions), and a second
+                    // randomness source would break replay and the debug logs.
+                    let mut deck = std::mem::take(&mut self.state.players[p.index()].deck);
+                    deck.shuffle(&mut self.state.rng);
+                    self.state.players[p.index()].deck = deck;
+                }
+                OpOutcome::Advance
+            }
+
             Op::RequireIf { cond } => {
                 let derived = self.derived();
                 let holds = derive::conditions_hold(

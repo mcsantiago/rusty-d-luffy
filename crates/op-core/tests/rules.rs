@@ -1394,6 +1394,186 @@ fn rule_7_1_battle_runs_attack_block_counter_damage_end_in_order() {
     );
 }
 
+/// A card whose activated effect runs `ops`, for the vocabulary tests below.
+#[cfg(test)]
+fn activated_ops(ops: Vec<op_core::effect::EffectOp>) -> op_core::script::CardScript {
+    op_core::script::CardScript {
+        activated: vec![op_core::script::ActivatedEffect {
+            conditions: vec![],
+            cost: op_core::script::ActivationCost::default(),
+            ops,
+            slot: 0,
+            once_per_turn: false,
+        }],
+        ..Default::default()
+    }
+}
+
+/// "other than [Gecko Moria]" (ST03-004) — a negated filter excludes exactly
+/// what it names and nothing else.
+#[test]
+fn a_negated_filter_excludes_only_what_it_names() {
+    use op_core::effect::{EffectOp, Filter, Selector, Who, ALL};
+
+    let cards = TestCards::new();
+    let ko_the_others = activated_ops(vec![
+        EffectOp::Choose {
+            key: "k".to_string(),
+            select: Selector {
+                zone: Zone::Character,
+                owner: Who::Opponent,
+                from: None,
+                up_to: ALL,
+                at_least: ALL,
+                filters: vec![Filter::Not(Box::new(Filter::HasName("CHR-7K".into())))],
+            },
+        },
+        EffectOp::Ko {
+            key: "k".to_string(),
+        },
+    ]);
+    let scripts = TestScripts::default().with(cards.def("CHR-5K"), ko_the_others);
+    let (mut game, _) = game_with(
+        &cards,
+        scripts,
+        7,
+        ("LDR-001", deck_of("CHR-5K", 30)),
+        ("LDR-002", deck_of("CHR-5K", 30)),
+    );
+    to_main(&mut game);
+
+    let source = put_in_play(&mut game, PlayerId::P0, "CHR-5K");
+    let spared = put_in_play(&mut game, PlayerId::P1, "CHR-7K");
+    let doomed = put_in_play(&mut game, PlayerId::P1, "CHR-5K");
+
+    game.step(Action::ActivateEffect {
+        card: source,
+        slot: 0,
+        discard: vec![],
+    })
+    .unwrap();
+
+    assert_eq!(
+        game.state.card(doomed).zone,
+        Zone::Trash,
+        "should be K.O.'d"
+    );
+    assert_eq!(
+        game.state.card(spared).zone,
+        Zone::Character,
+        "the named card is what the filter excludes"
+    );
+}
+
+/// "then shuffle your deck" (ST03-007). The shuffle is the point of the clause:
+/// a search that left the deck in order would tell the player their next draw.
+#[test]
+fn a_shuffle_reorders_the_deck() {
+    use op_core::effect::{EffectOp, Who};
+
+    let cards = TestCards::new();
+    let scripts = TestScripts::default().with(
+        cards.def("CHR-5K"),
+        activated_ops(vec![EffectOp::Shuffle { player: Who::You }]),
+    );
+    let (mut game, _) = game_with(
+        &cards,
+        scripts,
+        7,
+        ("LDR-001", deck_of("CHR-5K", 30)),
+        ("LDR-002", deck_of("CHR-5K", 30)),
+    );
+    to_main(&mut game);
+
+    let source = put_in_play(&mut game, PlayerId::P0, "CHR-5K");
+    let before = game.state.player(PlayerId::P0).deck.clone();
+    let opponent_before = game.state.player(PlayerId::P1).deck.clone();
+
+    game.step(Action::ActivateEffect {
+        card: source,
+        slot: 0,
+        discard: vec![],
+    })
+    .unwrap();
+
+    let after = game.state.player(PlayerId::P0).deck.clone();
+    assert_ne!(before, after, "the deck should have been reordered");
+    let mut sorted_before = before.clone();
+    let mut sorted_after = after.clone();
+    sorted_before.sort();
+    sorted_after.sort();
+    assert_eq!(sorted_before, sorted_after, "same cards, different order");
+    assert_eq!(
+        game.state.player(PlayerId::P1).deck,
+        opponent_before,
+        "\"your deck\" is the controller's alone"
+    );
+}
+
+/// "draw 1 card if you have 3 or less cards in your hand" (ST03-017) — the
+/// condition reads the controller's hand at the moment it is evaluated.
+#[test]
+fn a_hand_size_condition_gates_on_the_controllers_hand() {
+    use op_core::effect::{Condition, EffectOp, Who};
+
+    let cards = TestCards::new();
+    let scripts = TestScripts::default().with(
+        cards.def("CHR-5K"),
+        activated_ops(vec![
+            EffectOp::RequireIf {
+                cond: Condition::HandAtMost(3),
+            },
+            EffectOp::Draw {
+                player: Who::You,
+                n: 1,
+            },
+        ]),
+    );
+    let (mut game, _) = game_with(
+        &cards,
+        scripts,
+        7,
+        ("LDR-001", deck_of("CHR-5K", 30)),
+        ("LDR-002", deck_of("CHR-5K", 30)),
+    );
+    to_main(&mut game);
+    let source = put_in_play(&mut game, PlayerId::P0, "CHR-5K");
+
+    // An opening hand is 5, so the condition fails and the draw is skipped.
+    assert!(game.state.player(PlayerId::P0).hand.len() > 3);
+    let deck_before = game.state.player(PlayerId::P0).deck.len();
+    game.step(Action::ActivateEffect {
+        card: source,
+        slot: 0,
+        discard: vec![],
+    })
+    .unwrap();
+    assert_eq!(
+        game.state.player(PlayerId::P0).deck.len(),
+        deck_before,
+        "a hand over the threshold should not draw"
+    );
+
+    // Trim to exactly the threshold and it fires — the boundary is "or less".
+    while game.state.player(PlayerId::P0).hand.len() > 3 {
+        let card = game.state.player(PlayerId::P0).hand[0];
+        game.state
+            .move_card(card, PlayerId::P0, Zone::Trash, Placement::Bottom);
+    }
+    let deck_before = game.state.player(PlayerId::P0).deck.len();
+    game.step(Action::ActivateEffect {
+        card: source,
+        slot: 0,
+        discard: vec![],
+    })
+    .unwrap();
+    assert_eq!(
+        game.state.player(PlayerId::P0).deck.len(),
+        deck_before - 1,
+        "a hand of exactly 3 is \"3 or less\""
+    );
+}
+
 /// "Look at 3 cards from the top of your deck and return them to the top or
 /// bottom of the deck in any order" (ST03-010), taken literally: the order is
 /// the player's, both ends of it.

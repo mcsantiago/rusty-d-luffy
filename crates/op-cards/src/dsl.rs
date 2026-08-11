@@ -170,6 +170,14 @@ pub fn named(name: &str) -> Filter {
     Filter::HasName(name.to_string())
 }
 
+/// "other than [Gecko Moria]" — everything the inner filter does not match.
+///
+/// For "other than this card" use [`other_than_self`], which is about the
+/// candidate's relationship to the source rather than a property of it.
+pub fn not(filter: Filter) -> Filter {
+    Filter::Not(Box::new(filter))
+}
+
 // ---- ops -------------------------------------------------------------------
 
 pub fn choose(key: &str, select: Selector) -> EffectOp {
@@ -324,6 +332,23 @@ pub fn dig_top(n: u8, key: &str, up_to: u8, filters: Vec<Filter>) -> EffectOp {
     }
 }
 
+/// "Look at N cards from the top of your deck and return them to the top or
+/// bottom of the deck in any order" (ST03-010).
+///
+/// Unlike [`dig_top`], nothing leaves the deck: the whole effect is the order
+/// the player puts them back in, so it is theirs to pick.
+pub fn look_top(n: u8, key: &str) -> EffectOp {
+    EffectOp::LookTop {
+        n,
+        key: key.to_string(),
+    }
+}
+
+/// "then shuffle your deck" — the tail of a search.
+pub fn shuffle_your_deck() -> EffectOp {
+    EffectOp::Shuffle { player: Who::You }
+}
+
 pub fn draw(n: u8) -> EffectOp {
     EffectOp::Draw {
         player: Who::You,
@@ -364,6 +389,11 @@ pub fn leader_has_type(ty: &str) -> Condition {
 
 pub fn any_character_costing(n: u8) -> Condition {
     Condition::AnyCharacterWithCost(n)
+}
+
+/// "if you have 3 or less cards in your hand" (ST03-017).
+pub fn hand_at_most(n: u8) -> Condition {
+    Condition::HandAtMost(n)
 }
 
 // ---- effect builders -------------------------------------------------------
