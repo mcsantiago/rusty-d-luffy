@@ -778,14 +778,11 @@ function renderChoose(snap) {
   }
 
   const upTo = snap.choose_up_to;
-  // Every candidate appears as a subset of one, so the singletons are the
-  // candidate list — in the engine's order, which is the board's order.
-  const candidates = [];
-  for (const opt of snap.options) {
-    if (opt.cards.length === 1 && !candidates.includes(opt.cards[0])) {
-      candidates.push(opt.cards[0]);
-    }
-  }
+  const atLeast = snap.choose_at_least ?? 0;
+  // The whole pool, sent by the engine side with a label and a class each:
+  // the board cannot draw a given DON!!, and cannot tell which picks are
+  // equivalent.
+  const candidates = snap.choose_candidates ?? [];
 
   const index = cardIndex(snap.view);
   $("choose-title").textContent = snap.question ?? "Choose";
@@ -793,11 +790,13 @@ function renderChoose(snap) {
   $("choose-sub").textContent =
     upTo === 1
       ? "Pick a card."
-      : `Pick up to ${upTo} — ${picked.length} chosen.`;
+      : atLeast === upTo
+        ? `Pick ${upTo} — ${picked.length} chosen.`
+        : `Pick up to ${upTo} — ${picked.length} chosen.`;
 
   const grid = $("choose-grid");
   grid.innerHTML = "";
-  for (const id of candidates) {
+  for (const { id, label } of candidates) {
     const card = index.get(id);
     const holder = document.createElement("div");
     holder.className = "choose-option" + (picked.includes(id) ? " picked" : "");
@@ -805,10 +804,9 @@ function renderChoose(snap) {
     if (card) {
       holder.appendChild(cardEl(card, { plain: true }));
     } else {
-      // A candidate the view does not hold — off-board, mid-effect. The
-      // engine's own label is the only description available for it.
-      const opt = snap.options.find((o) => o.cards.length === 1 && o.cards[0] === id);
-      holder.innerHTML = `<div class="choose-unknown">${opt ? opt.label : id}</div>`;
+      // A candidate the view does not hold — a DON!!, or something off-board
+      // mid-effect. Its label is the only description available for it.
+      holder.innerHTML = `<div class="choose-unknown">${label}</div>`;
     }
 
     holder.appendChild(
@@ -834,15 +832,39 @@ function renderChoose(snap) {
   const canDecline = snap.options.some((o) => o.cards.length === 0);
   $("choose-none").hidden = !canDecline;
   $("choose-confirm").hidden = upTo === 1;
-  $("choose-confirm").disabled = picked.length === 0;
+  // Enabled only on an answer the engine will accept: a floor of 0 needs one
+  // card, a fixed count needs exactly that many.
+  $("choose-confirm").disabled = picked.length < Math.max(atLeast, 1);
   modal.hidden = animating();
 }
 
-/** Submits a set of cards by finding the option that names exactly them. */
+/** The multiset of classes a pick covers, as a sorted key. */
+function classKey(ids, candidates) {
+  return ids
+    .map((id) => candidates.find((c) => c.id === id)?.class ?? String(id))
+    .sort()
+    .join("|");
+}
+
+/**
+ * Submits a set of cards by finding the option that names them.
+ *
+ * Falls back to matching by class, because the engine offers one representative
+ * per class for interchangeable cards: picking the other of two identical
+ * rested DON!! is the same answer, and must not be refused.
+ */
 function submitChoice(cards, snap) {
-  const opt = snap.options.find((o) => sameSet(o.cards, cards));
+  const candidates = snap.choose_candidates ?? [];
+  const want = classKey(cards, candidates);
+  const opt =
+    snap.options.find((o) => sameSet(o.cards, cards)) ??
+    snap.options.find(
+      (o) => o.cards.length === cards.length && classKey(o.cards, candidates) === want,
+    );
   if (!opt) {
-    $("question").textContent = "That combination is not on offer";
+    // Into the modal, not the board behind it: the overlay is opaque, so a
+    // refusal written to #question is invisible and Confirm looks inert.
+    $("choose-sub").textContent = "That combination is not on offer.";
     return;
   }
   picked = [];

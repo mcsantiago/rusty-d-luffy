@@ -8,7 +8,7 @@ use rand::Rng;
 
 use op_core::card::Category;
 use op_core::derive::Derived;
-use op_core::{legal_actions, Action, Game, PlayerId};
+use op_core::{legal_actions, Action, DonClass, Game, PlayerId};
 
 use crate::Agent;
 
@@ -161,6 +161,17 @@ fn shape(action: &Action, game: &Game) -> f64 {
                 Category::Character => 0.5,
                 _ => 0.0,
             }
+        }
+        // Surrender rested DON!! first: a rested one cannot be spent again this
+        // turn and an active one can. Big enough to beat the 0.67 the position
+        // score already swings by — a given DON!! is not in `cost_area` and its
+        // power is only counted on a Character — and small enough that a battle
+        // this loses still outweighs it.
+        Action::ReturnDon { dons } => {
+            let spendable = dons
+                .iter()
+                .filter(|&&d| game.don_class(d) != DonClass::Rested);
+            -(spendable.count() as f64)
         }
         _ => 0.0,
     }

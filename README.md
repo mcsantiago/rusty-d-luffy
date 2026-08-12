@@ -352,11 +352,6 @@ These are deliberate and localised; each is commented at its site.
   ST08-014 is the only card affected.
 - ST08-013 pays its own K.O. for a trade whose K.O. an effect could in
   principle prevent. No card in the implemented pool can produce that board.
-- "DON!! −N" returns DON!! from the cost area only, not DON!! already given to a
-  Character. The printed reminder says "from your field", which arguably covers
-  both; the Comprehensive Rules could not be consulted, so the narrower reading
-  is what ST-04 implements. Which DON!! goes is not offered as a choice —
-  rested first, since an active one is still spendable this turn.
 - ST04-001 trashes the *top* of the opponent's Life rather than offering a pick.
   Life is a secret area (3-1-4): the cards are face down and indistinguishable,
   so the choice decides nothing, and enumerating it would leak their ids.

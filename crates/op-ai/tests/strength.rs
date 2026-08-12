@@ -284,3 +284,72 @@ fn determinization_preserves_everything_the_observer_can_see() {
     };
     assert_eq!(board_defs(&before), board_defs(&after));
 }
+
+/// The agent surrenders rested DON!! before spendable ones: a rested DON!!
+/// cannot be spent again this turn and an active one can. `Game::pay` used to
+/// apply that rule itself; once paying became the player's choice, the only
+/// thing left expressing it was the order `legal_actions` happens to emit, and
+/// the heuristic does not read order.
+///
+/// The scenario is built so the two orderings disagree. `evaluate` is not
+/// neutral about which DON!! goes — a given one is not in `cost_area`, and the
+/// Leader's power is not counted at all — so taking seven off the Leader looks
+/// free to it, and the nudge has to be large enough to say otherwise.
+#[test]
+fn the_heuristic_surrenders_rested_don_before_spendable_ones() {
+    use op_cards::decks::st04;
+    use op_core::Pending;
+
+    let Some((db, cards)) = load() else { return };
+    let config = GameConfig {
+        seed: 5,
+        first_player: PlayerId::P0,
+        decks: [st04(), st01()],
+        allow_illegal_decks: false,
+    };
+    let (mut game, _) = Game::new(config, db, cards).expect("legal decks");
+    for _ in 0..2 {
+        game.step(Action::Mulligan(false)).unwrap();
+    }
+    // Turn 15, so all ten DON!! are out and the Leader's DON!! −7 is payable.
+    for _ in 0..14 {
+        game.step(Action::EndMainPhase).unwrap();
+    }
+
+    let leader = game.state.player(PlayerId::P0).leader.unwrap();
+    let cost_area = game.state.player(PlayerId::P0).cost_area.to_vec();
+    assert_eq!(cost_area.len(), 10, "turn 15 should have the full ten");
+
+    let rested: Vec<_> = cost_area.iter().copied().take(3).collect();
+    for &d in &rested {
+        game.state.card_mut(d).rested = true;
+    }
+    // Seven given away, so the whole cost can be paid without touching a rested
+    // DON!! — which is the case that tells the two orderings apart.
+    for _ in 0..7 {
+        game.step(Action::GiveDon { to: leader }).unwrap();
+    }
+
+    game.step(Action::ActivateEffect {
+        card: leader,
+        slot: 0,
+        discard: Vec::new(),
+    })
+    .unwrap();
+    assert!(
+        matches!(game.pending(), Some(Pending::ReturnDon { .. })),
+        "a mixed pool must ask, got {:?}",
+        game.pending()
+    );
+
+    let mut agent = HeuristicAgent::new(StdRng::seed_from_u64(7));
+    let Action::ReturnDon { dons } = agent.choose(&game, PlayerId::P0) else {
+        panic!("a pending ReturnDon offers nothing else");
+    };
+    for d in rested {
+        assert!(
+            dons.contains(&d),
+            "a rested DON!! was kept while a spendable one was returned: {dons:?}"
+        );
+    }
+}

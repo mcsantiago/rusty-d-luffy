@@ -65,6 +65,11 @@ pub enum Action {
     Choose { cards: Vec<CardInstanceId> },
     /// Pay an auto effect's activation cost, or decline it (8-3-1-4).
     PayCost(bool),
+    /// Name the DON!! cards a `DON!! −X` returns to the DON!! deck (8-3-1-6).
+    /// Which ones is the player's choice (3-9-2), so it is its own decision
+    /// rather than travelling with the action that incurred the cost — the
+    /// alternative is a cross product with the hand cost beside it.
+    ReturnDon { dons: Vec<CardInstanceId> },
 }
 
 /// What the engine is currently waiting for. Stored in `GameState` because a
@@ -96,6 +101,21 @@ pub enum Pending {
         /// What it wants, so a client can name the price.
         cost: crate::script::ActivationCost,
     },
+    /// 8-3-1-6: which DON!! a `DON!! −X` takes back.
+    ///
+    /// Asked only when there is something to decide — a pool the same size as
+    /// the cost has exactly one answer and is paid without asking, the same
+    /// principle as [`Pending::Choose`]'s floor.
+    ReturnDon {
+        player: PlayerId,
+        /// The card whose cost this is, so a client can name what is asking.
+        source: CardInstanceId,
+        /// How many must go. Never more than `options.len()`.
+        n: u8,
+        /// Every DON!! that may be taken: the cost area plus DON!! already
+        /// given to this player's Leader and Characters.
+        options: Vec<CardInstanceId>,
+    },
     Choose {
         player: PlayerId,
         /// Binding key the answer is stored under in the suspended frame.
@@ -122,6 +142,7 @@ impl Pending {
             | Pending::Counter { player }
             | Pending::Trigger { player, .. }
             | Pending::PayCost { player, .. }
+            | Pending::ReturnDon { player, .. }
             | Pending::Choose { player, .. } => *player,
         }
     }

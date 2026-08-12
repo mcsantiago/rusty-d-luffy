@@ -95,6 +95,18 @@ pub struct PlayerOutcome {
     pub pending: Option<Pending>,
 }
 
+/// Where a DON!! sits, which is the only thing telling two of them apart.
+/// See [`Game::don_class`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DonClass {
+    /// Rested in the cost area: it cannot be spent again this turn anyway.
+    Rested,
+    /// Given to a card (6-5-5-1), so it is on that holder, not in the cost area.
+    Given(CardInstanceId),
+    /// Active in the cost area, and so still spendable this turn.
+    Active,
+}
+
 /// A game in progress.
 ///
 /// The card database and scripts are immutable and shared; all mutable state is
@@ -292,7 +304,7 @@ impl Game {
                     .take(pc.cost.trash_from_hand as usize)
                     .copied()
                     .collect();
-                self.pay(player, source, &pc.cost, &discard, events);
+                let owed = self.pay(player, source, &pc.cost, &discard, events);
                 if pc.once_per_turn {
                     self.state.card_mut(source).used_once_per_turn.push(pc.slot);
                 }
@@ -300,6 +312,41 @@ impl Game {
                     source,
                     controller: player,
                 });
+                self.state.pending = owed;
+                Ok(())
+            }
+
+            (
+                Pending::ReturnDon {
+                    player, n, options, ..
+                },
+                Action::ReturnDon { dons },
+            ) => {
+                let (player, n) = (*player, *n as usize);
+                if dons.len() != n {
+                    return Err(IllegalAction::Illegal(format!(
+                        "this costs {n} DON!! card(s), {} named",
+                        dons.len()
+                    )));
+                }
+                if let Some(bad) = dons.iter().find(|d| !options.contains(d)) {
+                    return Err(IllegalAction::Illegal(format!(
+                        "{bad:?} is not a DON!! this cost may take"
+                    )));
+                }
+                // Naming the same DON!! twice would otherwise pay the cost once
+                // and report it paid in full.
+                if dons
+                    .iter()
+                    .enumerate()
+                    .any(|(i, d)| dons[i + 1..].contains(d))
+                {
+                    return Err(IllegalAction::Illegal(
+                        "the same DON!! card named twice".into(),
+                    ));
+                }
+                let dons = dons.clone();
+                self.return_don(player, &dons, events);
                 self.state.pending = None;
                 Ok(())
             }
@@ -498,6 +545,10 @@ impl Game {
             events.push(GameEvent::KnockedOut { card: victim });
         }
 
+        // Set by the Event branch when its further cost carries a `DON!! −X`
+        // whose selection is the player's to make.
+        let mut owed = None;
+
         match category {
             Category::Character => {
                 self.state
@@ -563,7 +614,7 @@ impl Game {
                         .take(extra.trash_from_hand as usize)
                         .copied()
                         .collect();
-                    self.pay(player, card, &extra, &discard, events);
+                    owed = self.pay(player, card, &extra, &discard, events);
                 }
                 self.state
                     .move_card(card, player, Zone::Trash, Placement::Top);
@@ -585,7 +636,7 @@ impl Game {
             }
         }
 
-        self.state.pending = None;
+        self.state.pending = owed;
         Ok(())
     }
 
@@ -644,7 +695,7 @@ impl Game {
                 "{bad:?} is not in your hand"
             )));
         }
-        self.pay(player, card, &effect.cost, discard, events);
+        let owed = self.pay(player, card, &effect.cost, discard, events);
 
         if effect.once_per_turn {
             self.state.card_mut(card).used_once_per_turn.push(slot);
@@ -656,7 +707,7 @@ impl Game {
         self.state
             .stack
             .push(EffectFrame::new(card, player, effect.ops));
-        self.state.pending = None;
+        self.state.pending = owed;
         Ok(())
     }
 
@@ -678,12 +729,64 @@ impl Game {
         if self.state.player(player).life.len() < cost.life_to_hand as usize {
             return false;
         }
-        if self.state.player(player).cost_area.len() < cost.don_minus as usize {
+        // Guarded: `returnable_don` allocates and sorts, and `can_pay` runs per
+        // candidate card at every search node, where almost no cost has one.
+        if cost.don_minus > 0 && self.returnable_don(player).len() < cost.don_minus as usize {
             return false;
         }
         true
     }
 
+    /// What distinguishes one DON!! from another when a `DON!! −X` asks which
+    /// to return. Two DON!! of the same class are interchangeable down to the
+    /// state hash, so this is the whole substance of that decision — and the
+    /// only equivalence a client, a label or a validator may rely on.
+    pub fn don_class(&self, don: CardInstanceId) -> DonClass {
+        match self.don_holder(don) {
+            Some(holder) => DonClass::Given(holder),
+            None if self.state.card(don).is_active() => DonClass::Active,
+            None => DonClass::Rested,
+        }
+    }
+
+    /// The card a DON!! has been given to, or `None` if it is loose in the cost
+    /// area.
+    ///
+    /// Exists for clients naming a `DON!! −X` choice: one DON!! is much like
+    /// another, so where it sits is the only thing that distinguishes the
+    /// options, and a given DON!! is not in the cost area to be found.
+    pub fn don_holder(&self, don: CardInstanceId) -> Option<CardInstanceId> {
+        let owner = self.state.card(don).owner;
+        self.state
+            .battlers(owner)
+            .into_iter()
+            .find(|&c| self.state.card(c).attached_don.contains(&don))
+    }
+
+    /// Every DON!! a `DON!! −X` may take: 8-3-1-6 takes them "from their Leader
+    /// area, Character area, and cost area", and a given DON!! (6-5-5-1) lives
+    /// on its holder rather than in the cost area. Ordered rested-before-active
+    /// so the leading answer surrenders what the player can least use.
+    pub(crate) fn returnable_don(&self, player: PlayerId) -> Vec<CardInstanceId> {
+        let mut pool: Vec<CardInstanceId> = self.state.player(player).cost_area.to_vec();
+        pool.sort_by_key(|&d| self.state.card(d).is_active());
+        for holder in self.state.battlers(player) {
+            pool.extend(self.state.card(holder).attached_don.iter().copied());
+        }
+        pool
+    }
+
+    /// Pays everything a cost asks for except the `DON!! −X` selection, and
+    /// reports the decision that selection still owes, if any.
+    ///
+    /// The selection is the player's (3-9-2) and so cannot be settled here.
+    /// Callers park on the returned `Pending` instead of clearing `pending`,
+    /// which holds the effect's frame — already pushed — until the answer
+    /// arrives, since `advance` will not tick while a decision is outstanding.
+    /// Nothing else can happen in between: the game is stopped on the question,
+    /// so the only state that moves between activation and payment is the
+    /// answer itself.
+    #[must_use = "a DON!! −X selection left unasked is a cost never paid"]
     fn pay(
         &mut self,
         player: PlayerId,
@@ -691,7 +794,7 @@ impl Game {
         cost: &crate::script::ActivationCost,
         discard: &[CardInstanceId],
         events: &mut Vec<GameEvent>,
-    ) {
+    ) -> Option<Pending> {
         for don in self
             .active_don(player)
             .into_iter()
@@ -722,32 +825,62 @@ impl Game {
             });
         }
         if cost.don_minus > 0 {
-            let spent = self.return_don(player, cost.don_minus);
-            events.push(GameEvent::DonSpentToDonDeck {
-                player,
-                count: spent,
-            });
+            let pool = self.returnable_don(player);
+            // `can_pay` ran first, so a short pool means the cost was checked
+            // against a board that has since shrunk; take what there is rather
+            // than deadlock.
+            let n = (cost.don_minus as usize).min(pool.len());
+            // Only ask when the pool holds DON!! that differ. Within one class
+            // they are interchangeable down to the state hash, so a bigger pool
+            // than the cost is not by itself a decision.
+            let mixed = {
+                let mut classes = pool
+                    .iter()
+                    .map(|&d| (self.don_holder(d), self.state.card(d).rested));
+                let first = classes.next();
+                classes.any(|c| Some(c) != first)
+            };
+            if pool.len() > n && mixed {
+                return Some(Pending::ReturnDon {
+                    player,
+                    source: card,
+                    n: n as u8,
+                    options: pool,
+                });
+            }
+            // One way to pay is not a decision.
+            self.return_don(player, &pool[..n], events);
         }
+        None
     }
 
-    /// Sends `n` DON!! from `player`'s cost area back to the bottom of their
-    /// DON!! deck, and reports how many actually went.
+    /// Sends the named DON!! back to the bottom of `player`'s DON!! deck.
     ///
-    /// Rested DON!! go first. The player is never asked which: an active DON!!
-    /// can still be spent this turn and a rested one cannot, so keeping the
-    /// active ones is the choice they would make every time.
-    fn return_don(&mut self, player: PlayerId, n: u8) -> u8 {
-        let mut pool: Vec<CardInstanceId> = self.state.player(player).cost_area.to_vec();
-        pool.sort_by_key(|&d| self.state.card(d).is_active());
-        let mut returned = 0;
-        for don in pool.into_iter().take(n as usize) {
+    /// A given DON!! is not in the cost area — it was lifted out of it and
+    /// lives on its holder — so it has to be detached as well as moved, or the
+    /// holder keeps a stale id and goes on drawing +1000 power from it.
+    fn return_don(
+        &mut self,
+        player: PlayerId,
+        dons: &[CardInstanceId],
+        events: &mut Vec<GameEvent>,
+    ) {
+        for &don in dons {
+            for holder in self.state.battlers(player) {
+                self.state
+                    .card_mut(holder)
+                    .attached_don
+                    .retain(|&d| d != don);
+            }
             self.state.lift(don);
             self.state.card_mut(don).rested = false;
             self.state
                 .put(don, player, Zone::DonDeck, Placement::Bottom);
-            returned += 1;
         }
-        returned
+        events.push(GameEvent::DonSpentToDonDeck {
+            player,
+            count: dons.len() as u8,
+        });
     }
 
     // ---- battle ------------------------------------------------------------
@@ -1017,9 +1150,10 @@ impl Game {
         let script = self.scripts.script(self.state.card(card).def);
         let ops = script.counter.clone();
         let extra = script.counter_cost.clone();
+        let mut owed = None;
         if !extra.is_free() {
             // `legal_counter_events` already refused anything unpayable.
-            self.pay(player, card, &extra, &[], events);
+            owed = self.pay(player, card, &extra, &[], events);
         }
         // 8-4-2: the Event is trashed, then its effect is carried out.
         self.state
@@ -1035,8 +1169,10 @@ impl Game {
         self.state.stack.push(frame);
 
         // Clearing `pending` lets the frame resolve first; the Counter Step then
-        // re-offers, so the defender may keep countering (7-1-3-2).
-        self.state.pending = None;
+        // re-offers, so the defender may keep countering (7-1-3-2). A `DON!! −X`
+        // selection stands in front of that — the Counter Step is still there
+        // once it is answered.
+        self.state.pending = owed;
         Ok(())
     }
 
