@@ -231,6 +231,9 @@ pub fn conditions_hold(
                 .iter()
                 .any(|&c| db.get(state.card(c).def).cost == *n)
         }),
+        // The controller's own hand. "3 or less" counts what is there when the
+        // condition is read, which for ST03-017 is after its power boost.
+        Condition::HandAtMost(n) => state.player(card.controller).hand.len() <= *n as usize,
     }) && {
         let _ = db;
         true
@@ -247,9 +250,23 @@ pub fn matches_filters(
     card: CardInstanceId,
     filters: &[crate::effect::Filter],
 ) -> bool {
+    filters
+        .iter()
+        .all(|f| matches_filter(state, db, derived, source, card, f))
+}
+
+/// One filter, split out so [`crate::effect::Filter::Not`] can recurse.
+fn matches_filter(
+    state: &GameState,
+    db: &CardDb,
+    derived: &Derived,
+    source: CardInstanceId,
+    card: CardInstanceId,
+    filter: &crate::effect::Filter,
+) -> bool {
     use crate::effect::Filter;
     let def = db.get(state.card(card).def);
-    filters.iter().all(|f| match f {
+    match filter {
         // Derived, not printed: ST-06 is built on lowering a Character's cost
         // so that a "cost N or less" removal effect can reach it.
         Filter::CostAtMost(n) => derived.get(card).effective_cost() <= *n,
@@ -261,7 +278,8 @@ pub fn matches_filters(
         Filter::IsCategory(cat) => def.category == *cat,
         Filter::HasColor(color) => def.colors.contains(color),
         Filter::HasName(name) => def.name == *name,
-    })
+        Filter::Not(inner) => !matches_filter(state, db, derived, source, card, inner),
+    }
 }
 
 /// Whether `id` may currently declare an attack (7-1, 10-1-1).

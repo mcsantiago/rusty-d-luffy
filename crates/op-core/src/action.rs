@@ -70,6 +70,13 @@ pub enum Action {
     /// rather than travelling with the action that incurred the cost — the
     /// alternative is a cross product with the hand cost beside it.
     ReturnDon { dons: Vec<CardInstanceId> },
+    /// Answer a "return them to the top or bottom in any order" request
+    /// (ST03-010). Both lists read top-to-bottom within their own group, and
+    /// together they must name every card that was looked at, exactly once.
+    Arrange {
+        top: Vec<CardInstanceId>,
+        bottom: Vec<CardInstanceId>,
+    },
 }
 
 /// What the engine is currently waiting for. Stored in `GameState` because a
@@ -116,6 +123,20 @@ pub enum Pending {
         /// given to this player's Leader and Characters.
         options: Vec<CardInstanceId>,
     },
+    /// Cards taken off the top of the deck and awaiting placement, top-first as
+    /// they were drawn. "Look at N and return them to the top or bottom of the
+    /// deck in any order" (ST03-010).
+    ///
+    /// The cards are in `Zone::Limbo` while this is pending, so nothing can
+    /// draw them mid-decision. Only the controller ever sees this — `project`
+    /// drops a `Pending` belonging to the other player — which is what keeps
+    /// "look at" from telling the opponent the top of your deck.
+    Arrange {
+        player: PlayerId,
+        cards: Vec<CardInstanceId>,
+        /// Binding key the resuming op checks to know the answer has arrived.
+        key: String,
+    },
     Choose {
         player: PlayerId,
         /// Binding key the answer is stored under in the suspended frame.
@@ -143,6 +164,7 @@ impl Pending {
             | Pending::Trigger { player, .. }
             | Pending::PayCost { player, .. }
             | Pending::ReturnDon { player, .. }
+            | Pending::Arrange { player, .. }
             | Pending::Choose { player, .. } => *player,
         }
     }

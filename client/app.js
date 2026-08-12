@@ -853,6 +853,138 @@ function classKey(ids, candidates) {
  * per class for interchangeable cards: picking the other of two identical
  * rested DON!! is the same answer, and must not be refused.
  */
+// ---- arranging the top of the deck -----------------------------------------
+//
+// "Return them to the top or bottom of the deck in any order" is offered by the
+// engine as one action per arrangement — 24 of them for three cards, every one
+// reading "Top: … · Bottom: …". That is the same unreadable list of
+// combinations `renderChoose` exists to collapse, and the same answer applies:
+// let the player build the arrangement, then find the action that matches it.
+//
+// Placement order is the point, so this is not a set-picker. A card goes to the
+// top or the bottom, and where it lands within that pile depends on when it was
+// placed — first onto the top pile ends up topmost, first onto the bottom pile
+// ends up highest of the buried ones.
+
+/** Placements so far, in the order they were made: `{ id, pile }`.
+ *
+ *  One list rather than two, so undo has something to pop: with a top pile and
+ *  a bottom pile there is no way to tell which of them moved last.
+ */
+let arrangePlacements = [];
+
+const arrangePile = (pile) =>
+  arrangePlacements.filter((p) => p.pile === pile).map((p) => p.id);
+
+function renderArrange(snap) {
+  const modal = $("arrange-modal");
+  if (!snap.arrange) {
+    modal.hidden = true;
+    arrangePlacements = [];
+    return;
+  }
+
+  const arrangeTop = arrangePile("top");
+  const arrangeBottom = arrangePile("bottom");
+  // The cards come with the decision rather than being looked up on the board:
+  // they are lifted out of the deck into no area at all while the question is
+  // pending, so `snap.view` does not hold them and never will.
+  const byId = new Map(snap.arrange.map((c) => [c.id, c]));
+  const all = snap.arrange.map((c) => c.id);
+  const placed = arrangePlacements.map((p) => p.id);
+  const remaining = all.filter((id) => !placed.includes(id));
+  const describe = (id) => cardEl(byId.get(id), { plain: true });
+
+  $("arrange-title").textContent = snap.question ?? "Arrange";
+  $("arrange-sub").textContent = remaining.length
+    ? `${remaining.length} left to place — top or bottom.`
+    : "Every card placed. Confirm to put them back.";
+
+  const pool = $("arrange-pool");
+  pool.innerHTML = "";
+  for (const id of remaining) {
+    const holder = document.createElement("div");
+    holder.className = "choose-option";
+    holder.appendChild(describe(id));
+
+    const buttons = document.createElement("div");
+    buttons.className = "arrange-buttons";
+    for (const [label, pile] of [
+      ["↑ Top", "top"],
+      ["↓ Bottom", "bottom"],
+    ]) {
+      const b = document.createElement("button");
+      b.className = "opt";
+      b.textContent = label;
+      b.addEventListener("click", () => {
+        arrangePlacements.push({ id, pile });
+        renderArrange(snap);
+      });
+      buttons.appendChild(b);
+    }
+    holder.appendChild(buttons);
+    pool.appendChild(holder);
+  }
+
+  for (const [slotId, pile] of [
+    ["arrange-top", arrangeTop],
+    ["arrange-bottom", arrangeBottom],
+  ]) {
+    const slot = $(slotId);
+    slot.innerHTML = "";
+    if (pile.length === 0) {
+      slot.innerHTML = `<div class="arrange-empty">nothing yet</div>`;
+      continue;
+    }
+    pile.forEach((id, i) => {
+      const holder = document.createElement("div");
+      holder.className = "choose-option";
+      holder.appendChild(describe(id));
+      holder.appendChild(
+        Object.assign(document.createElement("div"), {
+          className: "choose-rank",
+          textContent: String(i + 1),
+        }),
+      );
+      slot.appendChild(holder);
+    });
+  }
+
+  $("arrange-undo").disabled = placed.length === 0;
+  $("arrange-confirm").disabled = remaining.length > 0;
+  modal.hidden = animating();
+}
+
+
+$("arrange-undo").addEventListener("click", () => {
+  arrangePlacements.pop();
+  renderArrange(lastSnapshot);
+});
+
+$("arrange-confirm").addEventListener("click", () => {
+  submitArrangement(lastSnapshot);
+});
+
+/** Submits the built arrangement by finding the option that is exactly it. */
+function submitArrangement(snap) {
+  const top = arrangePile("top");
+  const wanted = [...top, ...arrangePile("bottom")];
+  const opt = snap.options.find(
+    (o) =>
+      o.split === top.length &&
+      o.cards.length === wanted.length &&
+      o.cards.every((id, i) => id === wanted[i]),
+  );
+  if (!opt) {
+    $("question").textContent = "That arrangement is not on offer";
+    return;
+  }
+  arrangePlacements = [];
+  $("arrange-modal").hidden = true;
+  choose(opt.index);
+}
+
+/** Submits a set of cards by finding the option that names exactly them. */
 function submitChoice(cards, snap) {
   const candidates = snap.choose_candidates ?? [];
   const want = classKey(cards, candidates);
@@ -1350,6 +1482,7 @@ function render(snap) {
   announceTurn(snap);
   announceResult(snap.battle_result ?? null);
   renderChoose(snap);
+  renderArrange(snap);
 
   $("question").textContent =
     snap.question ?? (snap.thinking ? "Opponent is thinking…" : "Waiting…");
