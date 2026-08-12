@@ -10,7 +10,7 @@ use rand_chacha::ChaCha8Rng;
 use serde::{Deserialize, Serialize};
 
 use crate::card::{CardDb, Category};
-use crate::effect::{Modifier, ResolutionStack};
+use crate::effect::{Modifier, ResolutionQueue};
 use crate::ids::{CardDefId, CardInstanceId, PlayerId};
 use crate::zone::Zone;
 
@@ -204,8 +204,8 @@ pub struct GameState {
     /// The decision the engine is waiting on. A suspended decision point is
     /// part of the position, so it lives in the state.
     pub pending: Option<crate::action::Pending>,
-    /// Suspended effect resolution (see [`crate::effect`]).
-    pub stack: ResolutionStack,
+    /// Effects waiting to resolve, front first (see [`crate::effect`]).
+    pub resolution: ResolutionQueue,
     /// Temporary modifiers with a duration; permanent effects are derived, not
     /// stored (8-1-3-3).
     pub modifiers: Vec<Modifier>,
@@ -237,7 +237,7 @@ impl GameState {
             battle: None,
             damage: None,
             pending: None,
-            stack: ResolutionStack::default(),
+            resolution: ResolutionQueue::default(),
             modifiers: Vec::new(),
             game_over: None,
             end_autos_queued: false,

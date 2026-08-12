@@ -287,15 +287,11 @@ impl Game {
                 // `step` has to leave the state as it found it, or a client
                 // that retries is playing on from a board half-changed by the
                 // attempt that failed.
-                let idx =
-                    self.state
-                        .stack
-                        .frames
-                        .len()
-                        .checked_sub(1)
-                        .ok_or(IllegalAction::Illegal(
-                            "no effect is waiting on an arrangement".into(),
-                        ))?;
+                if self.state.resolution.current().is_none() {
+                    return Err(IllegalAction::Illegal(
+                        "no effect is waiting on an arrangement".into(),
+                    ));
+                }
 
                 // Both lists read top-to-bottom within their group. The bottom
                 // goes back in order, so its first entry sits above the rest;
@@ -312,7 +308,7 @@ impl Game {
                         .move_card(card, owner, Zone::Deck, Placement::Top);
                 }
 
-                self.state.stack.frames[idx].bind(&key, Vec::new());
+                self.bind_current(&key, Vec::new());
                 self.state.pending = None;
                 let _ = player;
                 Ok(())
@@ -320,30 +316,26 @@ impl Game {
 
             (Pending::PayCost { player, .. }, Action::PayCost(pay)) => {
                 let player = *player;
-                let idx =
-                    self.state
-                        .stack
-                        .frames
-                        .len()
-                        .checked_sub(1)
-                        .ok_or(IllegalAction::Illegal(
-                            "no effect is waiting on a cost".into(),
-                        ))?;
-                let Some(pc) = self.state.stack.frames[idx].pending_cost.take() else {
+                let Some(current) = self.state.resolution.current_mut() else {
+                    return Err(IllegalAction::Illegal(
+                        "no effect is waiting on a cost".into(),
+                    ));
+                };
+                let Some(pc) = current.pending_cost.take() else {
                     return Err(IllegalAction::Illegal(
                         "that effect is not waiting on a cost".into(),
                     ));
                 };
-                let source = self.state.stack.frames[idx].source;
+                let source = current.source;
                 if !pay {
                     // 8-3-1-4: refused, so the effect never activates.
-                    self.state.stack.frames.remove(idx);
+                    self.state.resolution.retire();
                     self.state.pending = None;
                     return Ok(());
                 }
                 // An earlier effect in the same window may have spent it.
                 if !self.can_pay(player, source, &pc.cost) {
-                    self.state.stack.frames.remove(idx);
+                    self.state.resolution.retire();
                     self.state.pending = None;
                     return Ok(());
                 }
@@ -464,7 +456,7 @@ impl Game {
                 let key = key.clone();
                 let cards = cards.clone();
                 let _ = player;
-                if let Some(frame) = self.state.stack.top_mut() {
+                if let Some(frame) = self.state.resolution.current_mut() {
                     frame.bind(&key, cards);
                 }
                 self.state.pending = None;
@@ -680,7 +672,9 @@ impl Game {
                         source: card,
                         controller: player,
                     });
-                    self.state.stack.push(EffectFrame::new(card, player, ops));
+                    self.state
+                        .resolution
+                        .push(EffectFrame::new(card, player, ops));
                 }
             }
             Category::Leader | Category::Don => {
@@ -757,7 +751,7 @@ impl Game {
             controller: player,
         });
         self.state
-            .stack
+            .resolution
             .push(EffectFrame::new(card, player, effect.ops));
         self.state.pending = owed;
         Ok(())
@@ -1218,7 +1212,7 @@ impl Game {
 
         let mut frame = EffectFrame::new(card, player, ops);
         frame.bind(crate::script::TARGET_BINDING, vec![to]);
-        self.state.stack.push(frame);
+        self.state.resolution.push(frame);
 
         // Clearing `pending` lets the frame resolve first; the Counter Step then
         // re-offers, so the defender may keep countering (7-1-3-2). A `DON!! −X`
@@ -1361,7 +1355,7 @@ impl Game {
         self.state.pending = None;
         if use_it {
             events.push(GameEvent::TriggerActivated { player, card });
-            let ops = self
+            let mut ops = self
                 .scripts
                 .script(self.state.card(card).def)
                 .trigger
@@ -1371,16 +1365,10 @@ impl Game {
             // otherwise. A Trigger that plays the card moves it out of Limbo
             // itself, so only cards still in Limbo get trashed.
             self.state.lift(card);
+            ops.push(crate::effect::EffectOp::TrashIfInLimbo);
             let mut frame = EffectFrame::new(card, player, ops);
             frame.bind(crate::script::TARGET_BINDING, vec![card]);
-            self.state.stack.push(frame);
-            self.state
-                .stack
-                .frames
-                .last_mut()
-                .unwrap()
-                .ops
-                .push(crate::effect::EffectOp::TrashIfInLimbo);
+            self.state.resolution.push(frame);
         } else {
             self.take_life_card(player, card, false, events);
         }
@@ -1458,21 +1446,21 @@ impl Game {
             }
         }
         panic!(
-            "engine failed to reach a decision point in 10000 ticks\n  phase={:?} turn={} tp={:?}\n  battle={:?}\n  damage={:?}\n  stack={:?}",
+            "engine failed to reach a decision point in 10000 ticks\n  phase={:?} turn={} tp={:?}\n  battle={:?}\n  damage={:?}\n  resolution={:?}",
             self.state.phase,
             self.state.turn,
             self.state.turn_player,
             self.state.battle,
             self.state.damage,
-            self.state.stack,
+            self.state.resolution,
         );
     }
 
     /// One unit of forward progress. Returns false when the engine is parked.
     fn tick(&mut self, events: &mut Vec<GameEvent>) -> bool {
         // Suspended effect resolution takes priority over everything else.
-        if !self.state.stack.is_empty() {
-            self.resolve_top_frame(events);
+        if !self.state.resolution.is_empty() {
+            self.resolve_current_frame(events);
             return true;
         }
         if self.state.damage.is_some() {
@@ -1589,7 +1577,7 @@ impl Game {
             }
             Phase::End => {
                 // Two visits: the first queues end-of-turn effects, and the
-                // stack is drained by `tick` before the second tears down
+                // queue is drained by `tick` before the second tears down
                 // turn-scoped state. 6-6-1-1 must fully resolve before 6-6-1-3.
                 if !self.state.end_autos_queued {
                     self.end_phase(events);
@@ -1806,21 +1794,23 @@ impl Game {
 
     // ---- effect resolution -------------------------------------------------
 
-    /// Executes the top frame's ops until it suspends for a choice or completes.
+    /// Executes the frame at the front of the queue until it suspends for a
+    /// choice or completes.
     ///
     /// Suspension leaves `ip` pointing *at* the op that needs input, so that
     /// resuming re-runs it — by which time the answer is in `bindings` and it
     /// falls through.
-    fn resolve_top_frame(&mut self, events: &mut Vec<GameEvent>) {
+    ///
+    /// An op may queue further effects — an `[On Play]` triggered by playing a
+    /// card, a `[When a Character is K.O.'d]` triggered by K.O.ing one. Those
+    /// join the back of the queue and are not reached until this frame retires,
+    /// which is 8-6-3. Nothing pops the front while this runs, so the frame
+    /// being executed stays the current one throughout.
+    fn resolve_current_frame(&mut self, events: &mut Vec<GameEvent>) {
         loop {
-            let Some(frame) = self.state.stack.frames.last().cloned() else {
+            let Some(frame) = self.state.resolution.current().cloned() else {
                 return;
             };
-            // An op may push further frames (an [On Play] triggered by playing a
-            // card, say), so the frame being executed is addressed by index
-            // rather than as "the top" — otherwise its instruction pointer would
-            // never advance and the effect would replay forever.
-            let idx = self.state.stack.frames.len() - 1;
 
             // An unpaid cost is a question, not a fee.
             if let Some(pc) = &frame.pending_cost {
@@ -1833,26 +1823,40 @@ impl Game {
             }
 
             if frame.ip >= frame.ops.len() {
-                self.state.stack.frames.remove(idx);
+                self.state.resolution.retire();
                 return;
             }
 
             let op = frame.ops[frame.ip].clone();
-            match self.exec_op(idx, &frame, op, events) {
-                OpOutcome::Advance => self.state.stack.frames[idx].ip += 1,
+            match self.exec_op(&frame, op, events) {
+                OpOutcome::Advance => {
+                    if let Some(current) = self.state.resolution.current_mut() {
+                        current.ip += 1;
+                    }
+                }
                 OpOutcome::Suspend => return,
                 OpOutcome::Retry => {}
                 OpOutcome::Abort => {
-                    self.state.stack.frames.remove(idx);
+                    self.state.resolution.retire();
                     return;
                 }
             }
         }
     }
 
+    /// Binds into the frame being executed.
+    ///
+    /// Ops enqueue new frames behind the current one, so "the frame being
+    /// executed" is always the front of the queue — including from inside an op
+    /// that has just triggered something else.
+    fn bind_current(&mut self, key: &str, cards: Vec<CardInstanceId>) {
+        if let Some(current) = self.state.resolution.current_mut() {
+            current.bind(key, cards);
+        }
+    }
+
     fn exec_op(
         &mut self,
-        idx: usize,
         frame: &crate::effect::EffectFrame,
         op: crate::effect::EffectOp,
         events: &mut Vec<GameEvent>,
@@ -1873,14 +1877,14 @@ impl Game {
                         source: frame.source,
                         controller: frame.controller,
                     });
-                    self.state.stack.frames[idx].bind(&key, Vec::new());
+                    self.bind_current(&key, Vec::new());
                     return OpOutcome::Advance;
                 }
                 // One legal answer is not a decision: a floor covering the
                 // whole pool means every candidate, so do not stage a choice.
                 let floor = (select.at_least as usize).min(options.len());
                 if floor == options.len() {
-                    self.state.stack.frames[idx].bind(&key, options);
+                    self.bind_current(&key, options);
                     return OpOutcome::Advance;
                 }
                 self.state.pending = Some(Pending::Choose {
@@ -2148,9 +2152,9 @@ impl Game {
                     })
                     .collect();
 
-                self.state.stack.frames[idx].bind(&dig_pool_key(&key), pool);
+                self.bind_current(&dig_pool_key(&key), pool);
                 if options.is_empty() {
-                    self.state.stack.frames[idx].bind(&key, Vec::new());
+                    self.bind_current(&key, Vec::new());
                     // Re-run the op so the bottoming branch above executes.
                     return OpOutcome::Retry;
                 }
@@ -2191,7 +2195,7 @@ impl Game {
                     .copied()
                     .collect();
                 if pool.is_empty() {
-                    self.state.stack.frames[idx].bind(&key, Vec::new());
+                    self.bind_current(&key, Vec::new());
                     return OpOutcome::Advance;
                 }
                 for &card in &pool {
@@ -2442,7 +2446,7 @@ impl Game {
             for (key, cards) in supplied {
                 frame.bind(key, cards.clone());
             }
-            self.state.stack.push(frame);
+            self.state.resolution.push(frame);
         }
     }
 

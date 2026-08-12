@@ -688,7 +688,7 @@ impl Session {
         let choose_source = match mine {
             Some(Pending::ReturnDon { source, .. }) => Some(*source),
             _ => choose_up_to
-                .and(self.game.state.stack.top())
+                .and(self.game.state.resolution.current())
                 .map(|f| f.source),
         }
         .map(|card| self.db.get(self.game.state.card(card).def).number.clone());

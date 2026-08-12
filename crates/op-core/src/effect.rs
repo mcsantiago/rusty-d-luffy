@@ -9,6 +9,8 @@
 //! than a coroutine, so `GameState` stays `Clone + Serialize` even mid-effect —
 //! which is what MCTS cloning, server snapshots and replay all require.
 
+use std::collections::VecDeque;
+
 use serde::{Deserialize, Serialize};
 
 use crate::card::Keyword;
@@ -456,25 +458,47 @@ impl EffectFrame {
     }
 }
 
-/// Effects awaiting resolution. Frames resolve last-in-first-out: an effect
-/// whose timing is met during another effect's resolution resolves after the
-/// current one finishes (8-6-3).
+/// Effects awaiting resolution, in the order they will resolve.
+///
+/// A queue and not a stack, which is the whole of 8-6-3: an effect whose
+/// activation timing is fulfilled *during* another effect's resolution
+/// activates after that resolution finishes. It does not interrupt it.
+/// 8-6-1-1 settles the rest of the order — where A and B are already waiting
+/// and resolving A fulfils C's timing, C resolves after B, not before it. Both
+/// rules say the same thing: a newly triggered effect joins the back of the
+/// line.
+///
+/// So the order effects are collected in *is* the order they resolve in, which
+/// is what lets the sites that queue them express 8-6-1 by iteration order
+/// alone — `all_in_play` walks the turn player's board first, `end_battle`
+/// takes the attacker before the target, and `end_phase` runs the turn
+/// player's `[End of Your Turn]` group first.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ResolutionStack {
-    pub frames: Vec<EffectFrame>,
+pub struct ResolutionQueue {
+    pub frames: VecDeque<EffectFrame>,
 }
 
-impl ResolutionStack {
+impl ResolutionQueue {
+    /// Enqueues a frame behind everything already waiting. Never pre-empts the
+    /// frame resolving now, even when pushed from inside one of its ops.
     pub fn push(&mut self, frame: EffectFrame) {
-        self.frames.push(frame);
+        self.frames.push_back(frame);
     }
 
-    pub fn top(&self) -> Option<&EffectFrame> {
-        self.frames.last()
+    /// The frame resolving now — and so the one any outstanding decision
+    /// belongs to.
+    pub fn current(&self) -> Option<&EffectFrame> {
+        self.frames.front()
     }
 
-    pub fn top_mut(&mut self) -> Option<&mut EffectFrame> {
-        self.frames.last_mut()
+    pub fn current_mut(&mut self) -> Option<&mut EffectFrame> {
+        self.frames.front_mut()
+    }
+
+    /// Drops the frame that has finished resolving, promoting whatever it
+    /// queued behind itself.
+    pub fn retire(&mut self) {
+        self.frames.pop_front();
     }
 
     pub fn is_empty(&self) -> bool {
