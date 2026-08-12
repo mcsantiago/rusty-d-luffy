@@ -62,6 +62,63 @@ local engine: it stays instant and offline, and it keeps ISMCTS off the server
 fallback is a thin client with an in-process server for solo — but two
 backends behind one interface is the cheaper first move.
 
+The desktop app is the multiplayer client, not a browser. The README's status
+section promises a web client, and one is cheap — the front end touches Tauri
+in one place (`window.__TAURI__`, eight `invoke` calls and two `listen`
+channels), so a WebSocket shim would run the same renderer in a browser, and
+serving it from `op-server` would make distribution a page refresh. It is
+deferred anyway, because a browser cannot do the local art fetch: the server
+would have to serve ~750 MB of card images, which moves this project from a
+tool that helps a user fetch Bandai's assets to a host that distributes them.
+That is a licensing posture, not an implementation detail, and it is not worth
+adopting to solve an update-prompt problem. Distribution is handled under
+Versioning instead.
+
+## Why not peer-to-peer
+
+The obvious cheaper thing is to cut the server out. It does not work here, and
+the reason is hidden information rather than networking.
+
+**Lockstep is incompatible with a hidden hand.** Lockstep means both peers
+simulate the same game from the same actions — which requires both peers to
+hold the full state, which is the entire shuffle. It is the right answer for an
+RTS, which has no real secrets, and fog-of-war maphacks are the well-known
+consequence of the one place it does. This ruleset is turn-based and
+deterministic, so peers would stay *synchronised* perfectly; they would simply
+both know everything. (The README's status section currently offers lockstep as
+sufficient for netcode. That is true of synchronisation and false of
+confidentiality.)
+
+**Host-authoritative peer-to-peer leaks to the host.** One peer runs the
+engine, so that peer's process holds `GameState`: the opponent's hand, their
+deck order, their life cards. That is not a leak to be patched, it is what the
+type is. The host also chooses the seed, and so the shuffle.
+
+**The cryptographic fix is out of proportion to the project.** Mental-poker
+protocols genuinely solve this, but they need commitments and reveal proofs
+everywhere the rules touch a hidden zone — draw, mulligan, life, `[Trigger]`
+reveal, and every deck-searching effect. That machinery would be larger than
+the rules engine. The cheap variant — each player commits to
+`H(deck_order ‖ nonce)` at setup and reveals at the end, making cheating
+*detectable afterwards* rather than impossible — is more proportionate, but
+still assumes an engine in which neither side is omniscient. `GameState` is
+unitary by design. That is a different engine, not a refactor.
+
+**And peer-to-peer usually needs a server anyway.** Two peers behind
+residential NAT need STUN to find each other and TURN when hole-punching fails.
+TURN relays the actual traffic, so the fallback path costs more to run than
+this game server does. Giving up the security model would not remove the
+infrastructure.
+
+**What does follow is that "central" is a deployment choice, not an
+architectural one.** `op-server` is a binary holding matches in memory; nothing
+above requires it to be always-on infrastructure. The same build supports a
+homelab instance that is always up, a *host a match* button where one player's
+desktop app runs the server in-process and the other connects, and LAN play
+with no internet at all. The host is trusted in that second case — which for
+friends is the honest security model regardless — but the authority stays in
+one place, and moving it later is a deployment change rather than a rewrite.
+
 ## The client cannot compute its own options
 
 `legal_actions(game: &Game)` takes the omniscient game. A client does not have
@@ -142,13 +199,61 @@ Small and boring on purpose:
 - **Private code** — create a match, get a short code, share it out of band.
   Generated independently of the seed.
 - **Handshake** — protocol version and `card_data_ref` exchanged before
-  anything else. A client on different card data derives different power and
-  will disagree with the server about the board; since the server is
-  authoritative that is cosmetic rather than a desync, but it should be
-  reported at connect rather than discovered mid-battle.
+  anything else. See Versioning below.
 
 Ranked play, ratings and persistent accounts are out of scope until there is a
 reason for them.
+
+## Versioning and updates
+
+The desktop client is distributed as a binary and `client/` is embedded at
+compile time, so a stale install is normal. Under multiplayer that stops being
+harmless: a client the server will not talk to cannot play at all. The plan is
+a version check against the GitHub releases page, prompting the user to
+download a newer build, plus a server that refuses clients it disagrees with.
+
+The thing to keep straight is that **three versions move independently**, and
+gating on the wrong one either locks players out for no reason or lets a
+broken client connect.
+
+| | Changes when | Enforcement |
+|---|---|---|
+| `PROTOCOL_VERSION` (`op-proto`) | the wire format changes | **hard** — server refuses |
+| `card_data_ref` | the card-data pin moves | warn at connect |
+| Release tag | every build | advisory prompt only |
+
+**Gate on the protocol, not the release tag.** They are tempting to conflate
+because the release is what a user actually downloads, but a UI fix or a card
+script bumps the release tag without touching the wire format. Gating on the
+tag would lock out everyone who had not updated, for a change that could not
+possibly have broken them. `PROTOCOL_VERSION` is a separate constant, bumped
+only when the messages change.
+
+**Card scripts are not a coupling.** In multiplayer only the server runs the
+engine, so its `op-cards` is the only copy whose behaviour matters. A client
+with older scripts plays fine; it needs card *data* for names, text and art,
+which is what `card_data_ref` covers. Mismatched data means the client renders
+stale text next to power the server derived — cosmetic, not a desync, but
+worth saying at connect rather than mid-battle.
+
+**The handshake is the source of truth; GitHub is a convenience.** A rejection
+should carry the protocol version the server wants and where to get a build, so
+the message is right even when the releases API is unreachable. The GitHub
+check is a pre-flight that turns "connection refused" into "there is a newer
+version" before the user picks a deck.
+
+Details that decide whether the check is pleasant or annoying:
+
+- **Check on entering multiplayer, not at launch.** Solo play stays entirely
+  offline, which is a property the app currently advertises and should keep.
+- **Fail silently.** Unauthenticated GitHub allows 60 requests an hour per IP,
+  and users behind one NAT share it. A check that errors, rate-limits or times
+  out must never block anything — worst case the handshake catches it.
+- **Compare parsed versions, not strings.** `0.10.0` sorts below `0.9.0`
+  lexicographically.
+- **Use `/releases/latest`**, which already excludes drafts and prereleases,
+  and confirm the release actually has an asset for the user's platform before
+  offering it — CI may still be building one.
 
 ## Deployment
 
@@ -193,13 +298,6 @@ assumptions do not hold.
   a much larger surface.
 - **Exposure.** Private (LAN or Tailscale/WireGuard) versus public ingress
   changes the TLS, rate-limiting and abuse story entirely.
-- **Which client goes first.** This document assumes `op-desktop`, because it
-  already renders a board and already has the session-shaped interface to hide
-  a backend behind. The README's status section instead promises "the
-  authoritative multiplayer server and web client." Nothing here rules a web
-  client out — the server is transport-first and the front end under `client/`
-  is already HTML — but the two documents currently name different targets, and
-  one of them should give.
 - **Spectators.** `PlayerView::project` takes a seat; a neutral view that hides
   both hands is not currently expressible. Related to #47, which has the same
   question in the form of "replay as one seat rather than omnisciently."
