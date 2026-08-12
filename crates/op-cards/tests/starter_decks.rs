@@ -1617,3 +1617,69 @@ fn st03_005_offers_a_two_card_trash_with_no_single_card_answers() {
         "every hand card is reachable through some answer"
     );
 }
+
+/// ST03-009 Doflamingo is cost 7 and returns "up to 1 Character with a cost of
+/// 7 or less", so he can return himself. That reads like an oversight and is
+/// not one, which is why it is pinned rather than left to be tidied away later.
+///
+/// 10-2-6-1 activates `[On Play]` when the card is played, and 6-5-3 has
+/// already put it in the Character area by then, so it matches "1 Character".
+/// The card text carries no exclusion — this set writes one where it means one,
+/// by name on ST03-004 and by the cost bound on ST03-014, which returns a cost
+/// of 3 or less and so cannot reach its own 4.
+///
+/// Offering it is `legal_actions` being faithful to the rules. Whether it is a
+/// good idea is the UI's business, not the generator's.
+#[test]
+fn st03_009_doflamingo_is_a_legal_target_for_his_own_bounce() {
+    let Some((db, cards)) = load() else { return };
+    let mut game = st03_at_main(db, cards, 7, 8);
+
+    let def = game.db().by_number("ST03-009").unwrap();
+    let doffy = game.state.spawn(def, PlayerId::P0, Zone::Hand);
+    game.step(Action::PlayCard {
+        card: doffy,
+        replacing: None,
+    })
+    .unwrap();
+
+    assert_eq!(
+        game.state.card(doffy).zone,
+        Zone::Character,
+        "he is on the field while his own [On Play] resolves"
+    );
+    let legal = legal_actions(&game);
+    assert!(
+        legal.contains(&Action::Choose { cards: vec![doffy] }),
+        "cost 7 is 'a cost of 7 or less'"
+    );
+    // And declining is still there, since the text says "up to".
+    assert!(legal.contains(&Action::Choose { cards: vec![] }));
+
+    // Taking it does what it says: back to hand, off the board.
+    game.step(Action::Choose { cards: vec![doffy] }).unwrap();
+    assert_eq!(game.state.card(doffy).zone, Zone::Hand);
+}
+
+/// The counterpart, so the pair documents the boundary rather than one side of
+/// it: ST03-014 is cost 4 and reaches only a cost of 3 or less, so he is not a
+/// legal target for his own effect.
+#[test]
+fn st03_014_teach_cannot_return_himself() {
+    let Some((db, cards)) = load() else { return };
+    let mut game = st03_at_main(db, cards, 7, 8);
+
+    let def = game.db().by_number("ST03-014").unwrap();
+    let teach = game.state.spawn(def, PlayerId::P0, Zone::Hand);
+    game.step(Action::PlayCard {
+        card: teach,
+        replacing: None,
+    })
+    .unwrap();
+
+    assert_eq!(game.state.card(teach).zone, Zone::Character);
+    assert!(
+        !legal_actions(&game).contains(&Action::Choose { cards: vec![teach] }),
+        "cost 4 is not 'a cost of 3 or less'"
+    );
+}

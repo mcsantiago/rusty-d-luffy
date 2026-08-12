@@ -58,7 +58,10 @@ html, body {
    decision actually owed and has to take the clicks; sharing `.overlay`'s
    z-index leaves it to DOM order, which puts the battle on top and swallows
    every one of them. */
-#choose-modal {
+#choose-modal,
+/* Same reasoning, same hazard: a [Trigger] that looks at the top of the deck
+   suspends mid-battle, and this overlay is declared before the battle's. */
+#arrange-modal {
   z-index: 60;
 }
 

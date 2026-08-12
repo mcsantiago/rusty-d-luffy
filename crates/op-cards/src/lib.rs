@@ -102,7 +102,6 @@ pub const KEYWORD_ONLY: &[&str] = &[
     "ST01-006", // [Blocker]
     "ST02-004", // [Blocker]
     "ST03-008", // [Blocker]
-    "ST03-013", // [Blocker]
     "ST04-011", // [Blocker]
     "ST06-007", // [Blocker]
 ];

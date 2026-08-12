@@ -283,6 +283,20 @@ impl Game {
                     ));
                 }
 
+                // Every rejection happens before anything moves: an `Err` from
+                // `step` has to leave the state as it found it, or a client
+                // that retries is playing on from a board half-changed by the
+                // attempt that failed.
+                let idx =
+                    self.state
+                        .stack
+                        .frames
+                        .len()
+                        .checked_sub(1)
+                        .ok_or(IllegalAction::Illegal(
+                            "no effect is waiting on an arrangement".into(),
+                        ))?;
+
                 // Both lists read top-to-bottom within their group. The bottom
                 // goes back in order, so its first entry sits above the rest;
                 // the top goes back in reverse, so its first entry ends up
@@ -298,15 +312,6 @@ impl Game {
                         .move_card(card, owner, Zone::Deck, Placement::Top);
                 }
 
-                let idx =
-                    self.state
-                        .stack
-                        .frames
-                        .len()
-                        .checked_sub(1)
-                        .ok_or(IllegalAction::Illegal(
-                            "no effect is waiting on an arrangement".into(),
-                        ))?;
                 self.state.stack.frames[idx].bind(&key, Vec::new());
                 self.state.pending = None;
                 let _ = player;

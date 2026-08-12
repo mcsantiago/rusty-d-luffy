@@ -886,20 +886,14 @@ function renderArrange(snap) {
 
   const arrangeTop = arrangePile("top");
   const arrangeBottom = arrangePile("bottom");
-  const all = snap.arrange;
+  // The cards come with the decision rather than being looked up on the board:
+  // they are lifted out of the deck into no area at all while the question is
+  // pending, so `snap.view` does not hold them and never will.
+  const byId = new Map(snap.arrange.map((c) => [c.id, c]));
+  const all = snap.arrange.map((c) => c.id);
   const placed = arrangePlacements.map((p) => p.id);
   const remaining = all.filter((id) => !placed.includes(id));
-  const index = cardIndex(snap.view);
-  // Cards lifted off the deck are in no area, so the board view does not hold
-  // them; the engine's own label is the only description available.
-  const describe = (id) => {
-    const card = index.get(id);
-    if (card) return cardEl(card, { plain: true });
-    const el = document.createElement("div");
-    el.className = "choose-unknown";
-    el.textContent = labelForCard(snap, id) ?? id;
-    return el;
-  };
+  const describe = (id) => cardEl(byId.get(id), { plain: true });
 
   $("arrange-title").textContent = snap.question ?? "Arrange";
   $("arrange-sub").textContent = remaining.length
@@ -961,11 +955,6 @@ function renderArrange(snap) {
   modal.hidden = animating();
 }
 
-/** The engine's label for a card that is in no area, so has no board entry. */
-function labelForCard(snap, id) {
-  const opt = snap.options.find((o) => o.cards.includes(id));
-  return opt ? opt.label : null;
-}
 
 $("arrange-undo").addEventListener("click", () => {
   arrangePlacements.pop();

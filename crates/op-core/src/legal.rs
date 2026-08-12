@@ -21,6 +21,16 @@ use crate::zone::Zone;
 /// list is truncated rather than exploding; no printed card comes close.
 const MAX_CHOICE_SUBSETS: usize = 256;
 
+/// Cap on enumerated arrangements, which grow as `(n+1)!`.
+///
+/// Sized to cover the whole printed pool rather than reusing the subset cap:
+/// the largest "look at N" in the corpus is 5, for 720 arrangements, and 256
+/// would silently drop most of them. That matters more here than it does for a
+/// choice, because a UI builds an arrangement and then looks for the matching
+/// action — an arrangement that was truncated away is one the player can reach
+/// and then cannot submit.
+const MAX_ARRANGEMENTS: usize = 1024;
+
 /// Every action legal in the current position.
 ///
 /// Empty exactly when the game is over or nothing is pending.
@@ -301,7 +311,7 @@ fn arrange_actions(cards: &[CardInstanceId]) -> Vec<Action> {
                 top: order[..split].to_vec(),
                 bottom: order[split..].to_vec(),
             });
-            if out.len() >= MAX_CHOICE_SUBSETS {
+            if out.len() >= MAX_ARRANGEMENTS {
                 return out;
             }
         }
@@ -439,6 +449,17 @@ mod tests {
         assert!(seen.iter().all(|(t, b)| t.len() + b.len() == 3));
     }
 
+    /// The largest "look at N" in the printed pool is 5, so the cap has to
+    /// clear 6! = 720. A UI builds an arrangement and then looks for the action
+    /// that matches it, so one truncated away is one the player can reach and
+    /// then cannot submit — a dead end rather than a missing option.
+    #[test]
+    fn the_largest_printed_look_is_enumerated_in_full() {
+        // 720 is 6!, and it arriving in full is the assertion: the cap would
+        // show up here as a shorter list.
+        assert_eq!(arrange_actions(&ids(5)).len(), 720);
+    }
+
     /// The looked-at cards are never partly placed: an arrangement names all of
     /// them or the engine rejects it, so nothing can be stranded in limbo.
     #[test]
@@ -482,6 +503,38 @@ mod tests {
             };
             assert_eq!(cards.len(), 2, "the answer must satisfy the floor");
         }
+    }
+
+    /// A floor above 1 removes every smaller subset, singletons included.
+    ///
+    /// Worth pinning because reading a candidate list off the single-card
+    /// answers is sound only while the floor is 0 or 1, and ST03-005 ("draw 2
+    /// cards and trash 2 cards from your hand") is the first card above it.
+    /// Every candidate is still present in the union of the answers, which is
+    /// what a consumer has to read instead.
+    #[test]
+    fn a_floor_above_one_leaves_no_single_card_answers() {
+        let cards = ids(4);
+        let out = choose_actions(&cards, 2, 2);
+        assert!(!out.is_empty());
+
+        let mut union: Vec<CardInstanceId> = Vec::new();
+        for action in &out {
+            let Action::Choose { cards } = action else {
+                panic!("expected a Choose, got {action:?}")
+            };
+            assert_eq!(cards.len(), 2, "a floor of 2 admits no smaller answer");
+            for &id in cards {
+                if !union.contains(&id) {
+                    union.push(id);
+                }
+            }
+        }
+        union.sort();
+        assert_eq!(
+            union, cards,
+            "every candidate is reachable through some answer"
+        );
     }
 
     /// The floor is what makes a choice mandatory: "trash 1 card from your

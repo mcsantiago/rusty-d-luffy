@@ -156,14 +156,27 @@ pub fn scripts() -> Vec<(&'static str, CardScript)> {
         ),
         // [On Play] Look at 3 cards from the top of your deck and return them
         // to the top or bottom of the deck in any order.
+        // [Trigger] Play this card.
         //
         // The order is the whole effect, so it is the player's: see
-        // `EffectOp::LookTop`.
+        // `EffectOp::LookTop`. Playing it off the [Trigger] fires the [On Play]
+        // as well, which is where the look comes from.
         (
             "ST03-010",
             Script::new()
                 .auto(auto(Timing::OnPlay, vec![], vec![look_top(3, "l")]))
+                .trigger(vec![play_bound(THIS)])
                 .build(),
+        ),
+        // [Blocker]
+        // [Trigger] Play this card.
+        //
+        // [Blocker] is printed, so only the [Trigger] needs scripting — which
+        // is why this card cannot be `KEYWORD_ONLY` despite reading like its
+        // neighbour ST03-008, whose text really is the keyword alone.
+        (
+            "ST03-013",
+            Script::new().trigger(vec![play_bound(THIS)]).build(),
         ),
         // [On Play] Return up to 1 Character with a cost of 3 or less to the
         // owner's hand.
@@ -182,6 +195,12 @@ pub fn scripts() -> Vec<(&'static str, CardScript)> {
         ),
         // [Main] Return up to 1 Character with a cost of 7 or less to the
         // owner's hand.
+        // [Trigger] Activate this card's [Main] effect.
+        //
+        // The [Trigger] repeats the ops rather than referring to the effect,
+        // which is how ST01-015 and ST04-014 express the same wording: a
+        // `[Trigger]` is resolved from the Life area and has no activated
+        // effect of its own to call.
         (
             "ST03-015",
             Script::new()
@@ -192,14 +211,27 @@ pub fn scripts() -> Vec<(&'static str, CardScript)> {
                         to_hand("t"),
                     ],
                 ))
+                .trigger(vec![
+                    choose("t", filtered(any_characters(1), vec![cost_at_most(7)])),
+                    to_hand("t"),
+                ])
                 .build(),
         ),
         // [Counter] Return up to 1 Character with a cost of 3 or less to the
         // owner's hand.
+        // [Trigger] Activate this card's [Counter] effect.
+        //
+        // The [Counter] picks its own target rather than reading the engine's
+        // TARGET binding, so the same ops are correct off a [Trigger], where no
+        // battle is under way to have a target at all.
         (
             "ST03-016",
             Script::new()
                 .counter(vec![
+                    choose("t", filtered(any_characters(1), vec![cost_at_most(3)])),
+                    to_hand("t"),
+                ])
+                .trigger(vec![
                     choose("t", filtered(any_characters(1), vec![cost_at_most(3)])),
                     to_hand("t"),
                 ])

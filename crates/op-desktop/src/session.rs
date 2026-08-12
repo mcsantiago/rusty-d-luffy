@@ -11,7 +11,7 @@ use std::sync::Arc;
 use op_ai::{Agent, HeuristicAgent, IsmctsAgent, IsmctsConfig};
 use op_core::card::{CardDb, Category};
 use op_core::script::ScriptSource;
-use op_core::view::PlayerView;
+use op_core::view::{PlayerView, VisibleCard};
 use op_core::{
     legal_actions, Action, CardInstanceId, DeckList, Game, GameConfig, Pending, PlayerId,
     SetupError,
@@ -186,7 +186,12 @@ pub struct Snapshot {
     /// `choose_up_to` is. Every option holds all of the cards — they differ
     /// only in the order and where the split falls — so there is no singleton
     /// to read the candidate list off, and the draw order would be lost.
-    pub arrange: Option<Vec<u32>>,
+    ///
+    /// Whole cards, not ids: `LookTop` lifts them into `Zone::Limbo`, which
+    /// `PlayerView` does not project, so the board the UI already has cannot
+    /// name them. Sending them is not a leak — this field is only ever
+    /// populated for the player being asked, and looking at them is the effect.
+    pub arrange: Option<Vec<VisibleCard>>,
     /// The AI owes a decision; the UI should expect a `game://update` shortly.
     pub thinking: bool,
     /// Short identifier for this session, matching its log filename, so a bug
@@ -713,23 +718,25 @@ impl Session {
                 });
             }
         }
-        // The frame on top of the stack is the one that suspended for this
-        // choice, so its source is the card doing the asking.
         let arrange = self
             .game
             .pending()
             .filter(|p| p.player() == self.human)
             .and_then(|p| match p {
-                Pending::Arrange { cards, .. } => Some(cards.iter().map(|c| c.0).collect()),
+                Pending::Arrange { cards, .. } => Some(
+                    cards
+                        .iter()
+                        .map(|&id| VisibleCard {
+                            id,
+                            number: Some(self.db.get(self.game.state.card(id).def).number.clone()),
+                            rested: false,
+                            attached_don: 0,
+                            power: self.db.get(self.game.state.card(id).def).power,
+                        })
+                        .collect(),
+                ),
                 _ => None,
             });
-
-        let choose_source = choose_up_to.and(self.game.state.stack.top()).map(|frame| {
-            self.db
-                .get(self.game.state.card(frame.source).def)
-                .number
-                .clone()
-        });
 
         Snapshot {
             view,
