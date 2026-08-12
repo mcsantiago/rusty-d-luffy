@@ -1507,3 +1507,113 @@ fn st03_004_cannot_return_another_gecko_moria() {
         "\"other than [Gecko Moria]\" must exclude every Gecko Moria, not just this one"
     );
 }
+
+/// ST03-015 Sables, the [Main] Event bounce. Reported from play as doing
+/// nothing, so this pins where the card actually goes: an opponent's Character
+/// returns to *their* hand, which is what "the owner's hand" means, and leaves
+/// the board either way.
+#[test]
+fn st03_015_sables_returns_an_opponents_character_to_their_hand() {
+    let Some((db, cards)) = load() else { return };
+    let mut game = st03_at_main(db, cards, 7, 8);
+
+    let victim = put_in_play(&mut game, PlayerId::P1, "ST02-009"); // cost 5
+    let their_hand = game.state.player(PlayerId::P1).hand.len();
+    let your_hand_before = game.state.player(PlayerId::P0).hand.len();
+
+    let def = game.db().by_number("ST03-015").unwrap();
+    let sables = game.state.spawn(def, PlayerId::P0, Zone::Hand);
+    game.step(Action::PlayCard {
+        card: sables,
+        replacing: None,
+    })
+    .unwrap();
+    game.step(Action::Choose {
+        cards: vec![victim],
+    })
+    .unwrap();
+
+    assert_eq!(
+        game.state.card(victim).zone,
+        Zone::Hand,
+        "the Character should have left the board"
+    );
+    assert_eq!(
+        game.state.card(victim).controller,
+        PlayerId::P1,
+        "\"the owner's hand\" is theirs, not the caster's"
+    );
+    assert_eq!(game.state.player(PlayerId::P1).hand.len(), their_hand + 1);
+    // Sables itself is trashed as it resolves (8-4-2), so the caster's hand is
+    // one down: the Event left it and nothing came back.
+    assert_eq!(
+        game.state.player(PlayerId::P0).hand.len(),
+        your_hand_before,
+        "the bounced card must not arrive in the caster's hand"
+    );
+    assert_eq!(game.state.card(sables).zone, Zone::Trash);
+}
+
+/// ST03-005 Mihawk — "[DON!! x1] [When Attacking] Draw 2 cards and trash 2
+/// cards from your hand" — is the first card whose selection carries a floor
+/// above 1, and the picker went blank on it in play.
+///
+/// A floor of 2 removes every smaller subset before the options are offered, so
+/// there are no single-card answers at all. Anything deriving its candidate
+/// list from the singletons therefore sees nothing to show. The cards are all
+/// still there, in the union of the answers, which is what to read instead.
+#[test]
+fn st03_005_offers_a_two_card_trash_with_no_single_card_answers() {
+    let Some((db, cards)) = load() else { return };
+    let mut game = st03_at_main(db, cards, 7, 8);
+
+    let mihawk = put_in_play(&mut game, PlayerId::P0, "ST03-005");
+    game.state.card_mut(mihawk).played_on_turn = None;
+    game.step(Action::GiveDon { to: mihawk }).unwrap();
+
+    let hand_before = game.state.player(PlayerId::P0).hand.len();
+    let enemy_leader = game.state.player(PlayerId::P1).leader.unwrap();
+    game.step(Action::Attack {
+        attacker: mihawk,
+        target: enemy_leader,
+    })
+    .unwrap();
+
+    // Drew 2, then stopped to ask which 2 to trash.
+    assert_eq!(
+        game.state.player(PlayerId::P0).hand.len(),
+        hand_before + 2,
+        "the draw happens before the trash is chosen"
+    );
+    let Some(Pending::Choose {
+        up_to, at_least, ..
+    }) = game.pending().cloned()
+    else {
+        panic!("expected a Choose, got {:?}", game.pending());
+    };
+    assert_eq!((up_to, at_least), (2, 2), "trashing 2 is an instruction");
+
+    let legal = legal_actions(&game);
+    assert!(!legal.is_empty());
+    let mut union: Vec<op_core::CardInstanceId> = Vec::new();
+    for action in &legal {
+        let Action::Choose { cards } = action else {
+            panic!("expected a Choose, got {action:?}")
+        };
+        assert_eq!(cards.len(), 2, "a floor of 2 admits no smaller answer");
+        for &id in cards {
+            if !union.contains(&id) {
+                union.push(id);
+            }
+        }
+    }
+    // The candidates the picker has to show: every card in hand, not one of
+    // which appears on its own.
+    let mut hand = game.state.player(PlayerId::P0).hand.clone();
+    hand.sort();
+    union.sort();
+    assert_eq!(
+        union, hand,
+        "every hand card is reachable through some answer"
+    );
+}
