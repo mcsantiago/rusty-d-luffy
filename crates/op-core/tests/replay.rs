@@ -343,6 +343,64 @@ fn a_changed_pending_payload_is_caught_even_though_the_hash_matches() {
     }
 }
 
+/// The engine version is stamped so a divergence can be attributed. It is a
+/// note, not a gate: a log from another engine still replays, and whether the
+/// result means anything is the reader's call.
+#[test]
+fn a_log_records_the_engine_that_wrote_it() {
+    let dir = TempDir::new("engine-version");
+    let config = config_for(
+        3,
+        decklist("LDR-001", deck_of("CHR-5K", 40)),
+        decklist("LDR-002", deck_of("CHR-BLOCK", 40)),
+    );
+    let (path, _) = logged_playout(&dir, config, 4);
+
+    let record = replay::read(&path).expect("log should parse");
+    assert_eq!(
+        record.header.engine_version.as_deref(),
+        Some(replay::ENGINE_VERSION)
+    );
+    assert!(
+        !replay::ENGINE_VERSION.is_empty(),
+        "the crate version should not be blank"
+    );
+}
+
+/// Logs written before the field existed must keep replaying: the field is
+/// `Option` and defaulted, so an older header is missing it rather than wrong.
+#[test]
+fn a_log_without_an_engine_version_still_replays() {
+    let dir = TempDir::new("no-engine-version");
+    let config = config_for(
+        9,
+        decklist("LDR-001", deck_of("CHR-5K", 40)),
+        decklist("LDR-002", deck_of("CHR-BLOCK", 40)),
+    );
+    let (path, final_hash) = logged_playout(&dir, config, 5);
+
+    // Strip the field, as a log from before it existed would be.
+    let text = std::fs::read_to_string(&path).unwrap();
+    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+    let mut header: serde_json::Value = serde_json::from_str(&lines[0]).unwrap();
+    header
+        .as_object_mut()
+        .unwrap()
+        .remove("engine_version")
+        .expect("the field should have been there to remove");
+    lines[0] = serde_json::to_string(&header).unwrap();
+    std::fs::write(&path, lines.join("\n") + "\n").unwrap();
+
+    let record = replay::read(&path).expect("an older header should still parse");
+    assert_eq!(record.header.engine_version, None);
+
+    let cards = TestCards::new();
+    let verified = record
+        .verify(Arc::new(cards.db.clone()), scripts())
+        .expect("and should still replay");
+    assert_eq!(verified.final_hash, final_hash);
+}
+
 /// A log from a build that wrote a different format should say so, rather than
 /// surfacing as a serde type error on whichever field happened to move.
 #[test]

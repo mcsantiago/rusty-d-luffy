@@ -3,7 +3,7 @@
 //! Event rendering takes a [`PlayerEvent`], so a card the viewer may not
 //! identify has no id to look up and cannot be named by accident.
 
-use op_core::{Action, CardRef, Game, Pending, PlayerEvent, PlayerId};
+use op_core::{Action, CardRef, DonClass, Game, Pending, PlayerEvent, PlayerId};
 
 pub fn line(event: &PlayerEvent, game: &Game, viewer: PlayerId) -> Option<String> {
     use PlayerEvent as E;
@@ -127,6 +127,8 @@ pub fn question(pending: &Pending) -> String {
         Pending::Counter { .. } => "Counter step".into(),
         Pending::Trigger { .. } => "That life card has a [Trigger]".into(),
         Pending::PayCost { cost, .. } => format!("Pay {} to activate?", cost_label(cost)),
+        // The count is fixed by the cost (8-3-1-6); only which ones is open.
+        Pending::ReturnDon { n, .. } => format!("Return {n} DON!! to your DON!! deck"),
         // "up to" is an offer the player may decline; a non-zero floor is an
         // instruction, and saying "up to" there would suggest otherwise.
         Pending::Choose {
@@ -141,6 +143,49 @@ pub fn question(pending: &Pending) -> String {
             }
         }
     }
+}
+
+/// Names one card a decision may take, for the choice grid.
+///
+/// DON!! are the interesting case: they are interchangeable, have no art (#29),
+/// and a given one is not in the cost area the view publishes — so where it
+/// sits is both the only thing that distinguishes it and the only thing the
+/// client cannot work out for itself.
+pub fn candidate_label(id: op_core::CardInstanceId, game: &Game) -> String {
+    let def = game.db().get(game.state.card(id).def);
+    if def.category != op_core::card::Category::Don {
+        return def.name.clone();
+    }
+    match game.don_class(id) {
+        DonClass::Given(holder) => format!(
+            "DON!! on {}",
+            game.db().get(game.state.card(holder).def).name
+        ),
+        DonClass::Active => "DON!! (active)".into(),
+        DonClass::Rested => "DON!! (rested)".into(),
+    }
+}
+
+/// Counts each class once — "2 rested, 1 on Zoro" — because naming ten
+/// interchangeable DON!! one at a time is the same phrase ten times over.
+fn don_tally(
+    dons: &[op_core::CardInstanceId],
+    game: &Game,
+    whence: impl Fn(DonClass) -> String,
+) -> String {
+    let mut tally: Vec<(DonClass, usize)> = Vec::new();
+    for &d in dons {
+        let class = game.don_class(d);
+        match tally.iter_mut().find(|(c, _)| *c == class) {
+            Some((_, n)) => *n += 1,
+            None => tally.push((class, 1)),
+        }
+    }
+    tally
+        .into_iter()
+        .map(|(class, n)| format!("{n} {}", whence(class)))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 pub fn action_label(action: &Action, game: &Game) -> String {
@@ -225,5 +270,12 @@ pub fn action_label(action: &Action, game: &Game) -> String {
             let names: Vec<String> = cards.iter().map(|&c| name(c)).collect();
             names.join(", ")
         }
+        // DON!! cards are interchangeable, so the option is named by where they
+        // sit — which is the entire substance of the choice.
+        Action::ReturnDon { dons } => don_tally(dons, game, |class| match class {
+            DonClass::Given(holder) => format!("on {}", name(holder)),
+            DonClass::Active => "active".into(),
+            DonClass::Rested => "rested".into(),
+        }),
     }
 }

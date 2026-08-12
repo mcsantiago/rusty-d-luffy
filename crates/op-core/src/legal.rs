@@ -4,11 +4,16 @@
 //! against it, the RL env uses it as an action mask, and search agents use it
 //! as the move generator. Keeping them on the same implementation is what stops
 //! the three from disagreeing about what is legal.
+//!
+//! The one place this enumerates *up to equivalence* is `ReturnDon`, where
+//! interchangeable DON!! would otherwise multiply one choice into hundreds of
+//! id-sets. `Game::apply` still accepts any of them, so a consumer validating
+//! by membership must canonicalise with `Game::don_class` first.
 
 use crate::action::{Action, Pending};
 use crate::card::Category;
 use crate::derive;
-use crate::game::Game;
+use crate::game::{DonClass, Game};
 use crate::ids::CardInstanceId;
 use crate::zone::Zone;
 
@@ -179,12 +184,82 @@ pub fn legal_actions(game: &Game) -> Vec<Action> {
         // before the question was asked.
         Pending::PayCost { .. } => vec![Action::PayCost(true), Action::PayCost(false)],
 
+        // 8-3-1-6: every way of making up the cost. The count is fixed, so
+        // unlike a `Choose` there is no "take fewer" answer.
+        Pending::ReturnDon { options, n, .. } => return_don_actions(game, options, *n),
+
         Pending::Choose {
             options,
             up_to,
             at_least,
             ..
         } => choose_actions(options, *up_to, *at_least),
+    }
+}
+
+/// Every answer to a `ReturnDon` that differs from the others, one per
+/// distribution over [`DonClass`] rather than per subset of ids — C(10,7) is
+/// 120 id-sets and two or three real choices. Callers holding an id-set must
+/// canonicalise it with `don_class` rather than compare ids to these.
+fn return_don_actions(game: &Game, options: &[CardInstanceId], n: u8) -> Vec<Action> {
+    let n = (n as usize).min(options.len());
+
+    // Grouped in the pool's order, so the enumeration is deterministic.
+    let mut classes: Vec<(DonClass, Vec<CardInstanceId>)> = Vec::new();
+    for &don in options {
+        let key = game.don_class(don);
+        match classes.iter_mut().find(|(k, _)| *k == key) {
+            Some((_, group)) => group.push(don),
+            None => classes.push((key, vec![don])),
+        }
+    }
+    let groups: Vec<Vec<CardInstanceId>> = classes.into_iter().map(|(_, g)| g).collect();
+
+    let mut out = Vec::new();
+    distribute(&groups, n, 0, &mut Vec::new(), &mut out);
+    if out.is_empty() {
+        out.push(Action::ReturnDon {
+            dons: options.iter().copied().take(n).collect(),
+        });
+    }
+    out
+}
+
+/// Walks every way of taking `n` DON!! across `groups`, emitting one action per
+/// distribution. Larger takes from earlier groups come first.
+fn distribute(
+    groups: &[Vec<CardInstanceId>],
+    n: usize,
+    at: usize,
+    taken: &mut Vec<CardInstanceId>,
+    out: &mut Vec<Action>,
+) {
+    if out.len() >= MAX_CHOICE_SUBSETS {
+        return;
+    }
+    if n == 0 {
+        out.push(Action::ReturnDon {
+            dons: taken.clone(),
+        });
+        return;
+    }
+    // Nothing left to take from, or not enough left to finish: prune rather
+    // than walk a branch that cannot produce a legal answer.
+    let remaining: usize = groups
+        .get(at..)
+        .unwrap_or_default()
+        .iter()
+        .map(Vec::len)
+        .sum();
+    if remaining < n {
+        return;
+    }
+    let group = &groups[at];
+    for k in (0..=group.len().min(n)).rev() {
+        let before = taken.len();
+        taken.extend(group.iter().copied().take(k));
+        distribute(groups, n - k, at + 1, taken, out);
+        taken.truncate(before);
     }
 }
 

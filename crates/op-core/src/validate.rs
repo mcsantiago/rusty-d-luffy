@@ -71,6 +71,11 @@ pub enum Problem {
     /// `[Your Turn]` and `[Opponent's Turn]` on the same effect (8-3-2-1
     /// requires all conditions to hold).
     ContradictoryTurnConditions,
+    /// An `[On Block]` effect whose cost rests the source. Activating the
+    /// `[Blocker]` rests it (10-1-4-1), and that is what fulfils the timing, so
+    /// the card is always rested by the time the cost is checked and the effect
+    /// can never be paid for.
+    RestSelfOnBlock,
 }
 
 impl fmt::Display for Problem {
@@ -107,6 +112,11 @@ impl fmt::Display for Problem {
             Problem::ContradictoryTurnConditions => {
                 write!(f, "requires both [Your Turn] and [Opponent's Turn]")
             }
+            Problem::RestSelfOnBlock => write!(
+                f,
+                "[On Block] costs a rest of the source, which blocking has \
+                 already rested (10-1-4-1)"
+            ),
         }
     }
 }
@@ -155,6 +165,12 @@ pub fn validate_script(script: &CardScript) -> Vec<Diagnostic> {
             });
         }
         check_conditions(site, &effect.conditions, &effect.cost, &mut out);
+        if effect.timing == Timing::OnBlock && effect.cost.rest_self {
+            out.push(Diagnostic {
+                site,
+                problem: Problem::RestSelfOnBlock,
+            });
+        }
         // Only an [End of Battle] effect is handed the card it battled.
         // Reading it anywhere else is the same class of mistake as reading
         // TARGET outside a [Counter].
@@ -465,7 +481,7 @@ mod tests {
 
     #[test]
     fn timings_the_engine_never_fires_are_rejected() {
-        for timing in [Timing::OnKo, Timing::OnBlock, Timing::Trigger] {
+        for timing in [Timing::OnKo, Timing::Trigger] {
             let script = CardScript {
                 auto: vec![auto(
                     timing,
@@ -499,6 +515,31 @@ mod tests {
             ..CardScript::default()
         };
         assert_eq!(problems(&script), [Problem::RestSelfRequiresActive]);
+    }
+
+    /// Blocking rests the blocker (10-1-4-1) and that is what fulfils the
+    /// timing, so the card is already rested when the cost is checked. Without
+    /// this the effect is dropped mid-`queue_autos` with no event, which is
+    /// invisible from the outside.
+    #[test]
+    fn an_on_block_effect_cannot_cost_a_rest_of_itself() {
+        let script = CardScript {
+            auto: vec![AutoEffect {
+                cost: ActivationCost {
+                    rest_self: true,
+                    ..ActivationCost::default()
+                },
+                ..auto(
+                    Timing::OnBlock,
+                    vec![EffectOp::Draw {
+                        player: Who::You,
+                        n: 1,
+                    }],
+                )
+            }],
+            ..CardScript::default()
+        };
+        assert_eq!(problems(&script), [Problem::RestSelfOnBlock]);
     }
 
     #[test]

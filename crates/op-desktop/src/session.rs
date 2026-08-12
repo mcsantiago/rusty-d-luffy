@@ -51,6 +51,38 @@ pub struct Choice {
     pub kind: &'static str,
 }
 
+/// One card that may be picked while a card-picking decision is pending.
+///
+/// The grid draws from the board where it can, so the label is a fallback for
+/// candidates the view has no card for: a DON!! given to a Character is not in
+/// the cost area the view publishes, and a DON!! has no art to draw anyway
+/// (#29). Sent for every candidate rather than only those, so the client never
+/// has to work out which case it is in.
+#[derive(Debug, Clone, Serialize)]
+pub struct ChoiceCandidate {
+    pub id: u32,
+    pub label: String,
+    /// Cards sharing a class are interchangeable, so a pick differing from an
+    /// offered option only within a class is the same answer. See
+    /// [`choice_class`].
+    pub class: String,
+}
+
+/// A key for cards a decision treats as interchangeable, letting the client
+/// canonicalise a pick the engine offered only one representative of. Anything
+/// that is not a DON!! is its own class, so matching there stays exact.
+fn choice_class(id: op_core::CardInstanceId, game: &Game) -> String {
+    let def = game.db().get(game.state.card(id).def);
+    if def.category != op_core::Category::Don {
+        return id.0.to_string();
+    }
+    match game.don_class(id) {
+        op_core::DonClass::Given(holder) => format!("given:{}", holder.0),
+        op_core::DonClass::Active => "active".into(),
+        op_core::DonClass::Rested => "rested".into(),
+    }
+}
+
 /// One thing that has happened in the battle now being resolved.
 ///
 /// Carries the card responsible rather than only naming it, so the UI can show
@@ -119,13 +151,27 @@ pub struct Snapshot {
     /// activated in the open, or from a [Trigger] revealed by activating it
     /// (10-1-5-1).
     pub choose_source: Option<String>,
-    /// The human owes a `Choose`, of at most this many cards.
+    /// The human owes a card-picking decision, of at most this many cards.
     ///
-    /// Carries no card ids of its own: the engine offers a `Choose` as one
-    /// action per subset, so the candidates are already in `options` and every
-    /// one of them appears there singly. This says only which kind of decision
-    /// is pending, which the UI otherwise cannot tell from a list of labels.
+    /// Carries no card ids of its own: the engine offers such a decision as one
+    /// action per subset, so the candidates are already in `options`. This says
+    /// only which kind of decision is pending, which the UI otherwise cannot
+    /// tell from a list of labels.
+    ///
+    /// Covers `Choose` and the `DON!! −X` selection, which the modal renders
+    /// the same way — a grid of candidates and a count.
     pub choose_up_to: Option<u8>,
+    /// Fewest cards a legal answer may name, alongside `choose_up_to`.
+    ///
+    /// Zero for the usual "up to N" (8-4-4-1). Equal to `choose_up_to` where
+    /// the count is fixed rather than offered: a mandatory trash, or a
+    /// `DON!! −X` that takes exactly X (8-3-1-6). Without it the modal cannot
+    /// tell "pick up to 2" from "pick 2", and would enable its confirm button
+    /// on an answer the engine will reject.
+    pub choose_at_least: Option<u8>,
+    /// The cards a pending card-picking decision may take, in the engine's
+    /// order. Empty when no such decision is pending.
+    pub choose_candidates: Vec<ChoiceCandidate>,
     /// The AI owes a decision; the UI should expect a `game://update` shortly.
     pub thinking: bool,
     /// Short identifier for this session, matching its log filename, so a bug
@@ -601,25 +647,56 @@ impl Session {
             })
             .map(|card| self.db.get(self.game.state.card(card).def).number.clone());
 
-        let choose_up_to = self
-            .game
-            .pending()
-            .filter(|p| p.player() == self.human)
+        let mine = self.game.pending().filter(|p| p.player() == self.human);
+        let (choose_up_to, choose_at_least) = mine
             .and_then(|p| match p {
-                Pending::Choose { up_to, .. } => Some(*up_to),
+                Pending::Choose {
+                    up_to, at_least, ..
+                } => Some((*up_to, *at_least)),
+                // A `DON!! −X` takes exactly X (8-3-1-6), so the floor and the
+                // ceiling are the same number and the modal becomes "pick X".
+                Pending::ReturnDon { n, .. } => Some((*n, *n)),
                 _ => None,
-            });
+            })
+            .unzip();
 
-        // The frame at the front of the resolution queue is the one that
-        // suspended for this choice, so its source is the card doing the asking.
-        let choose_source = choose_up_to
-            .and(self.game.state.resolution.current())
-            .map(|frame| {
-                self.db
-                    .get(self.game.state.card(frame.source).def)
-                    .number
-                    .clone()
-            });
+        // The card doing the asking. A `ReturnDon` carries its own source,
+        // because the cost may belong to an Event with no ops — nothing is on
+        // the stack to read it from. A `Choose` is always asked from the frame
+        // that suspended for it, which is the one on top.
+        let choose_source = match mine {
+            Some(Pending::ReturnDon { source, .. }) => Some(*source),
+            _ => choose_up_to
+                .and(self.game.state.resolution.current())
+                .map(|f| f.source),
+        }
+        .map(|card| self.db.get(self.game.state.card(card).def).number.clone());
+
+        // Every card the decision may take. Read from the pending itself where
+        // it publishes one: a `ReturnDon` offers one representative per class,
+        // so the union of the offered sets is a strict subset of the pool and
+        // would hide DON!! the player may legally pick.
+        let mut choose_candidates: Vec<ChoiceCandidate> = Vec::new();
+        if choose_up_to.is_some() {
+            let pool: Vec<u32> = match mine {
+                Some(Pending::ReturnDon { options, .. }) => options.iter().map(|d| d.0).collect(),
+                _ => options
+                    .iter()
+                    .flat_map(|choice| choice.cards.iter().copied())
+                    .collect(),
+            };
+            for id in pool {
+                if choose_candidates.iter().any(|c| c.id == id) {
+                    continue;
+                }
+                let card = op_core::CardInstanceId(id);
+                choose_candidates.push(ChoiceCandidate {
+                    id,
+                    label: crate::render::candidate_label(card, &self.game),
+                    class: choice_class(card, &self.game),
+                });
+            }
+        }
 
         Snapshot {
             view,
@@ -635,6 +712,8 @@ impl Session {
             trigger_card,
             choose_source,
             choose_up_to,
+            choose_at_least,
+            choose_candidates,
             thinking: self.ai_to_act(),
             session_id: self.session_id.clone(),
         }
@@ -700,6 +779,7 @@ fn action_cards(action: &Action) -> Vec<CardInstanceId> {
         } => vec![*card],
         Action::Counter { card, to } | Action::CounterEvent { card, to } => vec![*card, *to],
         Action::Choose { cards } => cards.clone(),
+        Action::ReturnDon { dons } => dons.clone(),
         _ => Vec::new(),
     }
 }
@@ -723,7 +803,10 @@ fn action_subject(action: &Action) -> Option<CardInstanceId> {
         | Action::EndMainPhase
         | Action::DoneCountering
         | Action::UseTrigger(_)
-        | Action::Choose { .. } => None,
+        | Action::Choose { .. }
+        // Answered in the choice modal over the DON!! themselves, not from a
+        // menu hung off one card.
+        | Action::ReturnDon { .. } => None,
     }
 }
 
@@ -735,6 +818,7 @@ fn pending_kind(pending: &Pending) -> &'static str {
         Pending::Counter { .. } => "counter",
         Pending::Trigger { .. } => "trigger",
         Pending::PayCost { .. } => "pay-cost",
+        Pending::ReturnDon { .. } => "return-don",
         Pending::Choose { .. } => "choose",
     }
 }

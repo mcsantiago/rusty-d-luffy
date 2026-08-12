@@ -1,7 +1,11 @@
 //! Static checks over every script this crate ships.
 //!
 //! Deliberately independent of `data/`: these tests are the one card-level
-//! guard that still runs on a bare clone.
+//! guard that still runs on a bare clone. The exception is
+//! [`every_on_block_script_is_on_a_blocker`], which asks a question about
+//! printed keywords and so has to skip itself without the data.
+
+mod common;
 
 use op_cards::{all_scripts, validate_all_scripts};
 use op_core::script::CardScript;
@@ -116,4 +120,37 @@ fn a_rested_don_effect_selects_only_rested_don() {
         vec!["ST01-001", "ST01-007", "ST01-011", "ST08-001"],
         "the set of DON!!-giving cards changed; check each against its printed text"
     );
+}
+
+/// An `[On Block]` effect fires from `resolve_block`, which only ever runs for a
+/// card `legal_blockers` returned — and that requires the printed `[Blocker]`
+/// keyword. A script carrying `[On Block]` text on a card without it is dead,
+/// and `validate_script` cannot see the omission because it never reads a
+/// `CardDef`.
+///
+/// This is the guard `Timing::is_activated_by_engine` used to provide, moved to
+/// the only place that can still ask the question.
+#[test]
+fn every_on_block_script_is_on_a_blocker() {
+    use op_core::card::Keyword;
+    use op_core::effect::Timing;
+
+    let Some(db) = common::card_db() else {
+        eprintln!("skipping: run the ingest to populate data/");
+        return;
+    };
+
+    for (number, script) in all_scripts() {
+        if !script.auto.iter().any(|a| a.timing == Timing::OnBlock) {
+            continue;
+        }
+        let Some(def) = db.by_number(number) else {
+            continue;
+        };
+        assert!(
+            db.get(def).keywords.contains(&Keyword::Blocker),
+            "{number} has an [On Block] effect but no printed [Blocker], so it \
+             can never be the card that blocks and the effect can never fire"
+        );
+    }
 }

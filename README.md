@@ -312,13 +312,13 @@ cargo run -p op-cards --bin coverage -- EB01  # what EB01 still needs, with text
 
 ## Status
 
-**v0.2.0** — the desktop client is now card-centric: actions are offered from
-the card they belong to, the board is laid out as a board, and decisions show
-the cards they are about rather than naming them. Session logs replay and
-verify against the engine, so any recorded game is a regression test. Two
-rules fixes: an effect reading "rested DON!! card" selects a rested DON!!
-rather than resting an active one, and the End Phase announces itself like
-every other phase. Playable against the AI on macOS, Windows and Linux — see
+**v0.3.0** — two more starter decks, ST-04 Animal Kingdom Pirates and ST-08
+Monkey D. Luffy, taking card coverage to 5 of 59 sets. A rules fix worth
+naming: an effect whose cost reads "you may" is now yours to decline (8-3-1-4),
+where the engine used to pay it for you — which could spend DON!! permanently
+on an effect that then did nothing. Session logs record the engine that wrote
+them, so a replay divergence tells you whether the rules changed or something
+broke. Playable against the AI on macOS, Windows and Linux — see
 [Install](#install) for the unsigned-binary warnings and the first-run fetch.
 
 Implemented: the rules kernel, ST-01, ST-02, ST-04, ST-06 and ST-08 at full
@@ -352,11 +352,6 @@ These are deliberate and localised; each is commented at its site.
   ST08-014 is the only card affected.
 - ST08-013 pays its own K.O. for a trade whose K.O. an effect could in
   principle prevent. No card in the implemented pool can produce that board.
-- "DON!! −N" returns DON!! from the cost area only, not DON!! already given to a
-  Character. The printed reminder says "from your field", which arguably covers
-  both; the Comprehensive Rules could not be consulted, so the narrower reading
-  is what ST-04 implements. Which DON!! goes is not offered as a choice —
-  rested first, since an active one is still spendable this turn.
 - ST04-001 trashes the *top* of the opponent's Life rather than offering a pick.
   Life is a secret area (3-1-4): the cards are face down and indistinguishable,
   so the choice decides nothing, and enumerating it would leak their ids.
