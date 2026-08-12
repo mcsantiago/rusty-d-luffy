@@ -162,18 +162,17 @@ fn shape(action: &Action, game: &Game) -> f64 {
                 _ => 0.0,
             }
         }
-        // The evaluation counts DON!! but not whether they are spendable, so
-        // every way of paying a `DON!! −X` scores the same and the tie breaks
-        // at random. Surrender rested first: an active DON!! still buys a card
-        // this turn, and one given away is already holding up an attack.
-        Action::ReturnDon { dons } => dons
-            .iter()
-            .map(|&d| match game.don_class(d) {
-                DonClass::Rested => 0.0,
-                DonClass::Active => -0.3,
-                DonClass::Given(_) => -0.2,
-            })
-            .sum(),
+        // Surrender rested DON!! first: a rested one cannot be spent again this
+        // turn and an active one can. Big enough to beat the 0.67 the position
+        // score already swings by — a given DON!! is not in `cost_area` and its
+        // power is only counted on a Character — and small enough that a battle
+        // this loses still outweighs it.
+        Action::ReturnDon { dons } => {
+            let spendable = dons
+                .iter()
+                .filter(|&&d| game.don_class(d) != DonClass::Rested);
+            -(spendable.count() as f64)
+        }
         _ => 0.0,
     }
 }
