@@ -2012,7 +2012,7 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "op-ai"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "op-cards",
  "op-core",
@@ -2022,7 +2022,7 @@ dependencies = [
 
 [[package]]
 name = "op-cards"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "op-core",
  "rand",
@@ -2031,7 +2031,7 @@ dependencies = [
 
 [[package]]
 name = "op-cli"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "op-ai",
@@ -2043,7 +2043,7 @@ dependencies = [
 
 [[package]]
 name = "op-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "rand",
  "rand_chacha",
@@ -2054,7 +2054,7 @@ dependencies = [
 
 [[package]]
 name = "op-desktop"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "base64 0.22.1",
  "op-ai",
@@ -2070,7 +2070,7 @@ dependencies = [
 
 [[package]]
 name = "op-ingest"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",

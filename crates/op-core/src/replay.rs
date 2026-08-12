@@ -74,11 +74,21 @@ pub struct Header<'a> {
     /// either machine.
     #[serde(default)]
     pub card_data_ref: Option<Cow<'a, str>>,
+    /// The engine that recorded this, as `CARGO_PKG_VERSION`.
+    ///
+    /// A rules change makes old logs diverge, which is the tool working; this
+    /// says so rather than leaving it indistinguishable from a bug. Absent in
+    /// logs written before the field existed.
+    #[serde(default)]
+    pub engine_version: Option<Cow<'a, str>>,
     pub notes: Vec<String>,
 }
 
 /// The format this build writes, and the only one it can replay.
 pub const FORMAT_VERSION: u32 = 1;
+
+/// The engine version stamped into every log this build writes.
+pub const ENGINE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// A decklist, in the order the cards were listed.
 ///
@@ -194,6 +204,7 @@ impl SessionLog {
             decks: [summarise(&config.decks[0]), summarise(&config.decks[1])],
             allow_illegal_decks: config.allow_illegal_decks,
             card_data_ref: card_data_ref.map(Cow::Borrowed),
+            engine_version: Some(Cow::Borrowed(ENGINE_VERSION)),
             notes,
         };
         writeln!(writer, "{}", serde_json::to_string(&header)?)?;

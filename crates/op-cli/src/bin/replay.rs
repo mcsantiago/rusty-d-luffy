@@ -95,6 +95,17 @@ fn run() -> Result<bool> {
             ),
             None => println!("  warning: no card data revision recorded"),
         }
+        // Same reason as the card-data ref: a rules change makes old logs
+        // diverge, and that is the tool working rather than a bug.
+        match header.engine_version.as_deref() {
+            Some(logged) if logged == op_core::replay::ENGINE_VERSION => {}
+            Some(logged) => println!(
+                "  warning: recorded by engine {logged}, this build is {} — a \
+                 divergence below may be a deliberate rules change",
+                op_core::replay::ENGINE_VERSION
+            ),
+            None => println!("  warning: no engine version recorded"),
+        }
         if record.truncated {
             println!("  note: the log ends mid-record; the session was killed while writing");
         }
