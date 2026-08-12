@@ -190,6 +190,20 @@ pub enum EffectOp {
         up_to: u8,
         filters: Vec<Filter>,
     },
+    /// Look at the top `n` cards of your deck and put them back, each to the
+    /// top or the bottom, in an order the controller picks (ST03-010).
+    ///
+    /// Distinct from [`EffectOp::DigTop`], which takes cards *out* of the deck
+    /// and dumps the remainder on the bottom in draw order. Nothing leaves the
+    /// deck here, and the order is the whole decision — so it is the player's,
+    /// not the engine's.
+    LookTop { n: u8, key: String },
+    /// Shuffle a player's deck — "then shuffle your deck" (ST03-007).
+    ///
+    /// Printed as the tail of a search, and load-bearing there rather than
+    /// decorative: a search that left the deck in order would tell the player
+    /// what they are about to draw.
+    Shuffle { player: Who },
     /// Stop resolving unless the condition holds (8-3-3 "if" clauses).
     RequireIf { cond: Condition },
     /// Add `n` DON!! cards from the DON!! deck to the cost area (ST04-008 and
@@ -225,6 +239,8 @@ impl EffectOp {
             EffectOp::MoveTo { .. } => "MoveTo",
             EffectOp::PlayBound { .. } => "PlayBound",
             EffectOp::DigTop { .. } => "DigTop",
+            EffectOp::LookTop { .. } => "LookTop",
+            EffectOp::Shuffle { .. } => "Shuffle",
             EffectOp::RequireIf { .. } => "RequireIf",
             EffectOp::AddDon { .. } => "AddDon",
             EffectOp::TrashLife { .. } => "TrashLife",
@@ -251,6 +267,8 @@ impl EffectOp {
             // A selector whose pool is a binding reads that key.
             EffectOp::Choose { select, .. } => select.from.as_deref(),
             EffectOp::DigTop { .. }
+            | EffectOp::LookTop { .. }
+            | EffectOp::Shuffle { .. }
             | EffectOp::Draw { .. }
             | EffectOp::AddDon { .. }
             | EffectOp::TrashLife { .. }
@@ -262,7 +280,9 @@ impl EffectOp {
     /// The binding key this op fills in, if any.
     pub fn binds(&self) -> Option<&str> {
         match self {
-            EffectOp::Choose { key, .. } | EffectOp::DigTop { key, .. } => Some(key),
+            EffectOp::Choose { key, .. }
+            | EffectOp::DigTop { key, .. }
+            | EffectOp::LookTop { key, .. } => Some(key),
             EffectOp::Modify { .. }
             | EffectOp::Ko { .. }
             | EffectOp::Rest { .. }
@@ -273,6 +293,7 @@ impl EffectOp {
             | EffectOp::PlayBound { .. }
             | EffectOp::AddDon { .. }
             | EffectOp::TrashLife { .. }
+            | EffectOp::Shuffle { .. }
             | EffectOp::RequireIf { .. }
             | EffectOp::TrashIfInLimbo => None,
         }
@@ -332,6 +353,18 @@ pub enum Filter {
     /// Names, not card numbers: several numbers share a name and the text means
     /// any of them (2-14-3).
     HasName(String),
+    /// Everything the inner filter does not match — "other than [Gecko Moria]"
+    /// (ST03-004).
+    ///
+    /// A combinator rather than a `NotName` variant, because the pool negates
+    /// more than names: "other than {type}" and "other than a cost N" both
+    /// appear. One of these covers all of them, where a variant per negated
+    /// thing would grow a parallel set forever.
+    ///
+    /// [`Filter::NotSelf`] predates it and stays: "other than this card" is a
+    /// relationship to the source rather than a property of the candidate, so
+    /// there is no inner filter to negate.
+    Not(Box<Filter>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -353,6 +386,11 @@ pub enum Condition {
     LeaderHasType(String),
     /// "If there is a Character with a cost of N" — either player's.
     AnyCharacterWithCost(u8),
+    /// "If you have N or less cards in your hand" (ST03-017). The controller's
+    /// hand, counted after everything before it in the effect has resolved —
+    /// ST03-017 draws on this *after* its own power boost, so the count is
+    /// whatever the hand holds at that point.
+    HandAtMost(u8),
 }
 
 /// An auto effect's cost, offered to its controller before the effect runs.

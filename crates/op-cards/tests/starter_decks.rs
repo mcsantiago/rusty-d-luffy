@@ -20,7 +20,7 @@ use rand::{Rng, SeedableRng};
 
 // The decklists live in `op_cards::decks` so the clients and this suite cannot
 // disagree about what a starter deck contains.
-use op_cards::decks::{st01, st02, st04, st06, st08};
+use op_cards::decks::{st01, st02, st03, st04, st06, st08};
 
 type Scripts = Arc<dyn ScriptSource + Send + Sync>;
 
@@ -76,9 +76,10 @@ fn every_deck_pairing_plays_to_completion() {
         return;
     };
     type Build = fn() -> DeckList;
-    let decks: [(&str, Build); 5] = [
+    let decks: [(&str, Build); 6] = [
         ("ST-01", st01),
         ("ST-02", st02),
+        ("ST-03", st03),
         ("ST-04", st04),
         ("ST-06", st06),
         ("ST-08", st08),
@@ -185,6 +186,10 @@ fn st08_at_main(db: Arc<CardDb>, cards: Scripts, seed: u64, turns: usize) -> Gam
 
 fn st04_at_main(db: Arc<CardDb>, cards: Scripts, seed: u64, turns: usize) -> Game {
     at_main(db, cards, seed, [st04(), st01()], turns)
+}
+
+fn st03_at_main(db: Arc<CardDb>, cards: Scripts, seed: u64, turns: usize) -> Game {
+    at_main(db, cards, seed, [st03(), st01()], turns)
 }
 
 /// Plays a battle out with the defender declining everything, so the test only
@@ -1396,5 +1401,285 @@ fn st04_001_offers_a_choice_of_which_don_to_return() {
         game.state.card(leader).attached_don.len(),
         1,
         "the DON!! the player kept is still on the Leader"
+    );
+}
+
+/// ST-03's signature: five of its cards return a Character "to the **owner's**
+/// hand". Against an opponent's Character that is *their* hand, not the
+/// controller's — bouncing is disruption, not theft. Nothing else in the set
+/// would catch this reading being wrong, because owner and controller are the
+/// same player for every other effect implemented so far.
+#[test]
+fn st03_001_bounce_returns_a_character_to_its_owners_hand() {
+    let Some((db, cards)) = load() else { return };
+    let mut game = st03_at_main(db, cards, 7, 8);
+
+    let leader = game.state.player(PlayerId::P0).leader.unwrap();
+    let victim = put_in_play(&mut game, PlayerId::P1, "ST01-004");
+    let their_hand = game.state.player(PlayerId::P1).hand.len();
+    let your_hand = game.state.player(PlayerId::P0).hand.len();
+
+    game.step(Action::ActivateEffect {
+        card: leader,
+        slot: 0,
+        discard: vec![],
+    })
+    .unwrap();
+    game.step(Action::Choose {
+        cards: vec![victim],
+    })
+    .unwrap();
+
+    assert_eq!(game.state.card(victim).zone, Zone::Hand);
+    assert_eq!(
+        game.state.card(victim).controller,
+        PlayerId::P1,
+        "the card went home, not across the table"
+    );
+    assert_eq!(game.state.player(PlayerId::P1).hand.len(), their_hand + 1);
+    assert_eq!(
+        game.state.player(PlayerId::P0).hand.len(),
+        your_hand,
+        "bouncing must not draw the controller a card"
+    );
+}
+
+/// The same effect reaches your own board: the text says "Character", not "your
+/// opponent's Character", so returning your own is a legal line — replaying an
+/// [On Play] is the reason you would.
+#[test]
+fn st03_001_bounce_can_target_your_own_character() {
+    let Some((db, cards)) = load() else { return };
+    let mut game = st03_at_main(db, cards, 7, 8);
+
+    let leader = game.state.player(PlayerId::P0).leader.unwrap();
+    let mine = put_in_play(&mut game, PlayerId::P0, "ST03-014");
+
+    game.step(Action::ActivateEffect {
+        card: leader,
+        slot: 0,
+        discard: vec![],
+    })
+    .unwrap();
+
+    let legal = legal_actions(&game);
+    assert!(
+        legal.contains(&Action::Choose { cards: vec![mine] }),
+        "your own Character should be a legal bounce target"
+    );
+}
+
+/// ST03-004 searches the trash for a Warlord "other than [Gecko Moria]" — and
+/// ST03-004 *is* Gecko Moria, so the exclusion is about the card doing the
+/// searching. By name rather than card number, so it covers every printing.
+#[test]
+fn st03_004_cannot_return_another_gecko_moria() {
+    let Some((db, cards)) = load() else { return };
+    let mut game = st03_at_main(db, cards, 3, 8);
+
+    // Two Warlords in the trash: another Gecko Moria, and one that is not.
+    let moria = game.db().by_number("ST03-004").unwrap();
+    let other = game.db().by_number("ST03-005").unwrap();
+    let moria = game.state.spawn(moria, PlayerId::P0, Zone::Limbo);
+    let other = game.state.spawn(other, PlayerId::P0, Zone::Limbo);
+    for card in [moria, other] {
+        game.state
+            .move_card(card, PlayerId::P0, Zone::Trash, Placement::Bottom);
+    }
+
+    // Played from hand rather than placed, because [On Play] is what fires the
+    // search — `put_in_play` moves the card without ever playing it.
+    let def = game.db().by_number("ST03-004").unwrap();
+    let source = game.state.spawn(def, PlayerId::P0, Zone::Hand);
+    game.step(Action::PlayCard {
+        card: source,
+        replacing: None,
+    })
+    .unwrap();
+
+    let legal = legal_actions(&game);
+    assert!(
+        legal.contains(&Action::Choose { cards: vec![other] }),
+        "a Warlord that is not Gecko Moria should be offered"
+    );
+    assert!(
+        !legal.contains(&Action::Choose { cards: vec![moria] }),
+        "\"other than [Gecko Moria]\" must exclude every Gecko Moria, not just this one"
+    );
+}
+
+/// ST03-015 Sables, the [Main] Event bounce. Reported from play as doing
+/// nothing, so this pins where the card actually goes: an opponent's Character
+/// returns to *their* hand, which is what "the owner's hand" means, and leaves
+/// the board either way.
+#[test]
+fn st03_015_sables_returns_an_opponents_character_to_their_hand() {
+    let Some((db, cards)) = load() else { return };
+    let mut game = st03_at_main(db, cards, 7, 8);
+
+    let victim = put_in_play(&mut game, PlayerId::P1, "ST02-009"); // cost 5
+    let their_hand = game.state.player(PlayerId::P1).hand.len();
+    let your_hand_before = game.state.player(PlayerId::P0).hand.len();
+
+    let def = game.db().by_number("ST03-015").unwrap();
+    let sables = game.state.spawn(def, PlayerId::P0, Zone::Hand);
+    game.step(Action::PlayCard {
+        card: sables,
+        replacing: None,
+    })
+    .unwrap();
+    game.step(Action::Choose {
+        cards: vec![victim],
+    })
+    .unwrap();
+
+    assert_eq!(
+        game.state.card(victim).zone,
+        Zone::Hand,
+        "the Character should have left the board"
+    );
+    assert_eq!(
+        game.state.card(victim).controller,
+        PlayerId::P1,
+        "\"the owner's hand\" is theirs, not the caster's"
+    );
+    assert_eq!(game.state.player(PlayerId::P1).hand.len(), their_hand + 1);
+    // Sables itself is trashed as it resolves (8-4-2), so the caster's hand is
+    // one down: the Event left it and nothing came back.
+    assert_eq!(
+        game.state.player(PlayerId::P0).hand.len(),
+        your_hand_before,
+        "the bounced card must not arrive in the caster's hand"
+    );
+    assert_eq!(game.state.card(sables).zone, Zone::Trash);
+}
+
+/// ST03-005 Mihawk — "[DON!! x1] [When Attacking] Draw 2 cards and trash 2
+/// cards from your hand" — is the first card whose selection carries a floor
+/// above 1, and the picker went blank on it in play.
+///
+/// A floor of 2 removes every smaller subset before the options are offered, so
+/// there are no single-card answers at all. Anything deriving its candidate
+/// list from the singletons therefore sees nothing to show. The cards are all
+/// still there, in the union of the answers, which is what to read instead.
+#[test]
+fn st03_005_offers_a_two_card_trash_with_no_single_card_answers() {
+    let Some((db, cards)) = load() else { return };
+    let mut game = st03_at_main(db, cards, 7, 8);
+
+    let mihawk = put_in_play(&mut game, PlayerId::P0, "ST03-005");
+    game.state.card_mut(mihawk).played_on_turn = None;
+    game.step(Action::GiveDon { to: mihawk }).unwrap();
+
+    let hand_before = game.state.player(PlayerId::P0).hand.len();
+    let enemy_leader = game.state.player(PlayerId::P1).leader.unwrap();
+    game.step(Action::Attack {
+        attacker: mihawk,
+        target: enemy_leader,
+    })
+    .unwrap();
+
+    // Drew 2, then stopped to ask which 2 to trash.
+    assert_eq!(
+        game.state.player(PlayerId::P0).hand.len(),
+        hand_before + 2,
+        "the draw happens before the trash is chosen"
+    );
+    let Some(Pending::Choose {
+        up_to, at_least, ..
+    }) = game.pending().cloned()
+    else {
+        panic!("expected a Choose, got {:?}", game.pending());
+    };
+    assert_eq!((up_to, at_least), (2, 2), "trashing 2 is an instruction");
+
+    let legal = legal_actions(&game);
+    assert!(!legal.is_empty());
+    let mut union: Vec<op_core::CardInstanceId> = Vec::new();
+    for action in &legal {
+        let Action::Choose { cards } = action else {
+            panic!("expected a Choose, got {action:?}")
+        };
+        assert_eq!(cards.len(), 2, "a floor of 2 admits no smaller answer");
+        for &id in cards {
+            if !union.contains(&id) {
+                union.push(id);
+            }
+        }
+    }
+    // The candidates the picker has to show: every card in hand, not one of
+    // which appears on its own.
+    let mut hand = game.state.player(PlayerId::P0).hand.clone();
+    hand.sort();
+    union.sort();
+    assert_eq!(
+        union, hand,
+        "every hand card is reachable through some answer"
+    );
+}
+
+/// ST03-009 Doflamingo is cost 7 and returns "up to 1 Character with a cost of
+/// 7 or less", so he can return himself. That reads like an oversight and is
+/// not one, which is why it is pinned rather than left to be tidied away later.
+///
+/// 10-2-6-1 activates `[On Play]` when the card is played, and 6-5-3 has
+/// already put it in the Character area by then, so it matches "1 Character".
+/// The card text carries no exclusion — this set writes one where it means one,
+/// by name on ST03-004 and by the cost bound on ST03-014, which returns a cost
+/// of 3 or less and so cannot reach its own 4.
+///
+/// Offering it is `legal_actions` being faithful to the rules. Whether it is a
+/// good idea is the UI's business, not the generator's.
+#[test]
+fn st03_009_doflamingo_is_a_legal_target_for_his_own_bounce() {
+    let Some((db, cards)) = load() else { return };
+    let mut game = st03_at_main(db, cards, 7, 8);
+
+    let def = game.db().by_number("ST03-009").unwrap();
+    let doffy = game.state.spawn(def, PlayerId::P0, Zone::Hand);
+    game.step(Action::PlayCard {
+        card: doffy,
+        replacing: None,
+    })
+    .unwrap();
+
+    assert_eq!(
+        game.state.card(doffy).zone,
+        Zone::Character,
+        "he is on the field while his own [On Play] resolves"
+    );
+    let legal = legal_actions(&game);
+    assert!(
+        legal.contains(&Action::Choose { cards: vec![doffy] }),
+        "cost 7 is 'a cost of 7 or less'"
+    );
+    // And declining is still there, since the text says "up to".
+    assert!(legal.contains(&Action::Choose { cards: vec![] }));
+
+    // Taking it does what it says: back to hand, off the board.
+    game.step(Action::Choose { cards: vec![doffy] }).unwrap();
+    assert_eq!(game.state.card(doffy).zone, Zone::Hand);
+}
+
+/// The counterpart, so the pair documents the boundary rather than one side of
+/// it: ST03-014 is cost 4 and reaches only a cost of 3 or less, so he is not a
+/// legal target for his own effect.
+#[test]
+fn st03_014_teach_cannot_return_himself() {
+    let Some((db, cards)) = load() else { return };
+    let mut game = st03_at_main(db, cards, 7, 8);
+
+    let def = game.db().by_number("ST03-014").unwrap();
+    let teach = game.state.spawn(def, PlayerId::P0, Zone::Hand);
+    game.step(Action::PlayCard {
+        card: teach,
+        replacing: None,
+    })
+    .unwrap();
+
+    assert_eq!(game.state.card(teach).zone, Zone::Character);
+    assert!(
+        !legal_actions(&game).contains(&Action::Choose { cards: vec![teach] }),
+        "cost 4 is not 'a cost of 3 or less'"
     );
 }

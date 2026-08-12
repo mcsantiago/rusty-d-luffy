@@ -190,6 +190,29 @@
         </div>
       </div>
 
+      <div id="arrange-modal" class="overlay" hidden>
+        <div class="panel wide">
+          <h1 id="arrange-title">Arrange</h1>
+          <p class="sub" id="arrange-sub"></p>
+          <div class="choose-label">Still to place</div>
+          <div class="choose-grid" id="arrange-pool"></div>
+          <div class="arrange-piles">
+            <div class="arrange-pile">
+              <div class="choose-label">Top of deck — drawn first</div>
+              <div class="arrange-slot" id="arrange-top"></div>
+            </div>
+            <div class="arrange-pile">
+              <div class="choose-label">Bottom of deck</div>
+              <div class="arrange-slot" id="arrange-bottom"></div>
+            </div>
+          </div>
+          <div class="choose-foot">
+            <button id="arrange-undo" class="ghost">Undo</button>
+            <button id="arrange-confirm" class="primary">Confirm</button>
+          </div>
+        </div>
+      </div>
+
       <div id="battle-modal" class="overlay" hidden>
         <div class="battle-panel">
           <div class="battle-step-label" id="battle-step"></div>

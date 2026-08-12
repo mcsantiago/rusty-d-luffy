@@ -241,7 +241,24 @@ fn question(pending: &op_core::Pending) -> String {
         P::ReturnDon { n, .. } => {
             format!("Return {n} DON!! card(s) to your DON!! deck — which?")
         }
-        P::Choose { up_to, .. } => format!("Choose up to {up_to}:"),
+        P::Arrange { cards, .. } => format!(
+            "Put these {} back on your deck, top or bottom, in any order:",
+            cards.len()
+        ),
+        // "Up to" is an offer the player may decline; a floor is an
+        // instruction, and saying "up to" there invites an answer the engine
+        // will refuse.
+        P::Choose {
+            up_to, at_least, ..
+        } => {
+            if *at_least == 0 {
+                format!("Choose up to {up_to}:")
+            } else if at_least == up_to {
+                format!("Choose {up_to}:")
+            } else {
+                format!("Choose {at_least} to {up_to}:")
+            }
+        }
     }
 }
 

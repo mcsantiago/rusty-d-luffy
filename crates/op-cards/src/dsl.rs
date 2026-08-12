@@ -71,6 +71,35 @@ pub fn all_characters() -> Selector {
     }
 }
 
+/// "Up to N Characters", either side — the counted form of
+/// [`all_characters`], for text that reaches the whole board but names a
+/// number. ST-03's bounces are all of this shape.
+pub fn any_characters(up_to: u8) -> Selector {
+    Selector {
+        zone: Zone::Character,
+        owner: Who::Both,
+        from: None,
+        up_to,
+        at_least: 0,
+        filters: Vec::new(),
+    }
+}
+
+/// Your own deck — a search, as in "play up to 1 [Pacifista] … from your deck".
+///
+/// Searching a deck reveals it to its owner and to nobody else: `project`
+/// sends a `Pending` only to the player it belongs to.
+pub fn your_deck(up_to: u8) -> Selector {
+    Selector {
+        zone: Zone::Deck,
+        owner: Who::You,
+        from: None,
+        up_to,
+        at_least: 0,
+        filters: Vec::new(),
+    }
+}
+
 pub fn your_trash(up_to: u8) -> Selector {
     Selector {
         zone: Zone::Trash,
@@ -170,6 +199,14 @@ pub fn named(name: &str) -> Filter {
     Filter::HasName(name.to_string())
 }
 
+/// "other than [Gecko Moria]" — everything the inner filter does not match.
+///
+/// For "other than this card" use [`other_than_self`], which is about the
+/// candidate's relationship to the source rather than a property of it.
+pub fn not(filter: Filter) -> Filter {
+    Filter::Not(Box::new(filter))
+}
+
 // ---- ops -------------------------------------------------------------------
 
 pub fn choose(key: &str, select: Selector) -> EffectOp {
@@ -228,6 +265,18 @@ pub fn trash(key: &str) -> EffectOp {
     EffectOp::MoveTo {
         key: key.to_string(),
         to: Zone::Trash,
+    }
+}
+
+/// "Place at the bottom of the owner's deck" (ST03-003).
+///
+/// Named for the bottom because that is where a card sent to a deck goes —
+/// `MoveTo` has no other placement for `Zone::Deck` — and the card text always
+/// says which end it means.
+pub fn to_deck_bottom(key: &str) -> EffectOp {
+    EffectOp::MoveTo {
+        key: key.to_string(),
+        to: Zone::Deck,
     }
 }
 
@@ -324,6 +373,23 @@ pub fn dig_top(n: u8, key: &str, up_to: u8, filters: Vec<Filter>) -> EffectOp {
     }
 }
 
+/// "Look at N cards from the top of your deck and return them to the top or
+/// bottom of the deck in any order" (ST03-010).
+///
+/// Unlike [`dig_top`], nothing leaves the deck: the whole effect is the order
+/// the player puts them back in, so it is theirs to pick.
+pub fn look_top(n: u8, key: &str) -> EffectOp {
+    EffectOp::LookTop {
+        n,
+        key: key.to_string(),
+    }
+}
+
+/// "then shuffle your deck" — the tail of a search.
+pub fn shuffle_your_deck() -> EffectOp {
+    EffectOp::Shuffle { player: Who::You }
+}
+
 pub fn draw(n: u8) -> EffectOp {
     EffectOp::Draw {
         player: Who::You,
@@ -364,6 +430,11 @@ pub fn leader_has_type(ty: &str) -> Condition {
 
 pub fn any_character_costing(n: u8) -> Condition {
     Condition::AnyCharacterWithCost(n)
+}
+
+/// "if you have 3 or less cards in your hand" (ST03-017).
+pub fn hand_at_most(n: u8) -> Condition {
+    Condition::HandAtMost(n)
 }
 
 // ---- effect builders -------------------------------------------------------
@@ -442,6 +513,28 @@ pub fn activated(cost: ActivationCost, ops: Vec<EffectOp>) -> ActivatedEffect {
 pub fn activated_once(cost: ActivationCost, ops: Vec<EffectOp>) -> ActivatedEffect {
     ActivatedEffect {
         conditions: Vec::new(),
+        cost,
+        ops,
+        slot: 0,
+        once_per_turn: true,
+    }
+}
+
+/// An `[Activate: Main] [Once Per Turn]` gated on a condition — the
+/// "[DON!! x1]" in "[DON!! x1] [Activate: Main] [Once Per Turn] ➁: …"
+/// (ST03-007).
+///
+/// A condition, not a cost: the DON!! has to be *attached* for the effect to be
+/// offered at all, and activating does not spend it. `legal_actions` checks
+/// these before offering the activation, so an unmet one hides the option
+/// rather than failing when taken.
+pub fn activated_once_when(
+    conditions: Vec<Condition>,
+    cost: ActivationCost,
+    ops: Vec<EffectOp>,
+) -> ActivatedEffect {
+    ActivatedEffect {
+        conditions,
         cost,
         ops,
         slot: 0,

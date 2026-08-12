@@ -244,10 +244,12 @@ fn check_ops(site: Site, ops: &[EffectOp], supplied: &[&str], out: &mut Vec<Diag
             }
         }
         if let Some(key) = op.binds() {
-            // `DigTop` is its own consumer: it suspends on the choice, then
-            // re-runs and reads the binding back to add the chosen cards to
-            // hand and bottom the rest (ST02-007). No other op has to read it.
-            if matches!(op, EffectOp::DigTop { .. }) {
+            // Both of these are their own consumer: each suspends on a
+            // question and re-runs, reading its own binding back — `DigTop` to
+            // sort the cards it looked at (ST02-007), `LookTop` to see that the
+            // arrangement has been answered (ST03-010). No other op reads
+            // either, so neither is a dead binding.
+            if matches!(op, EffectOp::DigTop { .. } | EffectOp::LookTop { .. }) {
                 read.insert(key);
             }
             if supplied.contains(&key) {

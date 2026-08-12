@@ -154,3 +154,67 @@ fn every_on_block_script_is_on_a_blocker() {
         );
     }
 }
+
+/// A card with printed `[Trigger]` text must script it.
+///
+/// Nothing else asks. `coverage` counts a card done the moment its script is
+/// not vanilla, so a card whose body is scripted and whose `[Trigger]` is not
+/// reports `OK` and earns its set a place in the badge; `KEYWORD_ONLY` asserts
+/// the opposite outright, that the card needs no script at all. Four ST-03
+/// cards shipped without their `[Trigger]` behind exactly those two blind
+/// spots, one of them a `[Blocker]` sitting in `KEYWORD_ONLY`.
+#[test]
+fn every_printed_trigger_is_scripted() {
+    let Some(db) = common::card_db() else {
+        eprintln!("skipping: run the ingest to populate data/");
+        return;
+    };
+
+    let scripted: std::collections::BTreeMap<&str, &CardScript> = all_scripts_map();
+    let mut missing: Vec<String> = Vec::new();
+
+    for (def, card) in db.iter() {
+        if card.trigger.is_none() {
+            continue;
+        }
+        // Only sets this crate ships. An unscripted set is not an omission.
+        let Some(script) = scripted.get(card.number.as_str()) else {
+            if op_cards::KEYWORD_ONLY.contains(&card.number.as_str()) {
+                missing.push(format!(
+                    "{} is KEYWORD_ONLY but has printed [Trigger] text",
+                    card.number
+                ));
+            }
+            let _ = def;
+            continue;
+        };
+        if script.trigger.is_empty() {
+            missing.push(card.number.clone());
+        }
+    }
+    missing.sort();
+
+    // Pinned rather than allowed: the assertion is equality, so a new omission
+    // fails it and so does fixing one of these without removing it from the
+    // list. ST-06 shipped these three before anything asked the question, and
+    // one of them — ST06-015, "your opponent chooses 1 card from their hand and
+    // trashes it" — needs a decision aimed at the player who is not the
+    // effect's controller, which `Pending::Choose` cannot express today.
+    let known: Vec<String> = ["ST06-014", "ST06-015", "ST06-016"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    assert_eq!(
+        missing, known,
+        "printed [Trigger] text with no script; update the pinned list only \
+         when the cards themselves change"
+    );
+}
+
+fn all_scripts_map() -> std::collections::BTreeMap<&'static str, &'static CardScript> {
+    // Leaked once so the map can borrow: this is a test binary and the scripts
+    // live for the whole run either way.
+    let scripts: &'static [(&'static str, CardScript)] =
+        Box::leak(all_scripts().into_boxed_slice());
+    scripts.iter().map(|(n, s)| (*n, s)).collect()
+}

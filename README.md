@@ -1,7 +1,7 @@
 # OnePieceSim
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
-[![Card coverage: 5/59 sets scripted](https://img.shields.io/badge/card_sets-5%2F59_scripted-orange)](#coverage-of-the-source)
+[![Card coverage: 6/59 sets scripted](https://img.shields.io/badge/card_sets-6%2F59_scripted-orange)](#coverage-of-the-source)
 
 <p align="center">
   <img src="docs/screenshot.png" alt="The desktop client on turn 5. Each player's zones are laid out facing each other across the middle of the table: leader, character area, stage, life, deck and trash, with the DON!! cost areas furthest apart at the top and bottom. Three characters are in play for the near player, one for the far player, each showing its current power. The player's hand runs along the bottom edge and a turn-by-turn game log fills the right-hand column." width="900">
@@ -321,16 +321,19 @@ them, so a replay divergence tells you whether the rules changed or something
 broke. Playable against the AI on macOS, Windows and Linux — see
 [Install](#install) for the unsigned-binary warnings and the first-run fetch.
 
-Implemented: the rules kernel, ST-01, ST-02, ST-04, ST-06 and ST-08 at full
+Implemented: the rules kernel, ST-01 through ST-04, ST-06 and ST-08 at full
 script coverage, the legal-action generator, heuristic and ISMCTS agents, static
 validation of card scripts, session replay and verification, and both clients —
 desktop and terminal.
 
 Not yet built: PyO3 bindings and the Gymnasium environment, and the authoritative
-multiplayer server and web client. Both sit on top of the existing kernel — the
-turn-based ruleset means lockstep on actions is sufficient for netcode, with no
-rollback needed. The multiplayer half now has a design:
-[docs/multiplayer.md](docs/multiplayer.md).
+multiplayer server and web client. Both sit on top of the existing kernel: the
+ruleset is turn-based and deterministic, so the server needs no rollback or
+prediction — it steps recorded actions and projects the result. That
+determinism does not make peers interchangeable with a server, though. Lockstep
+would keep two peers synchronised while giving both of them the whole shuffle,
+and hidden information is the reason this needs an authority at all. The design
+is in [docs/multiplayer.md](docs/multiplayer.md).
 
 ### Known simplifications
 
