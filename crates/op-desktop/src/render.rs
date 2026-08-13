@@ -130,6 +130,7 @@ pub fn shortfall_label(req: &op_core::Requirement<'_>) -> String {
 
     match req {
         Requirement::Cards(select) => format!("No {} to choose.", wants_label(select)),
+        Requirement::Condition => "This card's condition is not met.".into(),
         Requirement::Don(DonSource::Rested) => "No rested DON!! in your cost area.".into(),
         Requirement::Don(DonSource::Active) => "No active DON!! in your cost area.".into(),
         Requirement::Don(DonSource::Any) => "No DON!! in your cost area.".into(),

@@ -56,13 +56,13 @@ pub struct Choice {
     pub split: Option<usize>,
     /// Coarse kind, for grouping and styling.
     pub kind: &'static str,
-    /// For an activation, what its first choice would offer. Empty for
-    /// everything else, and for an activation that asks nothing.
+    /// For an activation, the choice it would go on to ask. `None` for every
+    /// other action, and for an activation that asks nothing.
     ///
     /// Sent so the client can ask which target before sending the activation,
     /// rather than after — the difference between a decision that can be
     /// abandoned and one that has already cost a `[Once Per Turn]`.
-    pub targets: Vec<u32>,
+    pub targets: Option<TargetPreview>,
     /// Why this activation would currently achieve nothing, if it would.
     /// `None` for every other action, and for an activation that has everything
     /// it needs.
@@ -71,6 +71,27 @@ pub struct Choice {
     /// after: `[Once Per Turn]` is spent by activating, not by resolving, so a
     /// warning that arrives with the choice has arrived too late.
     pub warning: Option<String>,
+}
+
+/// The choice an activation would ask, offered before it is sent.
+#[derive(Debug, Clone, Serialize)]
+pub struct TargetPreview {
+    /// The candidates, labelled like any other card-picking decision — a DON!!
+    /// in the cost area is not on the board the view publishes, so an id alone
+    /// draws nothing. Empty when the pool is secret; see `secret`.
+    pub cards: Vec<ChoiceCandidate>,
+    /// The pool is a secret area, so its contents are not described. The client
+    /// may say a choice is coming; it must not read "nothing matches" into an
+    /// empty `cards`, and must leave the picking to the real decision.
+    pub secret: bool,
+    /// Whether the choice may be declined (8-4-4-1), so a client can offer
+    /// activating without choosing — which is a legal move, and the only one
+    /// for an effect that does something besides the choice.
+    pub may_decline: bool,
+    /// True when the choice takes exactly one card, which is the only shape a
+    /// client can answer with a single click. Anything wider is left to the
+    /// real decision, which can count.
+    pub single: bool,
 }
 
 /// One card that may be picked while a card-picking decision is pending.
@@ -817,26 +838,38 @@ impl Session {
     }
 }
 
-/// Cards an action refers to, for UI highlighting.
+/// The choice an activation would ask, for a client that asks it first.
+///
+/// See [`Game::activation_choice`] for the caveat that matters here: the pool
+/// is read before the cost is paid, so the engine may offer something narrower
+/// once the effect actually runs.
+fn activation_targets(game: &Game, action: &Action) -> Option<TargetPreview> {
+    let Action::ActivateEffect { card, slot, .. } = action else {
+        return None;
+    };
+    let choice = game.activation_choice(*card, *slot)?;
+    Some(TargetPreview {
+        cards: choice
+            .options
+            .iter()
+            .map(|&id| ChoiceCandidate {
+                id: id.0,
+                label: crate::render::candidate_label(id, game),
+                class: choice_class(id, game),
+            })
+            .collect(),
+        secret: choice.secret,
+        may_decline: choice.select.at_least == 0,
+        single: choice.select.up_to == 1,
+    })
+}
+
 /// Why an activation would achieve nothing, for a client that warns before
 /// committing to it.
 ///
 /// `None` for every other kind of action. See [`Game::activation_shortfall`]
 /// for what this does and does not promise — notably that pools are read before
 /// the cost is paid.
-/// What an activation's first choice would offer, for a client that asks before
-/// it sends. See [`Game::activation_targets`] for the caveat that matters here:
-/// the pool is read before the cost is paid.
-fn activation_targets(game: &Game, action: &Action) -> Vec<u32> {
-    let Action::ActivateEffect { card, slot, .. } = action else {
-        return Vec::new();
-    };
-    game.activation_targets(*card, *slot)
-        .iter()
-        .map(|c| c.0)
-        .collect()
-}
-
 fn activation_warning(game: &Game, action: &Action) -> Option<String> {
     let Action::ActivateEffect { card, slot, .. } = action else {
         return None;
@@ -845,6 +878,7 @@ fn activation_warning(game: &Game, action: &Action) -> Option<String> {
         .map(|req| crate::render::shortfall_label(&req))
 }
 
+/// Cards an action refers to, for UI highlighting.
 fn action_cards(action: &Action) -> Vec<CardInstanceId> {
     match action {
         Action::PlayCard { card, replacing } => {

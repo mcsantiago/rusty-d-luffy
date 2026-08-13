@@ -65,6 +65,9 @@ let battleDefender = null;
 /** The attack being picked, or null: `{ attacker, targets }`, where `targets`
  *  maps a target's instance id to the option that attacks it. */
 let attackPick = null;
+/** The snapshot a picker or a staged activation was opened against, so a
+ *  re-render of that same snapshot does not close one mid-decision. */
+let openedFor = null;
 
 const $ = (id) => document.getElementById(id);
 
@@ -830,23 +833,27 @@ function stageActivation(opt) {
   if (!snap) return;
 
   staged = opt;
+  openedFor = snap;
   const card = opt.subject != null ? cardIndex(snap.view).get(opt.subject) : null;
   const info = card && card.number ? catalogue.get(card.number) : null;
 
-  const targets = opt.targets ?? [];
   $("activate-title").textContent = card ? `Activate ${cardName(card)}?` : "Activate?";
   $("activate-sub").textContent = opt.label;
   renderActivateSource(card, info);
   renderActivateWarning(opt);
-  renderActivateTargets(opt, targets, snap);
+  const picking = renderActivateTargets(opt, snap);
 
-  // With a target to pick, picking one *is* the confirmation — a second button
-  // would only ask the same question twice. Without one there is nothing to
-  // click but the confirm, and an effect that will find nothing still has to be
-  // activatable: doing it anyway is legal (8-4-1-3) and occasionally the point.
+  // Sending without picking stays reachable whenever the engine would accept
+  // it. Declining an "up to" (8-4-4-1) is a real move, and for an effect that
+  // does something *besides* the choice it is the only way to keep the rest —
+  // Cancel abandons the activation entirely, which is not the same answer.
   const confirm = $("activate-confirm");
-  confirm.hidden = targets.length > 0;
-  confirm.textContent = opt.warning ? "Activate anyway" : "Activate";
+  confirm.hidden = picking && !(opt.targets?.may_decline ?? false);
+  confirm.textContent = opt.warning
+    ? "Activate anyway"
+    : picking
+      ? "Activate without choosing"
+      : "Activate";
   $("activate-modal").hidden = false;
 }
 
@@ -856,35 +863,38 @@ function stageActivation(opt) {
  * while this is on screen, so Cancel costs nothing. Picking sends the
  * activation and the answer together.
  */
-function renderActivateTargets(opt, targets, snap) {
+function renderActivateTargets(opt, snap) {
   const box = $("activate-targets");
-  if (targets.length === 0) {
+  const preview = opt.targets;
+
+  // Three reasons not to pick here, all of which leave the real decision to
+  // the engine's own Choose: nothing to choose between; a secret pool, whose
+  // contents are not ours to show before the cost that buys them; and a choice
+  // of more than one card, which a single click cannot express.
+  if (!preview || preview.secret || !preview.single || preview.cards.length === 0) {
     box.hidden = true;
-    return;
+    return false;
   }
 
   $("activate-targets-label").textContent =
-    targets.length === 1 ? "Choose its target" : `Choose one of ${targets.length}`;
+    preview.cards.length === 1 ? "Choose its target" : `Choose one of ${preview.cards.length}`;
 
   const index = cardIndex(snap.view);
   const grid = $("activate-grid");
   grid.innerHTML = "";
-  for (const id of targets) {
+  for (const { id, label } of preview.cards) {
     const card = index.get(id);
     const holder = document.createElement("div");
     holder.className = "choose-option";
+    // A DON!! in the cost area is not on the board the view publishes and has
+    // no art to draw, so its label is the only description there is.
     if (card) holder.appendChild(cardEl(card, { plain: true }));
-    else holder.innerHTML = `<div class="choose-unknown">${candidateName(id, snap)}</div>`;
+    else holder.innerHTML = `<div class="choose-unknown">${label}</div>`;
     holder.addEventListener("click", () => commitActivation(id));
     grid.appendChild(holder);
   }
   box.hidden = false;
-}
-
-/** A candidate the board cannot draw — a DON!! in the cost area, most often. */
-function candidateName(id, snap) {
-  const found = (snap.choose_candidates ?? []).find((c) => c.id === id);
-  return found ? found.label : "a card";
+  return true;
 }
 
 /** Whether this activation is about to do nothing, and what it wanted.
@@ -914,7 +924,13 @@ async function renderActivateSource(card, info) {
     return;
   }
 
+  // The staging this render belongs to. Art resolves out of order — a cached
+  // card returns on a microtask while an uncached one is still on the wire —
+  // so without this, cancelling one card and staging another can leave the
+  // first one's art and text under the second one's title.
+  const mine = staged;
   const uri = await art(card.number);
+  if (staged !== mine) return;
   box.innerHTML = `
     <div class="source-art">${uri ? `<img src="${uri}" alt="${card.number}" />` : (card.number ?? "")}</div>
     <div class="source-text">
@@ -1051,6 +1067,7 @@ function openAttackPicker(attackerId, targets) {
 
   const index = cardIndex(snap.view);
   attackPick = { attacker: attackerId, targets };
+  openedFor = snap;
   highlighted = new Set();
   closeMenu();
   applyHighlight();
@@ -1868,11 +1885,18 @@ function render(snap) {
   beatsNow = snap.battle_beats ?? [];
 
   // An option index only means anything against the decision it was read from,
-  // so neither a target picker nor a staged activation can survive a new
+  // so neither a target picker nor a staged activation can survive a *new*
   // snapshot. Their cards are a copy taken when they opened, too, and would go
   // on showing a board that has moved on.
-  closeAttackPicker();
-  cancelActivation();
+  //
+  // Against a new one, not against a re-render: one snapshot is drawn more than
+  // once — the trash animation redraws the same one 480ms later — and closing
+  // on that would take a picker out from under the cursor mid-decision. Same
+  // reasoning as `chooseDismissedFor`.
+  if (openedFor !== snap) {
+    closeAttackPicker();
+    cancelActivation();
+  }
 
   menus = new Map();
   cardless = [];

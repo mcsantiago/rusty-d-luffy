@@ -40,7 +40,8 @@ pub use card::{CardDb, CardDef, Category, Color, Keyword};
 pub use derive::{Characteristics, Derived};
 pub use event::{CardRef, GameEvent, PlayerEvent};
 pub use game::{
-    DeckList, DonClass, Game, GameConfig, PlayerOutcome, Requirement, SetupError, StepOutcome,
+    ActivationChoice, DeckList, DonClass, Game, GameConfig, PlayerOutcome, Requirement, SetupError,
+    StepOutcome,
 };
 pub use ids::{CardDefId, CardInstanceId, PlayerId};
 pub use legal::legal_actions;

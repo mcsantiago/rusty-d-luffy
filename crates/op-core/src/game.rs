@@ -15,6 +15,23 @@ pub enum Requirement<'a> {
     Cards(&'a crate::effect::Selector),
     /// DON!! in the controller's cost area that this source admits.
     Don(crate::effect::DonSource),
+    /// A condition on the card that does not currently hold, which the effect
+    /// would stop at. ST06-017's "if your Leader has the {Navy} type".
+    Condition,
+}
+
+/// The first choice an activated effect would ask, as [`Game::activation_choice`]
+/// describes it before the activation is sent.
+#[derive(Debug, Clone)]
+pub struct ActivationChoice<'a> {
+    pub select: &'a crate::effect::Selector,
+    /// The cards it would offer. Empty when the pool is secret — see `secret`,
+    /// which is what tells that apart from "nothing matches".
+    pub options: Vec<CardInstanceId>,
+    /// Whether the pool is a secret area (3-1-5). A client may say *that* a
+    /// choice is coming, but not what is in it, and must not read anything
+    /// into `options` being empty.
+    pub secret: bool,
 }
 
 use crate::action::{Action, IllegalAction, Pending};
@@ -2306,7 +2323,7 @@ impl Game {
         !asked
     }
 
-    /// The cards an activated effect's first `choose` would offer right now.
+    /// The first choice an activated effect would ask, before it is activated.
     ///
     /// So a client can ask the question *before* sending the activation and
     /// send both together, the way an attack is offered as one action per
@@ -2314,32 +2331,70 @@ impl Game {
     /// (8-4-1-3), so a target chosen afterwards is chosen too late to back out
     /// of; a target chosen first costs nothing to abandon.
     ///
-    /// Empty when the effect asks nothing, and — like everything here — true
-    /// only of the moment it is asked. The pool is read before the cost is
-    /// paid, so a client that pre-selects from it must be ready for the engine
-    /// to offer something narrower once the effect actually runs.
-    pub fn activation_targets(&self, card: CardInstanceId, slot: u8) -> Vec<CardInstanceId> {
-        let Some(effect) = self
+    /// `None` when the effect asks nothing, or when a condition it would stop
+    /// at does not hold. True only of the moment it is asked: the pool is read
+    /// before the cost is paid, so a client that pre-selects from it must be
+    /// ready for the engine to offer something narrower once the effect runs.
+    pub fn activation_choice(
+        &self,
+        card: CardInstanceId,
+        slot: u8,
+    ) -> Option<ActivationChoice<'_>> {
+        let effect = self
             .scripts
             .script(self.state.card(card).def)
             .activated
             .iter()
-            .find(|a| a.slot == slot)
-        else {
-            return Vec::new();
-        };
+            .find(|a| a.slot == slot)?;
+
         let controller = self.state.card(card).controller;
         let frame = EffectFrame::new(card, controller, Vec::new());
-        effect
-            .ops
-            .iter()
-            .find_map(|op| match op {
-                crate::effect::EffectOp::Choose { select, .. } => {
-                    Some(self.selector_options(&frame, select))
+
+        for op in &effect.ops {
+            match op {
+                // A condition the effect will stop at describes no choice: the
+                // `choose` after it is never reached. Offering its pool anyway
+                // invites a player to pick a target the effect will not use.
+                crate::effect::EffectOp::RequireIf { cond } if !self.holds(&frame, cond) => {
+                    return None
                 }
-                _ => None,
-            })
-            .unwrap_or_default()
+                crate::effect::EffectOp::Choose { select, .. } => {
+                    // A pool the controller cannot see is not describable
+                    // without handing them its contents. Ids are assigned in
+                    // decklist order, so shipping one for a deck card names it
+                    // to anyone holding the decklist — and the count alone
+                    // still answers "would searching be worth it" before the
+                    // cost that buys the answer.
+                    let secret = !select.zone.is_open();
+                    return Some(ActivationChoice {
+                        select,
+                        options: if secret {
+                            Vec::new()
+                        } else {
+                            self.selector_options(&frame, select)
+                        },
+                        secret,
+                    });
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    /// Whether a condition holds for an effect that has not started resolving.
+    ///
+    /// The same call `Op::RequireIf` makes, so the two agree about what would
+    /// stop the effect.
+    fn holds(&self, frame: &EffectFrame, cond: &crate::effect::Condition) -> bool {
+        derive::conditions_hold(
+            &self.state,
+            &self.db,
+            &[],
+            frame.source,
+            Some(frame),
+            std::slice::from_ref(cond),
+        )
     }
 
     /// The first thing an activated effect needs and does not currently have.
@@ -2359,11 +2414,7 @@ impl Game {
     /// costs (8-4-1-3) — and true only of the moment it is asked. Pools are
     /// read before the cost is paid, and an op the effect has not reached yet
     /// is judged against a board it may itself change on the way there.
-    pub fn activation_shortfall(
-        &self,
-        card: CardInstanceId,
-        slot: u8,
-    ) -> Option<Requirement<'_>> {
+    pub fn activation_shortfall(&self, card: CardInstanceId, slot: u8) -> Option<Requirement<'_>> {
         let effect = self
             .scripts
             .script(self.state.card(card).def)
@@ -2375,10 +2426,24 @@ impl Game {
         let frame = EffectFrame::new(card, controller, Vec::new());
 
         effect.ops.iter().find_map(|op| match op {
-            crate::effect::EffectOp::Choose { select, .. } => self
-                .selector_options(&frame, select)
-                .is_empty()
-                .then_some(Requirement::Cards(select)),
+            // The effect stops here, so nothing after it happens. Checked first
+            // because it is the one shortfall that makes the rest moot.
+            crate::effect::EffectOp::RequireIf { cond } => {
+                (!self.holds(&frame, cond)).then_some(Requirement::Condition)
+            }
+            crate::effect::EffectOp::Choose { select, .. } => {
+                // Two pools that cannot be judged from here, and must not be
+                // guessed about. A secret area would have to be read to be
+                // reported on, which is the leak. A `from` pool is a binding
+                // the effect has not made yet, so it is empty now and says
+                // nothing about what it will hold.
+                if !select.zone.is_open() || select.from.is_some() {
+                    return None;
+                }
+                self.selector_options(&frame, select)
+                    .is_empty()
+                    .then_some(Requirement::Cards(select))
+            }
             // The pool `Op::GiveDon` will draw from, computed the same way it
             // computes it: `cost_area` holds only DON!! not already given.
             crate::effect::EffectOp::GiveDon { source, .. } => self
