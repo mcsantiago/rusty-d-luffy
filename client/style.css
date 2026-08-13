@@ -11,14 +11,31 @@
   --accent: #d9484b;
   --accent-2: #f0b429;
   --good: #4ea36b;
+  /* The sidebar, as a token: the board is what is left of the window, and two
+     card sizes below are measured against that rather than against `vw`. */
+  --side-w: 330px;
   /* One card size for the whole board. Every zone derives from it rather than
      hardcoding its own, so nothing drifts, and the 1.4 ratio is the physical
      card's.
      Tied to whichever window dimension is tighter: width alone let a short
      window keep full-size cards and scroll instead, and a board you scroll is
-     one you cannot read at a glance — both mats have to be on screen. */
-  --card-w: clamp(46px, min(5.6vw, 8.4vh), 92px);
+     one you cannot read at a glance — both mats have to be on screen.
+     The width term measures the board, not the window: counting the sidebar
+     as space the cards could use overstated it by a third on a laptop. A mat
+     row is 8.8 cards wide — life and deck at 0.9, Leader and Stage at 1, and
+     five Character slots — plus its gaps, which is where the divisor is from. */
+  --card-w: clamp(
+    46px,
+    min(calc((100vw - var(--side-w) - 72px) / 8.8), 10.4vh),
+    140px
+  );
   --card-h: calc(var(--card-w) * 1.4);
+  /* DON!! given to a card, as tabs fanned under it. Derived from the card for
+     the same reason every zone is: at a fixed size they were unreadable at one
+     end of the card's range and overbearing at the other. */
+  --don-w: calc(var(--card-w) * 0.26);
+  --don-h: calc(var(--card-w) * 0.3);
+  --don-fan: calc(var(--card-w) * 0.15);
   --card-gap: clamp(4px, 0.55vw, 10px);
   --zone-pad: clamp(4px, 0.5vw, 9px);
   --zone-radius: 10px;
@@ -138,7 +155,7 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
 
 #game {
   display: grid;
-  grid-template-columns: 1fr 330px;
+  grid-template-columns: 1fr var(--side-w);
   grid-template-rows: 42px 1fr;
   grid-template-areas: "top side" "board side";
   height: 100%;
@@ -155,6 +172,30 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
 }
 
 #turn-label { font-weight: 600; }
+
+/* The turn's phases, in order, with the current one lit (6-1). The phase name
+   alone told a player who already knew the sequence what was happening; the
+   sequence is the part a new player does not have. */
+.steps { display: flex; align-items: center; gap: 3px; }
+.step {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  color: #43566d;
+  white-space: nowrap;
+}
+/* Phases already past this turn: dimmer than now, plainer than still to come,
+   so the row reads as progress rather than as five equal buttons. */
+.step.done { color: var(--muted); }
+.step.now {
+  color: var(--ink);
+  background: rgba(240, 180, 41, 0.14);
+  border-color: rgba(240, 180, 41, 0.5);
+}
 .muted { color: var(--muted); font-size: 12px; }
 #topbar button { margin-left: auto; }
 
@@ -410,7 +451,8 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
 .slot {
   position: relative;
   flex: 0 0 auto;
-  padding-bottom: 13px;
+  /* Room for the half of a given DON!! that shows below the card. */
+  padding-bottom: calc(var(--don-h) / 2);
   transform-origin: 50% 90%;
   transition: transform 0.1s, filter 0.1s;
 }
@@ -419,13 +461,22 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
 /* Given DON!! sit underneath the card and stay visible (6-5-5-1).
    z-index here creates a stacking context, so the per-DON!! z-indexes used to
    fan them stay scoped and cannot paint over the card itself. */
-.attached { position: absolute; left: 6px; bottom: 0; height: 26px; z-index: 0; }
+.attached {
+  position: absolute;
+  left: calc(var(--card-w) * 0.07);
+  bottom: 0;
+  height: var(--don-h);
+  z-index: 0;
+}
 .slot > .card { z-index: 1; }
+/* Fanned sideways off `--i`, set per DON!! in script, so the step stays in the
+   stylesheet with the width it has to agree with. */
 .adon {
   position: absolute;
   bottom: 0;
-  width: 22px;
-  height: 26px;
+  left: calc(var(--i, 0) * var(--don-fan));
+  width: var(--don-w);
+  height: var(--don-h);
   border-radius: 4px 4px 3px 3px;
   background: linear-gradient(160deg, #f5d477 0%, var(--accent-2) 60%, #c98f10 100%);
   border: 1px solid #a97a12;
@@ -451,8 +502,18 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
 }
 .card.has-art .fallback { display: none; }
 
-.cname { font-size: 11px; font-weight: 600; line-height: 1.2; }
-.cnum { font-size: 9px; color: var(--muted); margin-top: 4px; }
+/* Card type scales with the card. Fixed sizes here were readable at the card
+   width this board used to reach and not at the one it starts from. */
+.cname {
+  font-size: clamp(10px, calc(var(--card-w) * 0.155), 17px);
+  font-weight: 600;
+  line-height: 1.2;
+}
+.cnum {
+  font-size: clamp(9px, calc(var(--card-w) * 0.125), 14px);
+  color: var(--muted);
+  margin-top: 4px;
+}
 
 .card.facedown { background: linear-gradient(135deg, #2b1d2e, #4a2733); }
 .card .back {
@@ -466,8 +527,10 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
   display: flex; gap: 3px;
   padding: 3px;
 }
+/* Power is the number read most often during a battle, so it scales with the
+   card too rather than staying at the size the badge was drawn at. */
 .badges span {
-  font-size: 10px;
+  font-size: clamp(10px, calc(var(--card-w) * 0.14), 15px);
   font-weight: 700;
   padding: 1px 5px;
   border-radius: 4px;
@@ -562,9 +625,9 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
 
 #preview {
   position: fixed;
-  right: 346px;
+  right: calc(var(--side-w) + 16px);
   bottom: 16px;
-  width: 260px;
+  width: clamp(260px, 23vw, 400px);
   background: var(--felt-2);
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -574,10 +637,12 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
   pointer-events: none;
 }
 #preview img { width: 100%; border-radius: 6px; display: block; margin-bottom: 10px; }
-.pname { font-weight: 700; font-size: 14px; }
-.pmeta { color: var(--muted); font-size: 11px; margin: 2px 0 8px; }
-.peffect { font-size: 12px; line-height: 1.4; }
-.ptrigger { font-size: 12px; margin-top: 6px; color: var(--accent-2); }
+.pname { font-weight: 700; font-size: 16px; }
+.pmeta { color: var(--muted); font-size: 12px; margin: 2px 0 8px; }
+/* Card effect text, wherever it is shown. This is the text a player is
+   reading when they stop to read anything, so it is sized for reading. */
+.peffect { font-size: 14px; line-height: 1.45; }
+.ptrigger { font-size: 14px; margin-top: 6px; color: var(--accent-2); }
 
 /* ---- card menu ----
 
@@ -585,9 +650,12 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
    clicking pins that in place. Anchored in script, since it follows whichever
    card the cursor is on. */
 
+/* Wide enough to read the printed card, which is what a player hovers for.
+   `place()` clamps the menu to the window on both axes, so growing it cannot
+   push it off screen. */
 #card-menu {
   position: fixed;
-  width: 240px;
+  width: clamp(300px, 26vw, 460px);
   background: var(--felt-2);
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -605,9 +673,9 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
   display: block;
   margin-bottom: 8px;
 }
-.menu-name { font-weight: 700; font-size: 14px; }
-.menu-meta { color: var(--muted); font-size: 11px; margin: 2px 0 8px; }
-.menu-card { max-height: 46vh; overflow: auto; }
+.menu-name { font-weight: 700; font-size: 16px; }
+.menu-meta { color: var(--muted); font-size: 12px; margin: 2px 0 8px; }
+.menu-card { max-height: 62vh; overflow: auto; }
 .menu-actions {
   display: flex;
   flex-direction: column;
@@ -628,6 +696,48 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
   font-size: 10px;
   color: var(--accent-2);
   text-align: center;
+}
+
+/* ---- loupe ----
+
+   The menu's card is as large as a panel beside the board can be, which is
+   still short of readable for printed effect text on a small window. Art is
+   fetched at 600px, so a loupe over the menu's image has real detail to show
+   rather than an upscale of what is already on screen. */
+
+#loupe {
+  position: fixed;
+  width: 320px;
+  height: 220px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.6);
+  background-repeat: no-repeat;
+  background-color: var(--felt-2);
+  /* Above the menu it magnifies, and never in the way of the cursor. */
+  z-index: 45;
+  pointer-events: none;
+}
+
+/* Only the menu's card is magnified. `#preview` is `pointer-events: none`, so
+   the cursor never reaches its image to ask. */
+#card-menu img { cursor: zoom-in; }
+
+/* ---- the card at full size ----
+
+   Clicking the menu's card opens it at the art's own 600×838, which is about
+   the size of the physical card and the only view where its printed text is
+   simply readable rather than nearly readable. Bounded by the window, so the
+   smallest window the client allows still shows a whole card. */
+
+#card-zoom { z-index: 70; cursor: zoom-out; }
+#card-zoom img {
+  width: 600px;
+  max-width: 92vw;
+  max-height: 92vh;
+  height: auto;
+  border-radius: 12px;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.7);
 }
 
 /* A card with nothing to offer, so the board reads at a glance. Kept legible
@@ -973,18 +1083,14 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
    Rested ones tilt and dim like any other rested card, which makes the
    available pool readable without counting. */
 
-.don-row {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  flex-wrap: wrap;
-  min-height: 46px;
-  padding: 4px 0;
-}
+/* Only what the mat's `.don-row` does not already say. It used to restate the
+   gap and the min-height in fixed pixels, which — being the later rule — quietly
+   won, and pinned the cost area at 46px however large the cards got. */
+.don-row { padding: 4px 0; }
 
 .don-card {
-  width: calc(var(--card-w) * 0.37);
-  height: calc(var(--card-w) * 0.5);
+  width: calc(var(--card-w) * 0.46);
+  height: calc(var(--card-w) * 0.62);
   border-radius: 5px;
   display: flex;
   flex-direction: column;
@@ -992,7 +1098,7 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
   justify-content: center;
   gap: 1px;
   flex: 0 0 auto;
-  font-size: 9px;
+  font-size: clamp(8px, calc(var(--card-w) * 0.105), 14px);
   font-weight: 800;
   letter-spacing: 0.04em;
   color: #4a3608;
@@ -1003,7 +1109,7 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
   transition: transform 0.1s, filter 0.1s, outline-color 0.1s;
 }
 
-.don-card .bangs { font-size: 11px; line-height: 0.8; }
+.don-card .bangs { font-size: clamp(10px, calc(var(--card-w) * 0.13), 17px); line-height: 0.8; }
 
 .don-card.rested {
   transform: rotate(12deg);
@@ -1024,7 +1130,7 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
   display: grid;
   place-items: center;
   flex: 0 0 auto;
-  font-size: 12px;
+  font-size: clamp(11px, calc(var(--card-w) * 0.13), 18px);
   font-weight: 700;
   color: var(--muted);
   background: rgba(240, 180, 41, 0.07);
@@ -1251,8 +1357,15 @@ body.aiming .card:not(.targetable):not(.aimer) { opacity: 0.4; }
 .fighter { text-align: center; }
 .fighter-card { display: flex; justify-content: center; }
 
-.card.large { width: 150px; height: 209px; }
-.card.large .cname { font-size: 14px; }
+/* The battle modal, where the game most needs to be readable. Sized against
+   the window rather than in fixed pixels, which kept these small on exactly
+   the large displays that had room for them. */
+.card.large {
+  --large-w: clamp(150px, 19vh, 280px);
+  width: var(--large-w);
+  height: calc(var(--large-w) * 1.4);
+}
+.card.large .cname { font-size: 15px; }
 
 .fighter .role {
   font-size: 10px;
@@ -1263,7 +1376,7 @@ body.aiming .card:not(.targetable):not(.aimer) { opacity: 0.4; }
 .fighter.attacker .role { color: #ffb3b4; }
 .fighter.defender .role { color: #b3d1ef; }
 
-.fighter-name { margin-top: 9px; font-size: 13px; font-weight: 600; }
+.fighter-name { margin-top: 9px; font-size: 15px; font-weight: 600; }
 
 .fighter-power {
   font-size: 26px;

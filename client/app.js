@@ -259,6 +259,9 @@ function closeMenu() {
   pinned = false;
   $("card-menu").hidden = true;
   $("card-menu").classList.remove("pinned");
+  // The menu can go while the cursor is still over where it was — Escape, or
+  // an option that closes it — and the loupe must not outlive it.
+  hideLoupe();
   for (const c of document.querySelectorAll(".card.selected")) {
     c.classList.remove("selected");
   }
@@ -337,10 +340,103 @@ function place(menu, el) {
 // Load-bearing for aiming, too: without it the click that starts an aim would
 // go on to reach the document listener below and call the aim off on its way
 // out, leaving Attack looking like a button that does nothing.
-$("card-menu").addEventListener("click", (e) => e.stopPropagation());
+$("card-menu").addEventListener("click", (e) => {
+  e.stopPropagation();
+  // The card itself is the one part of the menu that is not a control, so a
+  // click on it is free to mean "let me actually read this".
+  const img = e.target.closest("#card-menu img");
+  if (img) openZoom(img.src, img.alt);
+});
 // The cursor leaving the card to reach the menu must not close it.
 $("card-menu").addEventListener("mouseenter", () => clearTimeout(closeTimer));
-$("card-menu").addEventListener("mouseleave", unhoverMenu);
+$("card-menu").addEventListener("mouseleave", () => {
+  hideLoupe();
+  unhoverMenu();
+});
+
+// ---- loupe ------------------------------------------------------------------
+//
+// The menu's card is the largest one a panel beside the board can hold, and on
+// a small window that is still short of readable for printed effect text.
+// Magnifying it under the cursor is the rest of the way there.
+
+/** Half the loupe, and how far it sits from the cursor. From the CSS. */
+const LOUPE_W = 320;
+const LOUPE_H = 220;
+const LOUPE_GAP = 20;
+
+/** Floor on the magnification, for a window wide enough that the menu's card
+ *  is already close to the art's own 600px. Past native this is an upscale,
+ *  but a soft big glyph still beats a sharp small one. */
+const LOUPE_MIN_ZOOM = 1.8;
+
+function moveLoupe(e) {
+  const img = e.target.closest("#card-menu img");
+  if (!img || !img.naturalWidth) return hideLoupe();
+
+  const rect = img.getBoundingClientRect();
+  const loupe = $("loupe");
+  const zoom = Math.max(LOUPE_MIN_ZOOM, img.naturalWidth / rect.width);
+  const zoomed = { w: rect.width * zoom, h: rect.height * zoom };
+
+  // The point under the cursor, placed at the middle of the loupe — then held
+  // inside the image, so approaching an edge slides the view rather than
+  // opening a gap of background beside the card.
+  const at = (cursor, start, span, zoomedSpan, box) => {
+    const ratio = (cursor - start) / span;
+    return Math.min(0, Math.max(box - zoomedSpan, box / 2 - ratio * zoomedSpan));
+  };
+  const x = at(e.clientX, rect.left, rect.width, zoomed.w, LOUPE_W);
+  const y = at(e.clientY, rect.top, rect.height, zoomed.h, LOUPE_H);
+
+  loupe.style.backgroundImage = `url("${img.src}")`;
+  loupe.style.backgroundSize = `${zoomed.w}px ${zoomed.h}px`;
+  loupe.style.backgroundPosition = `${Math.round(x)}px ${Math.round(y)}px`;
+
+  // Beside the cursor, and flipped rather than clipped near an edge.
+  let left = e.clientX + LOUPE_GAP;
+  if (left + LOUPE_W > window.innerWidth) left = e.clientX - LOUPE_GAP - LOUPE_W;
+  let top = e.clientY + LOUPE_GAP;
+  if (top + LOUPE_H > window.innerHeight) top = e.clientY - LOUPE_GAP - LOUPE_H;
+  loupe.style.left = `${Math.round(Math.max(0, left))}px`;
+  loupe.style.top = `${Math.round(Math.max(0, top))}px`;
+  loupe.hidden = false;
+}
+
+function hideLoupe() {
+  $("loupe").hidden = true;
+}
+
+// ---- the card at full size --------------------------------------------------
+
+function openZoom(src, alt) {
+  const box = $("card-zoom");
+  box.innerHTML = `<img src="${src}" alt="${alt ?? ""}" />`;
+  box.hidden = false;
+  // The cursor is over the menu, not the card it just opened.
+  hideLoupe();
+}
+
+function closeZoom() {
+  const box = $("card-zoom");
+  box.hidden = true;
+  box.innerHTML = "";
+}
+
+const zoomOpen = () => !$("card-zoom").hidden;
+
+// Anywhere on the backdrop, including the card: there is nothing to do in here
+// but look, so every click is a dismissal. Held back from the document, which
+// would otherwise take the same click as a miss and close the menu behind it.
+$("card-zoom").addEventListener("click", (e) => {
+  e.stopPropagation();
+  closeZoom();
+});
+
+$("card-menu").addEventListener("mousemove", moveLoupe);
+// Rebuilding the menu under a still cursor leaves the loupe showing the card
+// that was there before.
+$("card-menu").addEventListener("mouseover", moveLoupe);
 // A click that reaches the document missed every card, so it is a miss in both
 // senses: it dismisses the menu and calls off an attack being aimed.
 document.addEventListener("click", () => {
@@ -349,9 +445,11 @@ document.addEventListener("click", () => {
 });
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
-  // Escape backs out one step at a time: out of aiming first, since that is
-  // the mode the board is in, and only then out of the menu.
-  if (targeting) cancelTargeting();
+  // Escape backs out one step at a time: out of the card being read first,
+  // since it covers everything, then out of aiming, since that is the mode the
+  // board is in, and only then out of the menu.
+  if (zoomOpen()) closeZoom();
+  else if (targeting) cancelTargeting();
   else closeMenu();
 });
 
@@ -371,8 +469,9 @@ function cardSlot(card, opts = {}) {
     for (let i = 0; i < card.attached_don; i++) {
       const d = document.createElement("div");
       d.className = "adon";
-      // Fan sideways so each given DON!! is individually countable.
-      d.style.left = `${i * 13}px`;
+      // Fan sideways so each given DON!! is individually countable. The step
+      // is in the stylesheet, next to the width it has to keep pace with.
+      d.style.setProperty("--i", String(i));
       d.style.zIndex = String(i);
       stack.appendChild(d);
     }
@@ -1236,6 +1335,37 @@ function noteTrashArrivals(snap) {
   setTimeout(() => lastSnapshot && render(lastSnapshot), GROW_MS + 30);
 }
 
+// ---- where in the turn we are -----------------------------------------------
+//
+// The top bar named the current phase, which is only useful to a player who
+// already knows what the phases are and what order they come in. Showing the
+// whole sequence with the current one lit says the same thing to someone who
+// does not.
+
+/** The turn's phases in order (6-1), keyed by what `Phase` serialises to. */
+const TURN_PHASES = [
+  ["Refresh", "Refresh"],
+  ["Draw", "Draw"],
+  // The only one whose printed name is not its variant name.
+  ["Don", "DON!!"],
+  ["Main", "Main"],
+  ["End", "End"],
+];
+
+function renderPhases(phase) {
+  const box = $("phase-steps");
+  const at = TURN_PHASES.findIndex(([key]) => key === phase);
+  box.innerHTML = "";
+  TURN_PHASES.forEach(([, label], i) => {
+    const step = document.createElement("span");
+    // An unrecognised phase leaves `at` at -1, which lights nothing rather
+    // than lighting the first one and lying about where the turn is.
+    step.className = "step" + (i === at ? " now" : i < at ? " done" : "");
+    step.textContent = label;
+    box.appendChild(step);
+  });
+}
+
 // ---- whose turn it is -------------------------------------------------------
 //
 // The turn label in the top bar changes without anyone looking at it. A turn
@@ -1432,7 +1562,8 @@ function render(snap) {
   $("turn-label").textContent = snap.turn_label;
   $("session-id").textContent = snap.session_id ? `#${snap.session_id}` : "";
   $("session-id").title = "session id — matches the log filename";
-  $("phase-label").textContent = `${view.phase} phase · turn ${view.turn}`;
+  renderPhases(view.phase);
+  $("phase-label").textContent = `turn ${view.turn}`;
 
   // Everything else these used to spell out — life, deck, DON!! — is on the
   // board now as the pile or the row itself. A hidden hand is the exception.
