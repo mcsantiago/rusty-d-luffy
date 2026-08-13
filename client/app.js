@@ -889,7 +889,7 @@ function renderActivateTargets(opt, snap) {
     holder.className = "choose-option";
     // A DON!! in the cost area is not on the board the view publishes and has
     // no art to draw, so its label is the only description there is.
-    if (card) holder.appendChild(cardEl(card, { plain: true }));
+    if (card) holder.appendChild(cardEl(card, { plain: true, preview: false }));
     else holder.innerHTML = `<div class="choose-unknown">${label}</div>`;
     holder.addEventListener("click", () => commitActivation(id));
     grid.appendChild(holder);
