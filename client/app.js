@@ -56,9 +56,9 @@ const lastCause = new Map();
 /** The cards in the battle currently being resolved, if any. */
 let battleAttacker = null;
 let battleDefender = null;
-/** The attack being aimed, or null: `{ attacker, targets }`, where `targets`
+/** The attack being picked, or null: `{ attacker, targets }`, where `targets`
  *  maps a target's instance id to the option that attacks it. */
-let targeting = null;
+let attackPick = null;
 
 const $ = (id) => document.getElementById(id);
 
@@ -165,14 +165,6 @@ function cardEl(
   el.addEventListener("mouseleave", unhoverMenu);
   el.addEventListener("click", (e) => {
     e.stopPropagation();
-    // While aiming, the board is the target picker and a click on it declares
-    // the attack rather than opening the card's own menu.
-    if (targeting) {
-      const opt = targeting.targets.get(card.id);
-      cancelTargeting();
-      if (opt) choose(opt.index);
-      return;
-    }
     pinMenu(card, el, yours);
   });
   return el;
@@ -337,9 +329,9 @@ function place(menu, el) {
 // Clicking the pinned card or its text is not a dismissal; only the option
 // buttons inside close the menu, and they do it themselves.
 //
-// Load-bearing for aiming, too: without it the click that starts an aim would
-// go on to reach the document listener below and call the aim off on its way
-// out, leaving Attack looking like a button that does nothing.
+// Load-bearing for Attack, too: without it the click that opens the target
+// picker would go on to reach the document listener below and close it again
+// on its way out, leaving Attack looking like a button that does nothing.
 $("card-menu").addEventListener("click", (e) => {
   e.stopPropagation();
   // The card itself is the one part of the menu that is not a control, so a
@@ -438,18 +430,19 @@ $("card-menu").addEventListener("mousemove", moveLoupe);
 // that was there before.
 $("card-menu").addEventListener("mouseover", moveLoupe);
 // A click that reaches the document missed every card, so it is a miss in both
-// senses: it dismisses the menu and calls off an attack being aimed.
+// senses: it dismisses the menu, and the picker's backdrop is nothing but a
+// miss.
 document.addEventListener("click", () => {
-  cancelTargeting();
+  closeAttackPicker();
   closeMenu();
 });
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
   // Escape backs out one step at a time: out of the card being read first,
-  // since it covers everything, then out of aiming, since that is the mode the
-  // board is in, and only then out of the menu.
+  // since it covers everything, then out of the target picker, then out of the
+  // menu underneath it.
   if (zoomOpen()) closeZoom();
-  else if (targeting) cancelTargeting();
+  else if (attackPick) closeAttackPicker();
   else closeMenu();
 });
 
@@ -727,13 +720,19 @@ function fillOptions(container, options) {
   for (const opt of options) container.appendChild(optionButton(opt));
 }
 
-// ---- aiming an attack -------------------------------------------------------
+// ---- picking what to attack -------------------------------------------------
 //
 // The engine offers an attack as one action per (attacker, target) pair, so a
 // filled board is a dozen near-identical buttons reading "Attack X into Y". This
 // is the same collapse `renderChoose` does below for Choose, for the same
 // reason: turn a list of combinations back into what the player is doing, which
 // is picking an attacker and then picking what it hits.
+//
+// The second half is a modal built like the engine's own Choose, so "pick a
+// card" looks the same wherever the question comes from. It replaced aiming on
+// the board, which asked a player to notice that a mode had started and that
+// some cards had grown outlines — and a tester who could not tell what was
+// selectable never found it.
 //
 // The eligible targets are read off the options the engine sent. They are never
 // recomputed from the rules here — a second opinion in JS about what may be
@@ -765,7 +764,7 @@ function attackButton(attackerId, attacks) {
   const b = document.createElement("button");
   b.className = "opt attack";
   b.textContent = "Attack";
-  b.addEventListener("click", () => beginTargeting(attackerId, targets));
+  b.addEventListener("click", () => openAttackPicker(attackerId, targets));
   // Hover previews the reach without entering the mode, so "what can this
   // hit?" does not cost a click in and a click back out.
   b.addEventListener("mouseenter", () => {
@@ -779,34 +778,75 @@ function attackButton(attackerId, attacks) {
   return b;
 }
 
-function beginTargeting(attackerId, targets) {
-  targeting = { attacker: attackerId, targets };
+/** The attacker, with its current power, above the targets it is choosing
+ *  between. The comparison is the whole decision, and the one a new player is
+ *  least equipped to make from memory. */
+async function renderAttackSource(card) {
+  const box = $("attack-source");
+  if (!card) {
+    box.hidden = true;
+    return;
+  }
+
+  const info = card.number ? catalogue.get(card.number) : null;
+  const uri = await art(card.number);
+  box.innerHTML = `
+    <div class="source-art">${uri ? `<img src="${uri}" alt="${card.number}" />` : (card.number ?? "")}</div>
+    <div class="source-text">
+      <div class="source-who" title="${card.number ?? ""}">${
+        info ? info.name : (card.number ?? "?")
+      } attacks${card.power != null ? ` at ${card.power}` : ""}</div>
+      ${info && info.effect ? `<div class="peffect">${info.effect.replaceAll("<br>", "<br/>")}</div>` : ""}
+    </div>
+  `;
+  box.hidden = false;
+}
+
+function openAttackPicker(attackerId, targets) {
+  const snap = lastSnapshot;
+  if (!snap) return;
+
+  const index = cardIndex(snap.view);
+  attackPick = { attacker: attackerId, targets };
   highlighted = new Set();
   closeMenu();
   applyHighlight();
-  applyTargeting();
-}
 
-function cancelTargeting() {
-  if (!targeting) return;
-  targeting = null;
-  applyTargeting();
-}
+  const attacker = index.get(attackerId);
+  $("attack-title").textContent = `Attack with ${cardName(attacker)}`;
+  $("attack-sub").textContent =
+    targets.size === 1 ? "One target." : `Pick a target — ${targets.size} eligible.`;
+  renderAttackSource(attacker);
 
-/** Marks the attacker and its eligible targets in place.
- *
- * In place rather than by re-render, for the same reason as `applyHighlight`:
- * rebuilding the board under the cursor re-fires the hover that got us here.
- */
-function applyTargeting() {
-  const targets = targeting ? targeting.targets : new Map();
-  document.body.classList.toggle("aiming", !!targeting);
-  for (const el of document.querySelectorAll(".card")) {
-    const id = Number(el.dataset.id);
-    el.classList.toggle("targetable", targets.has(id));
-    el.classList.toggle("aimer", !!targeting && id === targeting.attacker);
+  const grid = $("attack-grid");
+  grid.innerHTML = "";
+  for (const [id, opt] of targets) {
+    const card = index.get(id);
+    const holder = document.createElement("div");
+    holder.className = "choose-option";
+
+    // Each target draws itself, power badge and all, so the comparison the
+    // attack turns on (7-1-4-1) is on screen rather than remembered.
+    if (card) holder.appendChild(cardEl(card, { plain: true }));
+    else holder.innerHTML = `<div class="choose-unknown">${opt.label}</div>`;
+
+    holder.addEventListener("click", () => {
+      closeAttackPicker();
+      choose(opt.index);
+    });
+    grid.appendChild(holder);
   }
+
+  $("attack-modal").hidden = false;
 }
+
+function closeAttackPicker() {
+  if (!attackPick) return;
+  attackPick = null;
+  $("attack-modal").hidden = true;
+}
+
+$("attack-cancel").addEventListener("click", closeAttackPicker);
 
 /** Whether the full list is expanded. Kept across renders: a disclosure that
  *  re-collapsed on every snapshot would be unusable during your own turn. */
@@ -1536,14 +1576,10 @@ function render(snap) {
   beatsNow = snap.battle_beats ?? [];
 
   // An option index only means anything against the decision it was read from,
-  // so an aim in progress cannot survive a new snapshot.
-  //
-  // Through `cancelTargeting` rather than clearing the two fields here: the
-  // marks it also drops happen to die with the cards below, which are rebuilt
-  // from scratch, but that is a fact about a different function. A render path
-  // that ever diffs instead — the hand already diffs by instance id — would
-  // otherwise leave cards outlined and crosshaired with no aim in progress.
-  cancelTargeting();
+  // so a target picker in progress cannot survive a new snapshot. Its cards are
+  // a copy taken when it opened, too, and would go on showing a board that has
+  // moved on.
+  closeAttackPicker();
 
   menus = new Map();
   cardless = [];
