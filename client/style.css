@@ -14,6 +14,9 @@
   /* The sidebar, as a token: the board is what is left of the window, and two
      card sizes below are measured against that rather than against `vw`. */
   --side-w: 330px;
+  /* The topbar, likewise: the preview hangs off the top of the board, not the
+     top of the window. */
+  --top-h: 42px;
   /* One card size for the whole board. Every zone derives from it rather than
      hardcoding its own, so nothing drifts, and the 1.4 ratio is the physical
      card's.
@@ -156,7 +159,7 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
 #game {
   display: grid;
   grid-template-columns: 1fr var(--side-w);
-  grid-template-rows: 42px 1fr;
+  grid-template-rows: var(--top-h) 1fr;
   grid-template-areas: "top side" "board side";
   height: 100%;
 }
@@ -621,76 +624,75 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
 .entry { padding: 2px 0; color: #b9c8da; }
 .entry.turn { color: var(--accent-2); font-weight: 600; margin-top: 8px; }
 
-/* ---- hover preview ---- */
+/* ---- the card preview ----
+
+   The board's top-right corner, and the one place a card is read. It stays put
+   rather than following the cursor: a panel that moved would be a panel you
+   could not learn the position of, and a pinned one has to be somewhere the
+   cursor can go — the loupe below magnifies it, which means landing on it.
+
+   Width is bounded by the window's *height* as well as its width, because the
+   card is 5:7 and the text sits under it: on a short window an image sized by
+   width alone pushes its own effect text off the bottom of the screen. The
+   height term is well under half, so the longest effect text still fits under
+   the largest image the term allows. */
 
 #preview {
   position: fixed;
+  top: calc(var(--top-h) + 16px);
   right: calc(var(--side-w) + 16px);
-  bottom: 16px;
-  width: clamp(260px, 23vw, 400px);
+  width: clamp(240px, min(26vw, 34vh), 440px);
+  /* The sizing above leaves room for the longest printed effects at every
+     window the client allows, so this bound is a backstop — `auto` rather than
+     `hidden` so a card that somehow overran it would not lose the end of its
+     own text without saying so. */
+  max-height: calc(100vh - var(--top-h) - 32px);
+  overflow: auto;
   background: var(--felt-2);
   border: 1px solid var(--line);
   border-radius: 10px;
   padding: 12px;
+  /* Under the modals, which are centred and would be half-covered by a panel
+     this size. A modal is a question owed an answer, and a reading panel must
+     not sit on the cards it is asking about. */
   z-index: 30;
   box-shadow: 0 16px 40px rgba(0,0,0,0.55);
+  /* Only a pinned panel takes the cursor, and then all of it does — the loupe
+     and the zoom are pinned-panel features, and `pointer-events` inherits, so
+     granting it to the image alone would leave the text dead under it.
+
+     Following the cursor is exactly when it must not take one. The panel lands
+     on the opponent's trash pile, so an always-interactive one traps it: hover
+     the pile, the panel opens over it, the cursor is now inside the panel
+     holding it open, and the pile underneath can never be clicked. */
   pointer-events: none;
 }
-#preview img { width: 100%; border-radius: 6px; display: block; margin-bottom: 10px; }
-.pname { font-weight: 700; font-size: 16px; }
+
+/* The aspect ratio is declared so the panel has its final height before the art
+   decodes, rather than growing under a cursor that is already on it. */
+#preview img {
+  width: 100%;
+  aspect-ratio: 5 / 7;
+  border-radius: 6px;
+  display: block;
+  margin-bottom: 10px;
+  cursor: zoom-in;
+}
+.pname { font-weight: 700; font-size: 17px; }
 .pmeta { color: var(--muted); font-size: 12px; margin: 2px 0 8px; }
 /* Card effect text, wherever it is shown. This is the text a player is
    reading when they stop to read anything, so it is sized for reading. */
 .peffect { font-size: 14px; line-height: 1.45; }
 .ptrigger { font-size: 14px; margin-top: 6px; color: var(--accent-2); }
 
-/* ---- card menu ----
-
-   Hovering a card shows its full view and the actions that start from it;
-   clicking pins that in place. Anchored in script, since it follows whichever
-   card the cursor is on. */
-
-/* Wide enough to read the printed card, which is what a player hovers for.
-   `place()` clamps the menu to the window on both axes, so growing it cannot
-   push it off screen. */
-#card-menu {
-  position: fixed;
-  width: clamp(300px, 26vw, 460px);
-  background: var(--felt-2);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 12px;
-  z-index: 40;
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
+/* Pinned outlives the hover that would have replaced it, so it says so: a
+   preview that simply stopped tracking the cursor would look stuck. */
+#preview.pinned {
+  border-color: var(--accent-2);
+  pointer-events: auto;
 }
-/* The aspect ratio is declared so the menu has its final height before the art
-   decodes — it is positioned by measurement, and a late reflow would leave it
-   hanging off the bottom of the window. */
-#card-menu img {
-  width: 100%;
-  aspect-ratio: 5 / 7;
-  border-radius: 6px;
-  display: block;
-  margin-bottom: 8px;
-}
-.menu-name { font-weight: 700; font-size: 16px; }
-.menu-meta { color: var(--muted); font-size: 12px; margin: 2px 0 8px; }
-.menu-card { max-height: 62vh; overflow: auto; }
-.menu-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--line);
-}
-.menu-none { color: var(--muted); font-size: 12px; font-style: italic; }
-
-/* Pinned outlives the cursor, so it says so: an unpinned menu that happened to
-   stay put would otherwise look stuck. */
-#card-menu.pinned { border-color: var(--accent-2); }
-#card-menu.pinned::after {
-  content: "pinned — click again or Esc";
+#preview.pinned .ptext::after {
+  content: "pinned — click that card again or Esc";
   display: block;
   margin-top: 8px;
   font-size: 10px;
@@ -698,11 +700,31 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
   text-align: center;
 }
 
+/* ---- card menu ----
+
+   The actions that start from a card, and nothing else — the card itself is in
+   the preview. Anchored in script, since it follows whichever card the cursor
+   is on, and stays above that card so the two read as one thing. */
+
+/* Sized to its buttons rather than to a card. `place()` clamps the menu to the
+   window on both axes, so growing it cannot push it off screen. */
+#card-menu {
+  position: fixed;
+  width: clamp(200px, 18vw, 300px);
+  background: var(--felt-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px;
+  z-index: 40;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
+}
+.menu-actions { display: flex; flex-direction: column; gap: 6px; }
+
 /* ---- loupe ----
 
-   The menu's card is as large as a panel beside the board can be, which is
+   The preview's card is as large as a panel beside the board can be, which is
    still short of readable for printed effect text on a small window. Art is
-   fetched at 600px, so a loupe over the menu's image has real detail to show
+   fetched at 600px, so a loupe over the preview's image has real detail to show
    rather than an upscale of what is already on screen. */
 
 #loupe {
@@ -714,18 +736,15 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
   box-shadow: 0 14px 34px rgba(0, 0, 0, 0.6);
   background-repeat: no-repeat;
   background-color: var(--felt-2);
-  /* Above the menu it magnifies, and never in the way of the cursor. */
+  /* Above the preview it magnifies and the menu that may overlap it, and never
+     in the way of the cursor. */
   z-index: 45;
   pointer-events: none;
 }
 
-/* Only the menu's card is magnified. `#preview` is `pointer-events: none`, so
-   the cursor never reaches its image to ask. */
-#card-menu img { cursor: zoom-in; }
-
 /* ---- the card at full size ----
 
-   Clicking the menu's card opens it at the art's own 600×838, which is about
+   Clicking the preview's card opens it at the art's own 600×838, which is about
    the size of the physical card and the only view where its printed text is
    simply readable rather than nearly readable. Bounded by the window, so the
    smallest window the client allows still shows a whole card. */
@@ -745,6 +764,12 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
 .card.inert { opacity: 0.55; }
 .card.inert:hover { opacity: 1; }
 .card.selected { outline-color: var(--accent-2); }
+/* Which card the pinned preview is of. Marked harder than the hover outline,
+   since this one stays behind when the cursor leaves. */
+.card.pinned {
+  outline-color: var(--accent-2);
+  box-shadow: 0 0 0 4px rgba(240, 180, 41, 0.22);
+}
 
 /* ---- whose turn it is ----
 
