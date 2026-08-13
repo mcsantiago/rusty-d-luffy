@@ -84,10 +84,6 @@ pub struct TargetPreview {
     /// may say a choice is coming; it must not read "nothing matches" into an
     /// empty `cards`, and must leave the picking to the real decision.
     pub secret: bool,
-    /// Whether the choice may be declined (8-4-4-1), so a client can offer
-    /// activating without choosing — which is a legal move, and the only one
-    /// for an effect that does something besides the choice.
-    pub may_decline: bool,
     /// True when the choice takes exactly one card, which is the only shape a
     /// client can answer with a single click. Anything wider is left to the
     /// real decision, which can count.
@@ -859,7 +855,6 @@ fn activation_targets(game: &Game, action: &Action) -> Option<TargetPreview> {
             })
             .collect(),
         secret: choice.secret,
-        may_decline: choice.select.at_least == 0,
         single: choice.select.up_to == 1,
     })
 }

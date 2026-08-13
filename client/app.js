@@ -843,16 +843,17 @@ function stageActivation(opt) {
   renderActivateWarning(opt);
   const picking = renderActivateTargets(opt, snap);
 
-  // Sending without picking stays reachable whenever the engine would accept
-  // it. Declining an "up to" (8-4-4-1) is a real move, and for an effect that
-  // does something *besides* the choice it is the only way to keep the rest —
-  // Cancel abandons the activation entirely, which is not the same answer.
+  // Sending without picking here stays reachable, and is never hidden: it does
+  // not answer the choice, it leaves it to the engine's own modal — where the
+  // full pool is listed, several cards can be taken, and declining an "up to"
+  // (8-4-4-1) has its own button. Cancel is the other thing entirely, and
+  // abandons the activation.
   const confirm = $("activate-confirm");
-  confirm.hidden = picking && !(opt.targets?.may_decline ?? false);
+  confirm.hidden = false;
   confirm.textContent = opt.warning
     ? "Activate anyway"
     : picking
-      ? "Activate without choosing"
+      ? "Activate, choose afterwards"
       : "Activate";
   $("activate-modal").hidden = false;
 }
@@ -924,6 +925,11 @@ async function renderActivateSource(card, info) {
     return;
   }
 
+  // Hidden for the round trip, not left showing the last card staged. The
+  // modal is revealed synchronously, so anything still in here belongs to a
+  // different card and would sit under this one's title until the art lands.
+  box.hidden = true;
+
   // The staging this render belongs to. Art resolves out of order — a cached
   // card returns on a microtask while an uncached one is still on the wire —
   // so without this, cancelling one card and staging another can leave the
@@ -967,7 +973,12 @@ async function commitActivation(target) {
 
   if (target == null) return;
   const snap = lastSnapshot;
-  if (!snap || snap.choose_up_to == null) return;
+  // Only the effect's own choice, which `pending_kind` is the way to tell. An
+  // activation whose cost is DON!! −X raises the return decision *first*, from
+  // `pay`, and that one also fills `choose_up_to` — answering it with a card
+  // the effect wanted matches no option and buries the real prompt under "that
+  // combination is not on offer".
+  if (!snap || snap.pending_kind !== "choose") return;
   submitChoice([target], snap);
 }
 
