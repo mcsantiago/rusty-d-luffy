@@ -119,6 +119,68 @@ pub fn cost_label(cost: &op_core::script::ActivationCost) -> String {
     }
 }
 
+/// Why an activation would currently achieve nothing, in a sentence.
+///
+/// Naming the empty pool is the whole value. That the ability will do nothing a
+/// player can work out; *which* of the things it needs is missing — and so what
+/// they would have to change to make it worth activating — they cannot.
+pub fn shortfall_label(req: &op_core::Requirement<'_>) -> String {
+    use op_core::effect::DonSource;
+    use op_core::Requirement;
+
+    match req {
+        Requirement::Cards(select) => format!("No {} to choose.", wants_label(select)),
+        Requirement::Don(DonSource::Rested) => "No rested DON!! in your cost area.".into(),
+        Requirement::Don(DonSource::Active) => "No active DON!! in your cost area.".into(),
+        Requirement::Don(DonSource::Any) => "No DON!! in your cost area.".into(),
+    }
+}
+
+/// What a `choose` is asking for, as a noun phrase: "rested DON!! in your cost
+/// area", "your Characters".
+///
+/// Deliberately loose. It describes the zone, the owner and the filters a
+/// player can act on, and stays silent about the ones that would turn a warning
+/// into a rules lecture. The printed card text is on screen beside it.
+fn wants_label(select: &op_core::effect::Selector) -> String {
+    use op_core::effect::{Filter, Who};
+    use op_core::zone::Zone;
+
+    let mut what = String::new();
+    for filter in &select.filters {
+        match filter {
+            Filter::IsRested(true) => what.push_str("rested "),
+            Filter::IsRested(false) => what.push_str("active "),
+            Filter::HasKeyword(k) => what.push_str(&format!("[{k:?}] ")),
+            _ => {}
+        }
+    }
+
+    what.push_str(match select.zone {
+        Zone::Cost | Zone::DonDeck => "DON!!",
+        Zone::Character => "Characters",
+        Zone::Hand => "cards in hand",
+        Zone::Trash => "cards in the trash",
+        // The selector's marker for the battlers — Leader and Characters
+        // together — not the Leader alone. `your_battlers` is written this way.
+        Zone::Leader => "Leader or Characters",
+        Zone::Stage => "Stage",
+        Zone::Deck => "cards in the deck",
+        Zone::Life => "Life cards",
+        Zone::Limbo => "cards",
+    });
+
+    let whose = match (select.owner, select.zone) {
+        (Who::You, Zone::Cost) => " in your cost area",
+        (Who::You, _) => " of yours",
+        (Who::Opponent, Zone::Cost) => " in your opponent's cost area",
+        (Who::Opponent, _) => " of your opponent's",
+        (Who::Both, _) => "",
+    };
+    what.push_str(whose);
+    what
+}
+
 pub fn question(pending: &Pending) -> String {
     match pending {
         Pending::Mulligan { .. } => "Keep this hand?".into(),

@@ -4,6 +4,19 @@ use std::sync::Arc;
 
 use rand::seq::SliceRandom;
 
+/// Something an activated effect needs, which the board may not currently hold.
+///
+/// Returned by [`Game::activation_shortfall`] so a client can name what is
+/// missing. Presentation is the caller's: this says which pool came up empty,
+/// not how to word it.
+#[derive(Debug, Clone, Copy)]
+pub enum Requirement<'a> {
+    /// Cards matching this selector, for a `choose`.
+    Cards(&'a crate::effect::Selector),
+    /// DON!! in the controller's cost area that this source admits.
+    Don(crate::effect::DonSource),
+}
+
 use crate::action::{Action, IllegalAction, Pending};
 use crate::card::{CardDb, Category, Keyword};
 use crate::derive::{self, Derived};
@@ -2291,6 +2304,92 @@ impl Game {
         }
         // An effect that never asks for a target always does something.
         !asked
+    }
+
+    /// The cards an activated effect's first `choose` would offer right now.
+    ///
+    /// So a client can ask the question *before* sending the activation and
+    /// send both together, the way an attack is offered as one action per
+    /// (attacker, target) pair. `[Once Per Turn]` is spent by activating
+    /// (8-4-1-3), so a target chosen afterwards is chosen too late to back out
+    /// of; a target chosen first costs nothing to abandon.
+    ///
+    /// Empty when the effect asks nothing, and — like everything here — true
+    /// only of the moment it is asked. The pool is read before the cost is
+    /// paid, so a client that pre-selects from it must be ready for the engine
+    /// to offer something narrower once the effect actually runs.
+    pub fn activation_targets(&self, card: CardInstanceId, slot: u8) -> Vec<CardInstanceId> {
+        let Some(effect) = self
+            .scripts
+            .script(self.state.card(card).def)
+            .activated
+            .iter()
+            .find(|a| a.slot == slot)
+        else {
+            return Vec::new();
+        };
+        let controller = self.state.card(card).controller;
+        let frame = EffectFrame::new(card, controller, Vec::new());
+        effect
+            .ops
+            .iter()
+            .find_map(|op| match op {
+                crate::effect::EffectOp::Choose { select, .. } => {
+                    Some(self.selector_options(&frame, select))
+                }
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
+
+    /// The first thing an activated effect needs and does not currently have.
+    ///
+    /// For warning a player *before* the action is sent. `[Once Per Turn]` is
+    /// spent by activating (8-4-1-3) — `activate_effect` marks the slot before
+    /// the effect resolves — so a warning that arrives with the choice has
+    /// arrived one action too late.
+    ///
+    /// Every requirement in the effect is checked, not only the first choice.
+    /// ST01-001 is why: its `choose` picks the recipient, a pool that always
+    /// holds at least the Leader, while the thing it can be short of is the
+    /// rested DON!! its `give_don` draws afterwards.
+    ///
+    /// Same standing as [`Game::activation_finds_targets`]: advice, never a
+    /// legality check — activating with nothing to affect is legal and still
+    /// costs (8-4-1-3) — and true only of the moment it is asked. Pools are
+    /// read before the cost is paid, and an op the effect has not reached yet
+    /// is judged against a board it may itself change on the way there.
+    pub fn activation_shortfall(
+        &self,
+        card: CardInstanceId,
+        slot: u8,
+    ) -> Option<Requirement<'_>> {
+        let effect = self
+            .scripts
+            .script(self.state.card(card).def)
+            .activated
+            .iter()
+            .find(|a| a.slot == slot)?;
+
+        let controller = self.state.card(card).controller;
+        let frame = EffectFrame::new(card, controller, Vec::new());
+
+        effect.ops.iter().find_map(|op| match op {
+            crate::effect::EffectOp::Choose { select, .. } => self
+                .selector_options(&frame, select)
+                .is_empty()
+                .then_some(Requirement::Cards(select)),
+            // The pool `Op::GiveDon` will draw from, computed the same way it
+            // computes it: `cost_area` holds only DON!! not already given.
+            crate::effect::EffectOp::GiveDon { source, .. } => self
+                .state
+                .player(controller)
+                .cost_area
+                .iter()
+                .all(|&d| !source.admits(self.state.card(d).rested))
+                .then_some(Requirement::Don(*source)),
+            _ => None,
+        })
     }
 
     /// Whether playing `card` from hand would find a target for its text.

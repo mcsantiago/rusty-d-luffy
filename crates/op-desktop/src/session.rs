@@ -56,6 +56,21 @@ pub struct Choice {
     pub split: Option<usize>,
     /// Coarse kind, for grouping and styling.
     pub kind: &'static str,
+    /// For an activation, what its first choice would offer. Empty for
+    /// everything else, and for an activation that asks nothing.
+    ///
+    /// Sent so the client can ask which target before sending the activation,
+    /// rather than after — the difference between a decision that can be
+    /// abandoned and one that has already cost a `[Once Per Turn]`.
+    pub targets: Vec<u32>,
+    /// Why this activation would currently achieve nothing, if it would.
+    /// `None` for every other action, and for an activation that has everything
+    /// it needs.
+    ///
+    /// Sent so a client can warn before the action goes, rather than explain
+    /// after: `[Once Per Turn]` is spent by activating, not by resolving, so a
+    /// warning that arrives with the choice has arrived too late.
+    pub warning: Option<String>,
 }
 
 /// One card that may be picked while a card-picking decision is pending.
@@ -629,6 +644,8 @@ impl Session {
                     subject: action_subject(action).map(|c| c.0),
                     kind: action_kind(action),
                     split: action_split(action),
+                    targets: activation_targets(&self.game, action),
+                    warning: activation_warning(&self.game, action),
                 })
                 .collect()
         } else {
@@ -801,6 +818,33 @@ impl Session {
 }
 
 /// Cards an action refers to, for UI highlighting.
+/// Why an activation would achieve nothing, for a client that warns before
+/// committing to it.
+///
+/// `None` for every other kind of action. See [`Game::activation_shortfall`]
+/// for what this does and does not promise — notably that pools are read before
+/// the cost is paid.
+/// What an activation's first choice would offer, for a client that asks before
+/// it sends. See [`Game::activation_targets`] for the caveat that matters here:
+/// the pool is read before the cost is paid.
+fn activation_targets(game: &Game, action: &Action) -> Vec<u32> {
+    let Action::ActivateEffect { card, slot, .. } = action else {
+        return Vec::new();
+    };
+    game.activation_targets(*card, *slot)
+        .iter()
+        .map(|c| c.0)
+        .collect()
+}
+
+fn activation_warning(game: &Game, action: &Action) -> Option<String> {
+    let Action::ActivateEffect { card, slot, .. } = action else {
+        return None;
+    };
+    game.activation_shortfall(*card, *slot)
+        .map(|req| crate::render::shortfall_label(&req))
+}
+
 fn action_cards(action: &Action) -> Vec<CardInstanceId> {
     match action {
         Action::PlayCard { card, replacing } => {

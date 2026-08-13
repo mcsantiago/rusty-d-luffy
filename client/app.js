@@ -510,12 +510,16 @@ document.addEventListener("click", () => {
   unpinPreview();
   closeMenu();
 });
+// Not on the document handler above: an activation is staged *by* a click, and
+// that click is still on its way out when the handler runs.
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
-  // Escape backs out one step at a time: out of the card being read first,
-  // since it covers everything, then out of the target picker, then out of the
-  // menu and the preview underneath it.
+  // Escape backs out one step at a time, outermost first: the card being read
+  // covers everything, then the Choose, then the two pickers, then the menu and
+  // the preview underneath them.
   if (zoomOpen()) closeZoom();
+  else if (chooseOpen()) dismissChoose();
+  else if (staged) cancelActivation();
   else if (attackPick) closeAttackPicker();
   else {
     unpinPreview();
@@ -782,7 +786,13 @@ function optionButton(opt) {
   b.textContent = opt.label;
   b.addEventListener("click", () => {
     closeMenu();
-    choose(opt.index);
+    // An activation is the one action with nothing behind it: 8-3-1-4 gives the
+    // controller the refusal of an *auto* effect's cost, and the engine is
+    // explicit that activating is itself the agreement, so once this is sent
+    // there is no move that takes it back. Staging it is the refusal the rules
+    // do not provide, held on this side of the wire.
+    if (opt.kind === "effect") stageActivation(opt);
+    else choose(opt.index);
   });
   b.addEventListener("mouseenter", () => {
     highlighted = new Set(opt.cards);
@@ -798,6 +808,160 @@ function optionButton(opt) {
 function fillOptions(container, options) {
   for (const opt of options) container.appendChild(optionButton(opt));
 }
+
+// ---- staging an activation --------------------------------------------------
+//
+// Every other misclick on this board is recoverable: a menu closes, a target
+// picker cancels, a Choose can be waved away. Activating an ability is the one
+// that is not — the engine takes it as the agreement and resolves it — so the
+// place to put the second thoughts is before it is sent.
+//
+// Deliberately not in the engine. A staged action is a fact about a player
+// hesitating, not about the game, and `GameState` is a pure function of its
+// actions; a state that exists only until someone clicks would have to be
+// serialised, replayed and searched over by MCTS for no gain.
+
+/** The activation awaiting confirmation, or null. Holds an option index, so it
+ *  cannot outlive the snapshot it was read from. */
+let staged = null;
+
+function stageActivation(opt) {
+  const snap = lastSnapshot;
+  if (!snap) return;
+
+  staged = opt;
+  const card = opt.subject != null ? cardIndex(snap.view).get(opt.subject) : null;
+  const info = card && card.number ? catalogue.get(card.number) : null;
+
+  const targets = opt.targets ?? [];
+  $("activate-title").textContent = card ? `Activate ${cardName(card)}?` : "Activate?";
+  $("activate-sub").textContent = opt.label;
+  renderActivateSource(card, info);
+  renderActivateWarning(opt);
+  renderActivateTargets(opt, targets, snap);
+
+  // With a target to pick, picking one *is* the confirmation — a second button
+  // would only ask the same question twice. Without one there is nothing to
+  // click but the confirm, and an effect that will find nothing still has to be
+  // activatable: doing it anyway is legal (8-4-1-3) and occasionally the point.
+  const confirm = $("activate-confirm");
+  confirm.hidden = targets.length > 0;
+  confirm.textContent = opt.warning ? "Activate anyway" : "Activate";
+  $("activate-modal").hidden = false;
+}
+
+/** The first choice, asked before the activation is sent.
+ *
+ * The attack picker's bargain, applied to abilities: nothing has been committed
+ * while this is on screen, so Cancel costs nothing. Picking sends the
+ * activation and the answer together.
+ */
+function renderActivateTargets(opt, targets, snap) {
+  const box = $("activate-targets");
+  if (targets.length === 0) {
+    box.hidden = true;
+    return;
+  }
+
+  $("activate-targets-label").textContent =
+    targets.length === 1 ? "Choose its target" : `Choose one of ${targets.length}`;
+
+  const index = cardIndex(snap.view);
+  const grid = $("activate-grid");
+  grid.innerHTML = "";
+  for (const id of targets) {
+    const card = index.get(id);
+    const holder = document.createElement("div");
+    holder.className = "choose-option";
+    if (card) holder.appendChild(cardEl(card, { plain: true }));
+    else holder.innerHTML = `<div class="choose-unknown">${candidateName(id, snap)}</div>`;
+    holder.addEventListener("click", () => commitActivation(id));
+    grid.appendChild(holder);
+  }
+  box.hidden = false;
+}
+
+/** A candidate the board cannot draw — a DON!! in the cost area, most often. */
+function candidateName(id, snap) {
+  const found = (snap.choose_candidates ?? []).find((c) => c.id === id);
+  return found ? found.label : "a card";
+}
+
+/** Whether this activation is about to do nothing, and what it wanted.
+ *
+ * The whole point of staging. `[Once Per Turn]` is spent by activating, not by
+ * resolving, so a player who learns the pool is empty when the empty choice
+ * appears has learned it one action too late.
+ */
+function renderActivateWarning(opt) {
+  const box = $("activate-warning");
+  // Silence when the effect has everything it needs. A panel that always says
+  // something is a panel nobody reads by the third turn.
+  if (!opt.warning) {
+    box.hidden = true;
+    return;
+  }
+  box.className = "notice bad";
+  box.textContent = `${opt.warning} Activating spends the ability and changes nothing.`;
+  box.hidden = false;
+}
+
+/** The card being activated, with the text that is about to happen. */
+async function renderActivateSource(card, info) {
+  const box = $("activate-source");
+  if (!card) {
+    box.hidden = true;
+    return;
+  }
+
+  const uri = await art(card.number);
+  box.innerHTML = `
+    <div class="source-art">${uri ? `<img src="${uri}" alt="${card.number}" />` : (card.number ?? "")}</div>
+    <div class="source-text">
+      <div class="source-who" title="${card.number ?? ""}">${info ? info.name : card.number}</div>
+      ${info && info.effect ? `<div class="peffect">${info.effect.replaceAll("<br>", "<br/>")}</div>` : ""}
+    </div>
+  `;
+  box.hidden = false;
+}
+
+function cancelActivation() {
+  if (!staged) return;
+  staged = null;
+  $("activate-modal").hidden = true;
+}
+
+/** Sends the activation, and the target with it when one was picked.
+ *
+ * Two actions, because that is what the engine takes: the activation, then the
+ * answer to the question it raises. `choose` resolves once the first has been
+ * applied, so the snapshot waiting afterwards is the one holding that question.
+ *
+ * If the engine ends up offering something narrower than the pool this was
+ * picked from — a cost paid in between can do that — `submitChoice` declines to
+ * guess and leaves the Choose on screen, which is the right place for a
+ * decision that turned out to still be open.
+ */
+async function commitActivation(target) {
+  if (!staged) return;
+  const opt = staged;
+  cancelActivation();
+
+  await choose(opt.index);
+
+  if (target == null) return;
+  const snap = lastSnapshot;
+  if (!snap || snap.choose_up_to == null) return;
+  submitChoice([target], snap);
+}
+
+$("activate-confirm").addEventListener("click", () => commitActivation());
+$("activate-cancel").addEventListener("click", cancelActivation);
+// The backdrop is everything the panel is not, so a click landing on the
+// overlay itself is a click on nothing.
+$("activate-modal").addEventListener("click", (e) => {
+  if (e.target === $("activate-modal")) cancelActivation();
+});
 
 // ---- picking what to attack -------------------------------------------------
 //
@@ -960,6 +1124,19 @@ function allActions(options) {
 /** Cards picked so far, in click order. */
 let picked = [];
 
+/** The snapshot whose Choose the player has waved away, or null.
+ *
+ * Keyed by snapshot rather than a bare flag because one snapshot is rendered
+ * more than once — the trash animation re-renders the same one — and a flag
+ * would let the modal spring back while the board was being looked at.
+ *
+ * Dismissing is only ever visual. Escape must not answer for the player: the
+ * empty answer is a real move that resolves the effect for nothing, and it
+ * stays where it was, behind a button that says so. What was owed is still
+ * owed, and the flat list in the sidebar still holds every option.
+ */
+let chooseDismissedFor = null;
+
 const sameSet = (a, b) =>
   a.length === b.length && [...a].sort().every((v, i) => v === [...b].sort()[i]);
 
@@ -994,6 +1171,10 @@ function renderChoose(snap) {
     picked = [];
     return;
   }
+  if (chooseDismissedFor === snap) {
+    modal.hidden = true;
+    return;
+  }
 
   const upTo = snap.choose_up_to;
   const atLeast = snap.choose_at_least ?? 0;
@@ -1003,14 +1184,23 @@ function renderChoose(snap) {
   const candidates = snap.choose_candidates ?? [];
 
   const index = cardIndex(snap.view);
+  // Declining is only on the table when the engine actually offers it — an
+  // "up to" (8-4-4-1) does, a fixed count does not.
+  const canDecline = snap.options.some((o) => o.cards.length === 0);
+
   $("choose-title").textContent = snap.question ?? "Choose";
   renderChooseSource(snap.choose_source);
-  $("choose-sub").textContent =
+  const asked =
     upTo === 1
       ? "Pick a card."
       : atLeast === upTo
         ? `Pick ${upTo} — ${picked.length} chosen.`
         : `Pick up to ${upTo} — ${picked.length} chosen.`;
+  // Said out loud, because the alternative is a player hunting the panel for a
+  // way out that the rules do not have.
+  $("choose-sub").textContent = canDecline
+    ? asked
+    : `${asked} This one cannot be declined.`;
 
   const grid = $("choose-grid");
   grid.innerHTML = "";
@@ -1046,8 +1236,6 @@ function renderChoose(snap) {
     grid.appendChild(holder);
   }
 
-  // Declining is only on the table when the engine actually offers it.
-  const canDecline = snap.options.some((o) => o.cards.length === 0);
   $("choose-none").hidden = !canDecline;
   $("choose-confirm").hidden = upTo === 1;
   // Enabled only on an answer the engine will accept: a floor of 0 needs one
@@ -1055,6 +1243,28 @@ function renderChoose(snap) {
   $("choose-confirm").disabled = picked.length < Math.max(atLeast, 1);
   modal.hidden = animating();
 }
+
+/** Puts the Choose aside so the board can be read.
+ *
+ * Not an answer to it. Declining is a move the engine has to offer — it only
+ * exists for an "up to" (8-4-4-1) — and it has its own button, which says what
+ * it does.
+ */
+function dismissChoose() {
+  if (!lastSnapshot || lastSnapshot.choose_up_to == null) return;
+  chooseDismissedFor = lastSnapshot;
+  // Through `render`, not `renderChoose`: the way back into the modal is a
+  // button in the sidebar, and the sidebar is the rest of this function.
+  render(lastSnapshot);
+}
+
+const chooseOpen = () => !$("choose-modal").hidden;
+
+// The backdrop is the part of the overlay that is not the panel, so a click
+// landing on the overlay itself missed everything there was to click.
+$("choose-modal").addEventListener("click", (e) => {
+  if (e.target === $("choose-modal")) dismissChoose();
+});
 
 /** The multiset of classes a pick covers, as a sorted key. */
 function classKey(ids, candidates) {
@@ -1658,10 +1868,11 @@ function render(snap) {
   beatsNow = snap.battle_beats ?? [];
 
   // An option index only means anything against the decision it was read from,
-  // so a target picker in progress cannot survive a new snapshot. Its cards are
-  // a copy taken when it opened, too, and would go on showing a board that has
-  // moved on.
+  // so neither a target picker nor a staged activation can survive a new
+  // snapshot. Their cards are a copy taken when they opened, too, and would go
+  // on showing a board that has moved on.
   closeAttackPicker();
+  cancelActivation();
 
   menus = new Map();
   cardless = [];
@@ -1754,6 +1965,19 @@ function render(snap) {
   if (snap.thinking) {
     $(inBattle ? "battle-options" : "options").innerHTML =
       `<div class="thinking">Opponent is thinking…</div>`;
+  }
+
+  // A Choose that was waved away is still owed, so the way back to it sits at
+  // the top of the list it was collapsing.
+  if (chooseDismissedFor === snap && snap.choose_up_to != null) {
+    const again = document.createElement("button");
+    again.className = "opt";
+    again.textContent = "Show the choices again";
+    again.addEventListener("click", () => {
+      chooseDismissedFor = null;
+      render(snap);
+    });
+    $(inBattle ? "battle-options" : "options").prepend(again);
   }
 
   // The board was rebuilt underneath both panels. The menu simply closes: its
