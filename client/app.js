@@ -33,8 +33,14 @@ const artCache = new Map();
 let highlighted = new Set();
 /** The card whose menu is open, or null. */
 let selected = null;
-/** Whether that menu was pinned by a click, which hover then cannot displace. */
-let pinned = false;
+/** The card the preview was pinned to by a click, which hover then cannot
+ *  displace, or null. The menu is not pinned with it — the actions belong to
+ *  whichever card the cursor is on, and reading one card while working another
+ *  is the point of pinning at all. */
+let pinnedId = null;
+/** The card number the preview panel is showing, so an art fetch that resolves
+ *  after the cursor has moved on cannot paint over the card that replaced it. */
+let previewing = null;
 /** Actions by subject id, plus the card-less remainder, from the last render. */
 let menus = new Map();
 let cardless = [];
@@ -83,8 +89,10 @@ async function art(number) {
  * `plain` drops the menu. Used inside overlays, which are painted above it,
  * and for the trash pile, whose own click opens the pile.
  *
- * `preview` drops the hover panel too. The battle modal shows the cards it is
- * about at full size already, so a second copy of one in the corner is noise.
+ * `preview` drops the corner panel too, which every overlay wants: the panel is
+ * painted under them by design, so a hover wired to it from inside one is a
+ * hover that does nothing. The battle modal has a second reason — it shows the
+ * cards it is about at full size already.
  */
 function cardEl(
   card,
@@ -144,10 +152,10 @@ function cardEl(
   });
 
   if (plain) {
-    // No menu here, so the old hover panel is still how these are read —
-    // except where the surrounding overlay is already showing the card.
+    // No menu here, but the corner panel is how every card is read — except
+    // where the surrounding overlay is already showing the card.
     if (preview) {
-      el.addEventListener("mouseenter", () => showPreview(card.number));
+      el.addEventListener("mouseenter", () => showPreview(card));
       el.addEventListener("mouseleave", hidePreview);
     }
     return el;
@@ -160,44 +168,111 @@ function cardEl(
     el.classList.add("inert");
   }
   if (card.id === selected) el.classList.add("selected");
+  // Which card the pinned preview is of, which several copies of one card in
+  // play makes impossible to read off the panel itself.
+  if (card.id === pinnedId) el.classList.add("pinned");
 
-  el.addEventListener("mouseenter", () => hoverMenu(card, el, yours));
+  el.addEventListener("mouseenter", () => hoverMenu(card, el));
   el.addEventListener("mouseleave", unhoverMenu);
   el.addEventListener("click", (e) => {
     e.stopPropagation();
-    pinMenu(card, el, yours);
+    pinMenu(card, el);
   });
   return el;
 }
 
-async function showPreview(number) {
-  const info = catalogue.get(number);
+// ---- the card preview -------------------------------------------------------
+//
+// The board's top-right corner, and the one place a card is read: hovering any
+// card puts it there, and the loupe over it magnifies further. It follows the
+// cursor off the card like the menu does — a panel that stayed would be a panel
+// showing a card you are no longer looking at.
+//
+// Clicking pins it, which is the only route to the loupe: while it is still
+// following the cursor the panel takes no pointer events at all, so that it
+// cannot swallow the board it is sitting on.
+//
+// Only the preview pins. The menu goes on following the cursor, so a pinned
+// card can be read while the card being played is the one under it.
+
+/** Shows `card` — a VisibleCard — in the corner panel. */
+async function showPreview(card) {
+  // A pinned preview is what hovering another card is not allowed to displace.
+  if (pinnedId !== null && card?.id !== pinnedId) return;
+
   const box = $("preview");
+  // A card the viewer may not identify has nothing to show, and leaving the
+  // last one up would credit it to the card under the cursor. `cardEl` returns
+  // before wiring hover or click onto one, so this is a guard rather than a
+  // path — but a pin the panel cannot draw is a pin nothing can click off, so
+  // it releases rather than just hiding.
+  if (!card || !card.number) {
+    unpinPreview();
+    previewing = null;
+    box.innerHTML = "";
+    box.hidden = true;
+    return;
+  }
+
+  const number = card.number;
+  const info = catalogue.get(number);
+  previewing = number;
   const uri = await art(number);
+
+  // The cursor moved on while the art resolved.
+  if (previewing !== number) return;
+
+  // A Character given DON!! is exactly the card a player stops to read, and its
+  // printed power is then the one number on screen that is wrong — so the meta
+  // line carries what the card is at now, marked as such.
+  const printed = info ? info.power : null;
+  const power = card.power ?? printed;
+  const powerText = power == null ? "" : ` · ${power}${power === printed ? "" : " now"}`;
+
   box.innerHTML = `
     ${uri ? `<img src="${uri}" alt="${number}" />` : ""}
     <div class="ptext">
       <div class="pname">${info ? info.name : number}</div>
-      <div class="pmeta">${info ? `${number} · ${info.category} · cost ${info.cost}${
-        info.power != null ? ` · ${info.power}` : ""
-      }${info.counter != null ? ` · counter ${info.counter}` : ""}` : number}</div>
+      <div class="pmeta">${info ? `${number} · ${info.category} · cost ${info.cost}${powerText}${
+        info.counter != null ? ` · counter ${info.counter}` : ""
+      }` : number}</div>
       ${info && info.effect ? `<div class="peffect">${info.effect.replaceAll("<br>", "<br/>")}</div>` : ""}
       ${info && info.trigger ? `<div class="ptrigger">${info.trigger}</div>` : ""}
     </div>
   `;
+  box.classList.toggle("pinned", pinnedId !== null);
   box.hidden = false;
 }
 
+/** Clears the panel, unless it is pinned — which is what a pin is. */
 function hidePreview() {
-  $("preview").hidden = true;
+  if (pinnedId !== null) return;
+  previewing = null;
+  const box = $("preview");
+  box.hidden = true;
+  box.innerHTML = "";
+  // The preview can go while the cursor is still over where it was, and the
+  // loupe must not outlive the image it is magnifying.
+  hideLoupe();
+}
+
+/** Releases the pin and takes the panel with it. */
+function unpinPreview() {
+  if (pinnedId === null) return;
+  for (const c of document.querySelectorAll(".card.pinned")) {
+    c.classList.remove("pinned");
+  }
+  pinnedId = null;
+  $("preview").classList.remove("pinned");
+  hidePreview();
 }
 
 // ---- card menu --------------------------------------------------------------
 //
-// Hovering a card shows its full-size view and the actions that start from it;
-// clicking pins that, so it can be read without holding the mouse still. The
-// flat list is still in the sidebar, so nothing here is the only route to a
-// legal action.
+// The actions that start from a card, above the card itself. The card is read
+// in the corner panel, which the same hover opens; this side of it is nothing
+// but buttons. The flat list is still in the sidebar, so nothing here is the
+// only route to a legal action.
 //
 // Both edges are delayed. Opening waits so that sweeping the cursor across a
 // row does not fire a menu per card; closing waits because the cursor has to
@@ -209,96 +284,83 @@ const CLOSE_DELAY = 180;
 let openTimer = null;
 let closeTimer = null;
 
-function hoverMenu(card, el, yours) {
+function hoverMenu(card, el) {
   clearTimeout(closeTimer);
-  if (pinned || selected === card.id) return;
+  if (selected === card.id) return;
   clearTimeout(openTimer);
-  openTimer = setTimeout(() => showMenu(card, el, yours), OPEN_DELAY);
+  openTimer = setTimeout(() => showMenu(card, el), OPEN_DELAY);
 }
 
 function unhoverMenu() {
   clearTimeout(openTimer);
-  if (pinned) return;
   closeTimer = setTimeout(closeMenu, CLOSE_DELAY);
 }
 
-/** A click pins the menu where hover would have let it go. Clicking the
- *  pinned card again releases it. */
-function pinMenu(card, el, yours) {
+/** A click pins the preview where hover would have let it go. Clicking the
+ *  pinned card again releases it; the menu is untouched either way, and goes on
+ *  following the cursor. */
+function pinMenu(card, el) {
   clearTimeout(openTimer);
   clearTimeout(closeTimer);
-  if (pinned && selected === card.id) {
-    closeMenu();
+  if (card.id === pinnedId) {
+    unpinPreview();
     return;
   }
-  pinned = true;
-  showMenu(card, el, yours);
+  // Moving the pin rather than clearing it: the panel is about to show this
+  // card, and taking it down on the way would only flicker.
+  for (const c of document.querySelectorAll(".card.pinned")) {
+    c.classList.remove("pinned");
+  }
+  pinnedId = card.id;
+  showMenu(card, el);
 }
 
-function showMenu(card, el, yours) {
+function showMenu(card, el) {
   selected = card.id;
   for (const c of document.querySelectorAll(".card.selected")) {
     c.classList.remove("selected");
   }
+  // The outline marks the card the menu belongs to, so it is worth drawing on
+  // one that has no actions at all: it says the hover was noticed.
   el.classList.add("selected");
-  openMenu(card, el, yours);
+  if (card.id === pinnedId) el.classList.add("pinned");
+  showPreview(card);
+  openMenu(card, el);
 }
 
+/** Drops the actions and the outline, and the preview with them unless it was
+ *  pinned. */
 function closeMenu() {
   clearTimeout(openTimer);
   clearTimeout(closeTimer);
   selected = null;
-  pinned = false;
   $("card-menu").hidden = true;
-  $("card-menu").classList.remove("pinned");
-  // The menu can go while the cursor is still over where it was — Escape, or
-  // an option that closes it — and the loupe must not outlive it.
-  hideLoupe();
+  hidePreview();
   for (const c of document.querySelectorAll(".card.selected")) {
     c.classList.remove("selected");
   }
 }
 
-async function openMenu(card, el, yours) {
+function openMenu(card, el) {
   const menu = $("card-menu");
-  const info = card.number ? catalogue.get(card.number) : null;
   const options = menus.get(card.id) ?? [];
-  const uri = await art(card.number);
 
-  // The click may have been superseded while the art resolved.
-  if (selected !== card.id) return;
-
-  menu.innerHTML = `
-    <div class="menu-card">
-      ${uri ? `<img src="${uri}" alt="${card.number}" />` : ""}
-      <div class="menu-name">${info ? info.name : (card.number ?? "Face-down")}</div>
-      <div class="menu-meta">${
-        info
-          ? `${card.number} · ${info.category} · cost ${info.cost}${
-              card.power != null ? ` · ${card.power} now` : ""
-            }`
-          : ""
-      }</div>
-      ${info && info.effect ? `<div class="peffect">${info.effect.replaceAll("<br>", "<br/>")}</div>` : ""}
-      ${info && info.trigger ? `<div class="ptrigger">${info.trigger}</div>` : ""}
-    </div>
-    <div class="menu-actions"></div>
-  `;
-
-  const list = menu.querySelector(".menu-actions");
-  // "Nothing from here" is worth saying about your own card and not about the
-  // opponent's, where it is never news. Theirs is a preview and nothing more.
-  if (options.length === 0 && yours) {
-    list.innerHTML = `<div class="menu-none">No actions from this card</div>`;
+  // With the card in the corner panel there is nothing left to put above a card
+  // that cannot act, and an empty box over every card the cursor crosses is
+  // noise. A card of yours with no actions is already dimmed, which says it.
+  if (options.length === 0) {
+    menu.hidden = true;
+    return;
   }
+
+  menu.innerHTML = `<div class="menu-actions"></div>`;
+  const list = menu.querySelector(".menu-actions");
   // Every attack this card can make becomes one button; the rest are per-action
   // as before.
   const attacks = options.filter((o) => o.kind === "attack");
   if (attacks.length > 0) list.appendChild(attackButton(card.id, attacks));
   fillOptions(list, options.filter((o) => o.kind !== "attack"));
-  list.hidden = options.length === 0 && !yours;
 
-  menu.classList.toggle("pinned", pinned);
   menu.hidden = false;
   place(menu, el);
 }
@@ -326,30 +388,41 @@ function place(menu, el) {
   menu.style.top = `${Math.round(Math.max(margin, top))}px`;
 }
 
-// Clicking the pinned card or its text is not a dismissal; only the option
-// buttons inside close the menu, and they do it themselves.
+// A click inside the menu is not a dismissal; only the option buttons close it,
+// and they do it themselves.
 //
 // Load-bearing for Attack, too: without it the click that opens the target
 // picker would go on to reach the document listener below and close it again
 // on its way out, leaving Attack looking like a button that does nothing.
-$("card-menu").addEventListener("click", (e) => {
-  e.stopPropagation();
-  // The card itself is the one part of the menu that is not a control, so a
-  // click on it is free to mean "let me actually read this".
-  const img = e.target.closest("#card-menu img");
-  if (img) openZoom(img.src, img.alt);
-});
+$("card-menu").addEventListener("click", (e) => e.stopPropagation());
 // The cursor leaving the card to reach the menu must not close it.
 $("card-menu").addEventListener("mouseenter", () => clearTimeout(closeTimer));
-$("card-menu").addEventListener("mouseleave", () => {
+$("card-menu").addEventListener("mouseleave", unhoverMenu);
+
+// These reach the panel only while it is pinned: unpinned it is
+// `pointer-events: none`, so that it cannot trap the opponent's trash pile
+// underneath it. Pinning is therefore the way in to both the loupe and the zoom.
+//
+// The preview is not a control, so a click on it is free to mean "let me
+// actually read this" — and must not reach the document, which would take it
+// for a miss and clear the very panel that was clicked.
+$("preview").addEventListener("click", (e) => {
+  e.stopPropagation();
+  const img = e.target.closest("#preview img");
+  if (img) openZoom(img.src, img.alt);
+});
+// A menu belonging to some other card stays open while the cursor is in here,
+// the same way it does over the menu itself.
+$("preview").addEventListener("mouseenter", () => clearTimeout(closeTimer));
+$("preview").addEventListener("mouseleave", () => {
   hideLoupe();
   unhoverMenu();
 });
 
 // ---- loupe ------------------------------------------------------------------
 //
-// The menu's card is the largest one a panel beside the board can hold, and on
-// a small window that is still short of readable for printed effect text.
+// The preview's card is the largest one the board has room beside it for, and
+// on a small window that is still short of readable for printed effect text.
 // Magnifying it under the cursor is the rest of the way there.
 
 /** Half the loupe, and how far it sits from the cursor. From the CSS. */
@@ -357,13 +430,13 @@ const LOUPE_W = 320;
 const LOUPE_H = 220;
 const LOUPE_GAP = 20;
 
-/** Floor on the magnification, for a window wide enough that the menu's card
+/** Floor on the magnification, for a window wide enough that the preview's card
  *  is already close to the art's own 600px. Past native this is an upscale,
  *  but a soft big glyph still beats a sharp small one. */
 const LOUPE_MIN_ZOOM = 1.8;
 
 function moveLoupe(e) {
-  const img = e.target.closest("#card-menu img");
+  const img = e.target.closest("#preview img");
   if (!img || !img.naturalWidth) return hideLoupe();
 
   const rect = img.getBoundingClientRect();
@@ -405,7 +478,7 @@ function openZoom(src, alt) {
   const box = $("card-zoom");
   box.innerHTML = `<img src="${src}" alt="${alt ?? ""}" />`;
   box.hidden = false;
-  // The cursor is over the menu, not the card it just opened.
+  // The cursor is over the preview, not the card it just opened.
   hideLoupe();
 }
 
@@ -425,25 +498,29 @@ $("card-zoom").addEventListener("click", (e) => {
   closeZoom();
 });
 
-$("card-menu").addEventListener("mousemove", moveLoupe);
-// Rebuilding the menu under a still cursor leaves the loupe showing the card
+$("preview").addEventListener("mousemove", moveLoupe);
+// Rebuilding the preview under a still cursor leaves the loupe showing the card
 // that was there before.
-$("card-menu").addEventListener("mouseover", moveLoupe);
+$("preview").addEventListener("mouseover", moveLoupe);
 // A click that reaches the document missed every card, so it is a miss in both
-// senses: it dismisses the menu, and the picker's backdrop is nothing but a
-// miss.
+// senses: it dismisses the menu and the preview, and the picker's backdrop is
+// nothing but a miss.
 document.addEventListener("click", () => {
   closeAttackPicker();
+  unpinPreview();
   closeMenu();
 });
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
   // Escape backs out one step at a time: out of the card being read first,
   // since it covers everything, then out of the target picker, then out of the
-  // menu underneath it.
+  // menu and the preview underneath it.
   if (zoomOpen()) closeZoom();
   else if (attackPick) closeAttackPicker();
-  else closeMenu();
+  else {
+    unpinPreview();
+    closeMenu();
+  }
 });
 
 /** A card plus any DON!! given to it.
@@ -549,7 +626,9 @@ function openTrash(side, label) {
     `${side.trash.length} card(s), most recent first`;
   const grid = $("trash-grid");
   grid.innerHTML = "";
-  for (const card of side.trash) grid.appendChild(cardEl(card, { plain: true }));
+  for (const card of side.trash) {
+    grid.appendChild(cardEl(card, { plain: true, preview: false }));
+  }
   $("trash-modal").hidden = false;
 }
 
@@ -827,7 +906,7 @@ function openAttackPicker(attackerId, targets) {
 
     // Each target draws itself, power badge and all, so the comparison the
     // attack turns on (7-1-4-1) is on screen rather than remembered.
-    if (card) holder.appendChild(cardEl(card, { plain: true }));
+    if (card) holder.appendChild(cardEl(card, { plain: true, preview: false }));
     else holder.innerHTML = `<div class="choose-unknown">${opt.label}</div>`;
 
     holder.addEventListener("click", () => {
@@ -941,7 +1020,7 @@ function renderChoose(snap) {
     holder.className = "choose-option" + (picked.includes(id) ? " picked" : "");
 
     if (card) {
-      holder.appendChild(cardEl(card, { plain: true }));
+      holder.appendChild(cardEl(card, { plain: true, preview: false }));
     } else {
       // A candidate the view does not hold — a DON!!, or something off-board
       // mid-effect. Its label is the only description available for it.
@@ -1032,7 +1111,7 @@ function renderArrange(snap) {
   const all = snap.arrange.map((c) => c.id);
   const placed = arrangePlacements.map((p) => p.id);
   const remaining = all.filter((id) => !placed.includes(id));
-  const describe = (id) => cardEl(byId.get(id), { plain: true });
+  const describe = (id) => cardEl(byId.get(id), { plain: true, preview: false });
 
   $("arrange-title").textContent = snap.question ?? "Arrange";
   $("arrange-sub").textContent = remaining.length
@@ -1154,17 +1233,20 @@ function boardIndex(view) {
   return index;
 }
 
-/** Whether `id` is a card the viewer controls, hand included. */
-function isYours(view, id) {
-  if (view.you.hand.some((c) => c.id === id)) return true;
-  const { leader, stage, characters } = view.you;
-  return [leader, stage, ...characters].some((c) => c && c.id === id);
+/** Every card drawn with a menu and a pin on it: the board, plus your hand.
+ *
+ *  Deliberately not the trash, which `cardIndex` does include. A trashed card is
+ *  drawn `plain`, so it carries no click — a pin that followed one there would
+ *  hold the panel on a dead card with nothing left to click it off. */
+function pinnableIndex(view) {
+  const index = boardIndex(view);
+  for (const c of view.you.hand) index.set(c.id, c);
+  return index;
 }
 
 /** Every card the viewer can click, for re-finding one across a re-render. */
 function cardIndex(view) {
-  const index = boardIndex(view);
-  for (const c of view.you.hand) index.set(c.id, c);
+  const index = pinnableIndex(view);
   for (const side of [view.you, view.opponent]) {
     for (const c of side.trash) index.set(c.id, c);
   }
@@ -1674,19 +1756,24 @@ function render(snap) {
       `<div class="thinking">Opponent is thinking…</div>`;
   }
 
-  // The board was rebuilt underneath any open menu. A pinned one is re-anchored
-  // to the new element, or dropped if that card has left play. An unpinned one
-  // just closes: its card element is gone, so no mouseleave can ever arrive to
-  // close it later, and hovering again costs nothing.
-  if (selected !== null) {
-    const el = document.querySelector(`.card[data-id="${selected}"]`);
-    const card = cardIndex(view).get(selected);
-    if (pinned && el && card && !inBattle) {
-      el.classList.add("selected");
-      openMenu(card, el, isYours(view, selected));
-    } else {
-      closeMenu();
-    }
+  // The board was rebuilt underneath both panels. The menu simply closes: its
+  // card element is gone, so no mouseleave can ever arrive to close it later,
+  // and hovering again costs nothing.
+  //
+  // The pending open goes unconditionally, ahead of that test: a hover less than
+  // OPEN_DELAY old has not set `selected` yet, so `closeMenu` would not be
+  // reached to clear it — and the timer would then fire against a detached
+  // element, parking an unclosable menu in the corner off a zero-sized measure.
+  clearTimeout(openTimer);
+  if (selected !== null) closeMenu();
+
+  // A pinned preview outlives the render, and is redrawn rather than left as it
+  // was — the card's power is exactly the kind of thing that just changed. It
+  // is released if that card has left play, or if a battle has taken the board.
+  if (pinnedId !== null) {
+    const card = pinnableIndex(view).get(pinnedId);
+    if (card && !inBattle) showPreview(card);
+    else unpinPreview();
   }
 
   const log = $("log");
