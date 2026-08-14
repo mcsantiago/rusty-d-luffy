@@ -41,7 +41,7 @@ pub use derive::{Characteristics, Derived};
 pub use event::{CardRef, GameEvent, PlayerEvent};
 pub use game::{
     ActivationChoice, DeckList, DonClass, Game, GameConfig, PlayerOutcome, Requirement, SetupError,
-    StepOutcome,
+    Shortfall, StepOutcome,
 };
 pub use ids::{CardDefId, CardInstanceId, PlayerId};
 pub use legal::legal_actions;

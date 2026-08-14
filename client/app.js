@@ -979,6 +979,11 @@ async function commitActivation(target) {
   // the effect wanted matches no option and buries the real prompt under "that
   // combination is not on offer".
   if (!snap || snap.pending_kind !== "choose") return;
+  // And the choice actually on offer, not merely a choice. `DigTop` suspends
+  // with a `Choose` too, so an effect that digs before it asks would otherwise
+  // have this answered against the dig. Leaving it unanswered puts the real
+  // question on screen, which is where an open decision belongs.
+  if (!(snap.choose_candidates ?? []).some((c) => c.id === target)) return;
   submitChoice([target], snap);
 }
 

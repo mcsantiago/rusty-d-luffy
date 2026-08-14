@@ -1736,11 +1736,36 @@ fn an_unmet_condition_offers_no_targets_and_says_so() {
         game.activation_choice(stage, 0).is_none(),
         "the effect stops at the condition, so it asks nothing"
     );
+    let shortfall = game
+        .activation_shortfall(stage, 0)
+        .expect("the player should be told which requirement is unmet");
+    assert!(matches!(shortfall.req, op_core::Requirement::Condition));
     assert!(
-        matches!(
-            game.activation_shortfall(stage, 0),
-            Some(op_core::Requirement::Condition)
-        ),
-        "and the player should be told which requirement is unmet"
+        shortfall.sole,
+        "the condition is the first op, so nothing has run before it"
+    );
+}
+
+/// ST06-015 is "draw 1 card. Then, give up to 1 of your opponent's Characters
+/// −2 cost." With no opponent Character the second half idles — but the draw
+/// still happens, so a warning that says the activation changes nothing talks
+/// the player out of a free card.
+#[test]
+fn a_shortfall_after_something_useful_does_not_claim_the_effect_is_wasted() {
+    let Some((db, cards)) = load() else { return };
+    let mut game = at_main(db, cards, 5, [st06(), st02()], 0);
+
+    // Nothing of the opponent's to shrink.
+    assert!(game.state.player(PlayerId::P1).characters.is_empty());
+
+    let event = put_in_play(&mut game, PlayerId::P0, "ST06-015");
+    let shortfall = game
+        .activation_shortfall(event, 0)
+        .expect("the pool it asks for is empty");
+
+    assert!(matches!(shortfall.req, op_core::Requirement::Cards(_)));
+    assert!(
+        !shortfall.sole,
+        "the draw runs first, so the activation is not wasted"
     );
 }
