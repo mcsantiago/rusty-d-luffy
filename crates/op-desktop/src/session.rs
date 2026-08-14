@@ -56,6 +56,38 @@ pub struct Choice {
     pub split: Option<usize>,
     /// Coarse kind, for grouping and styling.
     pub kind: &'static str,
+    /// For an activation, the choice it would go on to ask. `None` for every
+    /// other action, and for an activation that asks nothing.
+    ///
+    /// Sent so the client can ask which target before sending the activation,
+    /// rather than after — the difference between a decision that can be
+    /// abandoned and one that has already cost a `[Once Per Turn]`.
+    pub targets: Option<TargetPreview>,
+    /// Why this activation would currently achieve nothing, if it would.
+    /// `None` for every other action, and for an activation that has everything
+    /// it needs.
+    ///
+    /// Sent so a client can warn before the action goes, rather than explain
+    /// after: `[Once Per Turn]` is spent by activating, not by resolving, so a
+    /// warning that arrives with the choice has arrived too late.
+    pub warning: Option<String>,
+}
+
+/// The choice an activation would ask, offered before it is sent.
+#[derive(Debug, Clone, Serialize)]
+pub struct TargetPreview {
+    /// The candidates, labelled like any other card-picking decision — a DON!!
+    /// in the cost area is not on the board the view publishes, so an id alone
+    /// draws nothing. Empty when the pool is secret; see `secret`.
+    pub cards: Vec<ChoiceCandidate>,
+    /// The pool is a secret area, so its contents are not described. The client
+    /// may say a choice is coming; it must not read "nothing matches" into an
+    /// empty `cards`, and must leave the picking to the real decision.
+    pub secret: bool,
+    /// True when the choice takes exactly one card, which is the only shape a
+    /// client can answer with a single click. Anything wider is left to the
+    /// real decision, which can count.
+    pub single: bool,
 }
 
 /// One card that may be picked while a card-picking decision is pending.
@@ -629,6 +661,8 @@ impl Session {
                     subject: action_subject(action).map(|c| c.0),
                     kind: action_kind(action),
                     split: action_split(action),
+                    targets: activation_targets(&self.game, action),
+                    warning: activation_warning(&self.game, action),
                 })
                 .collect()
         } else {
@@ -798,6 +832,45 @@ impl Session {
         }
         out
     }
+}
+
+/// The choice an activation would ask, for a client that asks it first.
+///
+/// See [`Game::activation_choice`] for the caveat that matters here: the pool
+/// is read before the cost is paid, so the engine may offer something narrower
+/// once the effect actually runs.
+fn activation_targets(game: &Game, action: &Action) -> Option<TargetPreview> {
+    let Action::ActivateEffect { card, slot, .. } = action else {
+        return None;
+    };
+    let choice = game.activation_choice(*card, *slot)?;
+    Some(TargetPreview {
+        cards: choice
+            .options
+            .iter()
+            .map(|&id| ChoiceCandidate {
+                id: id.0,
+                label: crate::render::candidate_label(id, game),
+                class: choice_class(id, game),
+            })
+            .collect(),
+        secret: choice.secret,
+        single: choice.select.up_to == 1,
+    })
+}
+
+/// Why an activation would achieve nothing, for a client that warns before
+/// committing to it.
+///
+/// `None` for every other kind of action. See [`Game::activation_shortfall`]
+/// for what this does and does not promise — notably that pools are read before
+/// the cost is paid.
+fn activation_warning(game: &Game, action: &Action) -> Option<String> {
+    let Action::ActivateEffect { card, slot, .. } = action else {
+        return None;
+    };
+    game.activation_shortfall(*card, *slot)
+        .map(|req| crate::render::shortfall_label(&req))
 }
 
 /// Cards an action refers to, for UI highlighting.

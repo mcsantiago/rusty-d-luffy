@@ -39,7 +39,10 @@ pub use action::{Action, IllegalAction, Pending};
 pub use card::{CardDb, CardDef, Category, Color, Keyword};
 pub use derive::{Characteristics, Derived};
 pub use event::{CardRef, GameEvent, PlayerEvent};
-pub use game::{DeckList, DonClass, Game, GameConfig, PlayerOutcome, SetupError, StepOutcome};
+pub use game::{
+    ActivationChoice, DeckList, DonClass, Game, GameConfig, PlayerOutcome, Requirement, SetupError,
+    Shortfall, StepOutcome,
+};
 pub use ids::{CardDefId, CardInstanceId, PlayerId};
 pub use legal::legal_actions;
 pub use replay::{Divergence, SessionLog, SessionRecord, Verified};

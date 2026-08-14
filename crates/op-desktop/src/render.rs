@@ -119,6 +119,96 @@ pub fn cost_label(cost: &op_core::script::ActivationCost) -> String {
     }
 }
 
+/// Why an activation would currently achieve nothing, in a sentence.
+///
+/// Naming the empty pool is the whole value. That the ability will do nothing a
+/// player can work out; *which* of the things it needs is missing — and so what
+/// they would have to change to make it worth activating — they cannot.
+pub fn shortfall_label(shortfall: &op_core::Shortfall<'_>) -> String {
+    use op_core::effect::DonSource;
+    use op_core::Requirement;
+
+    let missing = match shortfall.req {
+        Requirement::Cards(select) => format!("No {} to choose.", wants_label(select)),
+        Requirement::Condition => "This card's condition is not met.".into(),
+        Requirement::Don(DonSource::Rested) => "No rested DON!! in your cost area.".to_string(),
+        Requirement::Don(DonSource::Active) => "No active DON!! in your cost area.".to_string(),
+        Requirement::Don(DonSource::Any) => "No DON!! in your cost area.".to_string(),
+    };
+
+    // Only where nothing else in the effect happens anyway. ST06-015 draws a
+    // card before it looks for a Character, and telling a player that costs
+    // them the draw.
+    if shortfall.sole {
+        format!("{missing} Activating spends the ability and changes nothing.")
+    } else {
+        format!("{missing} The rest of the effect still happens.")
+    }
+}
+
+/// What a `choose` is asking for, as a noun phrase: "rested DON!! in your cost
+/// area", "your Characters".
+///
+/// Deliberately loose. It describes the zone, the owner and the filters a
+/// player can act on, and stays silent about the ones that would turn a warning
+/// into a rules lecture. The printed card text is on screen beside it.
+fn wants_label(select: &op_core::effect::Selector) -> String {
+    use op_core::effect::{Filter, Who};
+    use op_core::zone::Zone;
+
+    // Adjectives first, then the noun, then the qualifiers that only read well
+    // after it. A filter this drops makes the phrase name a wider pool than the
+    // engine looked in — "no Characters" while Characters are on the board —
+    // so anything a player can act on belongs here.
+    let mut what = String::new();
+    let mut after: Vec<String> = Vec::new();
+    for filter in &select.filters {
+        match filter {
+            Filter::IsRested(true) => what.push_str("rested "),
+            Filter::IsRested(false) => what.push_str("active "),
+            Filter::HasKeyword(k) => what.push_str(&format!("[{k:?}] ")),
+            Filter::HasColor(c) => what.push_str(&format!("{c:?} ")),
+            Filter::HasName(name) => what.push_str(&format!("[{name}] ")),
+            Filter::HasAnyType(types) => what.push_str(&format!("{{{}}} ", types.join("} or {"))),
+            Filter::CostAtMost(n) => after.push(format!("with a cost of {n} or less")),
+            Filter::PowerAtMost(n) => after.push(format!("with {n} power or less")),
+            Filter::NotSelf => after.push("other than this card".into()),
+            // The category is usually the noun below, and saying it twice reads
+            // worse than leaving it to the zone. `Not` negates an inner filter
+            // whose phrasing would have to be inverted too.
+            Filter::IsCategory(_) | Filter::Not(_) => {}
+        }
+    }
+
+    what.push_str(match select.zone {
+        Zone::Cost | Zone::DonDeck => "DON!!",
+        Zone::Character => "Characters",
+        Zone::Hand => "cards in hand",
+        Zone::Trash => "cards in the trash",
+        // The selector's marker for the battlers — Leader and Characters
+        // together — not the Leader alone. `your_battlers` is written this way.
+        Zone::Leader => "Leader or Characters",
+        Zone::Stage => "Stage",
+        Zone::Deck => "cards in the deck",
+        Zone::Life => "Life cards",
+        Zone::Limbo => "cards",
+    });
+
+    let whose = match (select.owner, select.zone) {
+        (Who::You, Zone::Cost) => " in your cost area",
+        (Who::You, _) => " of yours",
+        (Who::Opponent, Zone::Cost) => " in your opponent's cost area",
+        (Who::Opponent, _) => " of your opponent's",
+        (Who::Both, _) => "",
+    };
+    what.push_str(whose);
+    for tail in after {
+        what.push(' ');
+        what.push_str(&tail);
+    }
+    what
+}
+
 pub fn question(pending: &Pending) -> String {
     match pending {
         Pending::Mulligan { .. } => "Keep this hand?".into(),

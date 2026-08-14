@@ -1683,3 +1683,89 @@ fn st03_014_teach_cannot_return_himself() {
         "cost 4 is not 'a cost of 3 or less'"
     );
 }
+
+/// ST03-007 searches the deck, which is a secret area (3-1-5). The pre-send
+/// preview must not describe it: ids are assigned in decklist order at setup,
+/// so shipping one for a deck card names it to anyone holding the decklist —
+/// and even the count answers "is searching worth the cost" before the cost
+/// that buys the answer is paid.
+#[test]
+fn a_deck_search_is_not_described_before_it_is_activated() {
+    let Some((db, cards)) = load() else { return };
+    // ST-03's own deck, so the search has something to find: against a deck
+    // holding no [Pacifista] the pool is empty either way and the test would
+    // pass without describing anything.
+    let mut game = at_main(db, cards, 5, [st03(), st02()], 0);
+
+    let searcher = put_in_play(&mut game, PlayerId::P0, "ST03-007");
+    let deck = &game.state.player(PlayerId::P0).deck;
+    let matching = deck
+        .iter()
+        .filter(|&&c| {
+            let def = game.db().get(game.state.card(c).def);
+            def.name.contains("Pacifista") && def.cost <= 4
+        })
+        .count();
+    assert!(matching > 0, "the fixture must have something to leak");
+
+    let choice = game
+        .activation_choice(searcher, 0)
+        .expect("ST03-007's effect asks for a card");
+
+    assert!(choice.secret, "your deck is a secret area");
+    assert!(
+        choice.options.is_empty(),
+        "a secret pool must not be enumerated, however many match — {matching} do"
+    );
+}
+
+/// ST06-017 only does anything "if your Leader has the {Navy} type", as a
+/// `RequireIf` the effect stops at. Offering its `choose` behind an unmet
+/// condition invites a player to pick a target the effect never reaches: the
+/// activation is sent, resolution halts, and the pick is discarded in silence.
+#[test]
+fn an_unmet_condition_offers_no_targets_and_says_so() {
+    let Some((db, cards)) = load() else { return };
+    // ST-01's Leader is Monkey.D.Luffy, who is not {Navy}.
+    let mut game = game_at_main(db, cards, 5, 1);
+
+    let stage = put_in_play(&mut game, PlayerId::P0, "ST06-017");
+    put_in_play(&mut game, PlayerId::P1, "ST06-003");
+
+    assert!(
+        game.activation_choice(stage, 0).is_none(),
+        "the effect stops at the condition, so it asks nothing"
+    );
+    let shortfall = game
+        .activation_shortfall(stage, 0)
+        .expect("the player should be told which requirement is unmet");
+    assert!(matches!(shortfall.req, op_core::Requirement::Condition));
+    assert!(
+        shortfall.sole,
+        "the condition is the first op, so nothing has run before it"
+    );
+}
+
+/// ST06-015 is "draw 1 card. Then, give up to 1 of your opponent's Characters
+/// −2 cost." With no opponent Character the second half idles — but the draw
+/// still happens, so a warning that says the activation changes nothing talks
+/// the player out of a free card.
+#[test]
+fn a_shortfall_after_something_useful_does_not_claim_the_effect_is_wasted() {
+    let Some((db, cards)) = load() else { return };
+    let mut game = at_main(db, cards, 5, [st06(), st02()], 0);
+
+    // Nothing of the opponent's to shrink.
+    assert!(game.state.player(PlayerId::P1).characters.is_empty());
+
+    let event = put_in_play(&mut game, PlayerId::P0, "ST06-015");
+    let shortfall = game
+        .activation_shortfall(event, 0)
+        .expect("the pool it asks for is empty");
+
+    assert!(matches!(shortfall.req, op_core::Requirement::Cards(_)));
+    assert!(
+        !shortfall.sole,
+        "the draw runs first, so the activation is not wasted"
+    );
+}

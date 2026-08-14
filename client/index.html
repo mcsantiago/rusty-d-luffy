@@ -185,8 +185,25 @@
           <div class="choose-label">Eligible cards</div>
           <div class="choose-grid" id="choose-grid"></div>
           <div class="choose-foot">
-            <button id="choose-none" class="ghost">Choose nothing</button>
+            <button id="choose-none" class="decline">Take none — the effect still resolves</button>
             <button id="choose-confirm" class="primary">Confirm</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="activate-modal" class="overlay" hidden>
+        <div class="panel wide">
+          <h1 id="activate-title">Activate?</h1>
+          <div id="activate-source" hidden></div>
+          <p class="sub" id="activate-sub"></p>
+          <div id="activate-warning" hidden></div>
+          <div id="activate-targets" hidden>
+            <div class="choose-label" id="activate-targets-label"></div>
+            <div class="choose-grid" id="activate-grid"></div>
+          </div>
+          <div class="choose-foot">
+            <button id="activate-cancel" class="ghost">Cancel</button>
+            <button id="activate-confirm" class="primary">Activate</button>
           </div>
         </div>
       </div>

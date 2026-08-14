@@ -4,6 +4,62 @@ use std::sync::Arc;
 
 use rand::seq::SliceRandom;
 
+/// Something an activated effect needs, which the board may not currently hold.
+///
+/// Returned by [`Game::activation_shortfall`] so a client can name what is
+/// missing. Presentation is the caller's: this says which pool came up empty,
+/// not how to word it.
+#[derive(Debug, Clone, Copy)]
+pub enum Requirement<'a> {
+    /// Cards matching this selector, for a `choose`.
+    Cards(&'a crate::effect::Selector),
+    /// DON!! in the controller's cost area that this source admits.
+    Don(crate::effect::DonSource),
+    /// A condition on the card that does not currently hold, which the effect
+    /// would stop at. ST06-017's "if your Leader has the {Navy} type".
+    Condition,
+}
+
+/// Whether a condition can be judged before the effect starts resolving.
+///
+/// `Condition::Bound` asks about a binding an earlier op makes — "you may X. If
+/// you do, Y." — and the frame that has not run has none, so it would read
+/// false for a condition that will hold. Undecidable is not false, and the
+/// advice helpers pass over it rather than answering.
+fn decidable(cond: &crate::effect::Condition) -> bool {
+    !matches!(cond, crate::effect::Condition::Bound(_))
+}
+
+/// A requirement an activated effect does not have, and whether missing it
+/// costs the whole effect.
+#[derive(Debug, Clone, Copy)]
+pub struct Shortfall<'a> {
+    pub req: Requirement<'a>,
+    /// Nothing else in the effect would happen anyway, so activating really is
+    /// spending it for nothing.
+    ///
+    /// False where something has already run by the time the effect reaches
+    /// this: ST06-015 draws a card and *then* looks for a Character to shrink,
+    /// so an empty opponent board makes the second half idle and the draw is
+    /// still worth having. A client that says "changes nothing" without this
+    /// talks a player out of a free card.
+    pub sole: bool,
+}
+
+/// The first choice an activated effect would ask, as [`Game::activation_choice`]
+/// describes it before the activation is sent.
+#[derive(Debug, Clone)]
+pub struct ActivationChoice<'a> {
+    pub select: &'a crate::effect::Selector,
+    /// The cards it would offer. Empty when the pool is secret — see `secret`,
+    /// which is what tells that apart from "nothing matches".
+    pub options: Vec<CardInstanceId>,
+    /// Whether the pool is a secret area (3-1-5). A client may say *that* a
+    /// choice is coming, but not what is in it, and must not read anything
+    /// into `options` being empty.
+    pub secret: bool,
+}
+
 use crate::action::{Action, IllegalAction, Pending};
 use crate::card::{CardDb, Category, Keyword};
 use crate::derive::{self, Derived};
@@ -2291,6 +2347,176 @@ impl Game {
         }
         // An effect that never asks for a target always does something.
         !asked
+    }
+
+    /// The first choice an activated effect would ask, before it is activated.
+    ///
+    /// So a client can ask the question *before* sending the activation and
+    /// send both together, the way an attack is offered as one action per
+    /// (attacker, target) pair. `[Once Per Turn]` is spent by activating
+    /// (8-4-1-3), so a target chosen afterwards is chosen too late to back out
+    /// of; a target chosen first costs nothing to abandon.
+    ///
+    /// `None` when the effect asks nothing, or when a condition it would stop
+    /// at does not hold. True only of the moment it is asked: the pool is read
+    /// before the cost is paid, so a client that pre-selects from it must be
+    /// ready for the engine to offer something narrower once the effect runs.
+    pub fn activation_choice(
+        &self,
+        card: CardInstanceId,
+        slot: u8,
+    ) -> Option<ActivationChoice<'_>> {
+        let effect = self
+            .scripts
+            .script(self.state.card(card).def)
+            .activated
+            .iter()
+            .find(|a| a.slot == slot)?;
+
+        let controller = self.state.card(card).controller;
+        let frame = EffectFrame::new(card, controller, Vec::new());
+
+        for op in &effect.ops {
+            match op {
+                // A condition the effect will stop at describes no choice: the
+                // `choose` after it is never reached. Offering its pool anyway
+                // invites a player to pick a target the effect will not use.
+                crate::effect::EffectOp::RequireIf { cond }
+                    if decidable(cond) && !self.holds(&frame, cond) =>
+                {
+                    return None
+                }
+                // Its pool is a binding the effect has not made yet, so there is
+                // nothing to describe and nothing to read into its emptiness.
+                // `activation_shortfall` passes over the same case.
+                crate::effect::EffectOp::Choose { select, .. } if select.from.is_some() => {
+                    return None
+                }
+                crate::effect::EffectOp::Choose { select, .. } => {
+                    // A pool the controller cannot see is not describable
+                    // without handing them its contents. Ids are assigned in
+                    // decklist order, so shipping one for a deck card names it
+                    // to anyone holding the decklist — and the count alone
+                    // still answers "would searching be worth it" before the
+                    // cost that buys the answer.
+                    let secret = !select.zone.is_open();
+                    return Some(ActivationChoice {
+                        select,
+                        options: if secret {
+                            Vec::new()
+                        } else {
+                            self.selector_options(&frame, select)
+                        },
+                        secret,
+                    });
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    /// Whether a condition holds for an effect that has not started resolving.
+    ///
+    /// The same call `Op::RequireIf` makes, so the two agree about what would
+    /// stop the effect.
+    fn holds(&self, frame: &EffectFrame, cond: &crate::effect::Condition) -> bool {
+        derive::conditions_hold(
+            &self.state,
+            &self.db,
+            &[],
+            frame.source,
+            Some(frame),
+            std::slice::from_ref(cond),
+        )
+    }
+
+    /// The first thing an activated effect needs and does not currently have.
+    ///
+    /// For warning a player *before* the action is sent. `[Once Per Turn]` is
+    /// spent by activating (8-4-1-3) — `activate_effect` marks the slot before
+    /// the effect resolves — so a warning that arrives with the choice has
+    /// arrived one action too late.
+    ///
+    /// Every requirement in the effect is checked, not only the first choice.
+    /// ST01-001 is why: its `choose` picks the recipient, a pool that always
+    /// holds at least the Leader, while the thing it can be short of is the
+    /// rested DON!! its `give_don` draws afterwards.
+    ///
+    /// Same standing as [`Game::activation_finds_targets`]: advice, never a
+    /// legality check — activating with nothing to affect is legal and still
+    /// costs (8-4-1-3) — and true only of the moment it is asked. Pools are
+    /// read before the cost is paid, and an op the effect has not reached yet
+    /// is judged against a board it may itself change on the way there.
+    pub fn activation_shortfall(&self, card: CardInstanceId, slot: u8) -> Option<Shortfall<'_>> {
+        let effect = self
+            .scripts
+            .script(self.state.card(card).def)
+            .activated
+            .iter()
+            .find(|a| a.slot == slot)?;
+
+        let controller = self.state.card(card).controller;
+        let frame = EffectFrame::new(card, controller, Vec::new());
+
+        // Whether anything has happened by the time the effect reaches the op
+        // being judged. `Choose` and `RequireIf` are plumbing — they decide what
+        // the effect works on, and change nothing themselves.
+        let mut done_something = false;
+
+        for op in &effect.ops {
+            let req = match op {
+                // The effect stops here, so nothing after it happens.
+                crate::effect::EffectOp::RequireIf { cond } => {
+                    // A condition reading a binding cannot be judged from a
+                    // frame that has none. Answering it "false" would put a
+                    // permanent "condition not met" on a working ability.
+                    if !decidable(cond) || self.holds(&frame, cond) {
+                        continue;
+                    }
+                    Requirement::Condition
+                }
+                crate::effect::EffectOp::Choose { select, .. } => {
+                    // Two pools that cannot be judged from here, and must not be
+                    // guessed about. A secret area would have to be read to be
+                    // reported on, which is the leak. A `from` pool is a binding
+                    // the effect has not made yet, so it is empty now and says
+                    // nothing about what it will hold.
+                    if !select.zone.is_open() || select.from.is_some() {
+                        continue;
+                    }
+                    if !self.selector_options(&frame, select).is_empty() {
+                        continue;
+                    }
+                    Requirement::Cards(select)
+                }
+                // The pool `Op::GiveDon` will draw from, computed the same way
+                // it computes it: `cost_area` holds only DON!! not already
+                // given.
+                crate::effect::EffectOp::GiveDon { source, .. } => {
+                    let none = self
+                        .state
+                        .player(controller)
+                        .cost_area
+                        .iter()
+                        .all(|&d| !source.admits(self.state.card(d).rested));
+                    if !none {
+                        done_something = true;
+                        continue;
+                    }
+                    Requirement::Don(*source)
+                }
+                _ => {
+                    done_something = true;
+                    continue;
+                }
+            };
+            return Some(Shortfall {
+                req,
+                sole: !done_something,
+            });
+        }
+        None
     }
 
     /// Whether playing `card` from hand would find a target for its text.
