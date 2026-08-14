@@ -5,7 +5,7 @@ use std::sync::Arc;
 use rand::seq::SliceRandom;
 
 use crate::action::{Action, IllegalAction, Pending};
-use crate::card::{CardDb, Category, Keyword};
+use crate::card::{CardDb, Category, Color, Keyword};
 use crate::derive::{self, Derived};
 use crate::effect::{Duration, EffectFrame, ModKind, Modifier, Timing};
 use crate::event::{GameEvent, PlayerEvent};
@@ -41,6 +41,8 @@ pub enum SetupError {
     DeckSize(usize),
     #[error("more than 4 copies of {0} in deck")]
     TooManyCopies(String),
+    #[error("card {0} does not share a colour with the Leader (5-1-2-2)")]
+    WrongColour(String),
 }
 
 /// What executing one effect op means for the frame's instruction pointer.
@@ -168,16 +170,17 @@ impl Game {
         for (idx, deck) in config.decks.iter().enumerate() {
             let player = PlayerId(idx as u8);
 
-            if !config.allow_illegal_decks {
-                validate_deck(deck)?;
-            }
-
             let leader_def = db
                 .by_number(&deck.leader)
                 .ok_or_else(|| SetupError::UnknownCard(deck.leader.clone()))?;
             if db.get(leader_def).category != Category::Leader {
                 return Err(SetupError::NotALeader(deck.leader.clone()));
             }
+
+            if !config.allow_illegal_decks {
+                validate_deck(deck, &db, &db.get(leader_def).colors)?;
+            }
+
             state.spawn(leader_def, player, Zone::Leader);
 
             for number in &deck.cards {
@@ -2471,7 +2474,7 @@ fn draw_one(state: &mut GameState, player: PlayerId) -> Option<CardInstanceId> {
     Some(card)
 }
 
-fn validate_deck(deck: &DeckList) -> Result<(), SetupError> {
+fn validate_deck(deck: &DeckList, db: &CardDb, leader_colors: &[Color]) -> Result<(), SetupError> {
     // 5-1-2: exactly 50 cards.
     if deck.cards.len() != 50 {
         return Err(SetupError::DeckSize(deck.cards.len()));
@@ -2483,6 +2486,17 @@ fn validate_deck(deck: &DeckList) -> Result<(), SetupError> {
         *entry += 1;
         if *entry > 4 {
             return Err(SetupError::TooManyCopies(number.clone()));
+        }
+    }
+    // 5-1-2-2: every card must share at least one colour with the Leader.
+    // Unknown numbers are left to the spawn loop below, which reports them
+    // the same way (SetupError::UnknownCard) regardless of this gate.
+    for number in &deck.cards {
+        let def = db
+            .by_number(number)
+            .ok_or_else(|| SetupError::UnknownCard(number.clone()))?;
+        if !db.get(def).colors.iter().any(|c| leader_colors.contains(c)) {
+            return Err(SetupError::WrongColour(number.clone()));
         }
     }
     Ok(())

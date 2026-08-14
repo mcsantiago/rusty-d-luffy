@@ -67,6 +67,30 @@ fn official_starter_decklists_pass_deck_construction_rules() {
     let _ = new_game(db, cards, 1);
 }
 
+/// #15: `Game::new` (behind `allow_illegal_decks: false`) now enforces
+/// 5-1-2-2 — every non-Leader card must share a colour with the Leader — on
+/// top of card count and the 4-copy limit. This is the regression guard that
+/// every real, shipped decklist still satisfies it, run against the actual
+/// card pool rather than the synthetic one `deck_construction.rs` (in
+/// `op-core`) uses to pin the rule itself.
+#[test]
+fn every_built_in_deck_satisfies_the_colour_restriction() {
+    let Some((db, cards)) = load() else {
+        eprintln!("skipping: run tools/ingest/fetch_cards.py");
+        return;
+    };
+    for deck in op_cards::decks::ALL {
+        let config = GameConfig {
+            seed: 1,
+            first_player: PlayerId::P0,
+            decks: [deck.list(), st01()],
+            allow_illegal_decks: false,
+        };
+        Game::new(config, Arc::clone(&db), Arc::clone(&cards))
+            .unwrap_or_else(|e| panic!("{}: {e}", deck.name));
+    }
+}
+
 /// Every scripted deck must be able to play a full game against every other.
 /// A deck that only works against one opponent is not really implemented.
 #[test]
