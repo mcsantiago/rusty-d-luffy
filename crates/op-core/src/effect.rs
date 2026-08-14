@@ -24,7 +24,9 @@ pub enum Duration {
     ThisBattle,
     /// Ends in the End Phase (6-6-1-3).
     ThisTurn,
-    /// Ends in the End Phase of this player's next turn.
+    /// Ends in the Refresh Phase of its controller's next turn, a full turn
+    /// earlier than `ThisTurn`'s End Phase — 6-2-1: "effects lasting until
+    /// the start of your turn end".
     UntilYourNextTurn,
 }
 
