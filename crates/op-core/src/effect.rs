@@ -274,8 +274,13 @@ impl EffectOp {
             | EffectOp::Draw { .. }
             | EffectOp::AddDon { .. }
             | EffectOp::TrashLife { .. }
-            | EffectOp::RequireIf { .. }
             | EffectOp::TrashIfInLimbo => None,
+            // "You may X. If you do, Y" (8-3-3): the condition reads the
+            // choose it follows, so RequireIf is that binding's consumer.
+            EffectOp::RequireIf { cond } => match cond {
+                Condition::Bound(key) => Some(key.as_str()),
+                _ => None,
+            },
         }
     }
 

@@ -481,6 +481,29 @@ mod tests {
         );
     }
 
+    /// #75: "you may X. If you do, Y" (8-3-3) binds a key with `choose`, then
+    /// reads it back only through `RequireIf`'s condition — no other op reads
+    /// it. That is a complete, correct script, not a dead binding.
+    #[test]
+    fn require_if_reading_its_bound_condition_satisfies_the_binding() {
+        let script = CardScript {
+            activated: vec![ActivatedEffect {
+                conditions: Vec::new(),
+                cost: ActivationCost::default(),
+                ops: vec![
+                    pick("done"),
+                    EffectOp::RequireIf {
+                        cond: Condition::Bound("done".to_string()),
+                    },
+                ],
+                slot: 0,
+                once_per_turn: false,
+            }],
+            ..CardScript::default()
+        };
+        assert_eq!(problems(&script), []);
+    }
+
     #[test]
     fn timings_the_engine_never_fires_are_rejected() {
         for timing in [Timing::OnKo, Timing::Trigger] {
