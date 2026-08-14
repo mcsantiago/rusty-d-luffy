@@ -444,7 +444,10 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
   100% { transform: scale(1); opacity: 1; }
 }
 .card.arriving {
-  animation: card-arrives 420ms cubic-bezier(0.2, 0, 0.2, 1) both;
+  /* backwards, not both: the staggered start needs the 0% held until then, but
+     a forwards fill outranks .card.inert and .card:hover in the cascade. The
+     100% is the resting style anyway, so there is nothing to hold. */
+  animation: card-arrives 420ms cubic-bezier(0.2, 0, 0.2, 1) backwards;
   z-index: 6;
 }
 .card.small { width: calc(var(--card-w) * 0.78); height: calc(var(--card-w) * 0.78 * 1.4); }
