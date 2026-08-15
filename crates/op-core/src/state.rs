@@ -216,6 +216,10 @@ pub struct GameState {
     /// can wait for them to resolve before tearing down turn-scoped state
     /// (6-6-1-1 must complete before 6-6-1-3).
     pub end_autos_queued: bool,
+    /// Set by a battle that has ended but whose "during this battle" modifiers
+    /// are still standing, because the 7-1-5-2 effects entitled to read them
+    /// have not finished resolving. Cleared by the 7-1-5-3/4 sweep.
+    pub this_battle_modifiers_pending: bool,
 
     /// Single deterministic randomness source. Advanced only through explicit
     /// shuffle/sample calls.
@@ -241,6 +245,7 @@ impl GameState {
             modifiers: Vec::new(),
             game_over: None,
             end_autos_queued: false,
+            this_battle_modifiers_pending: false,
             rng: ChaCha8Rng::seed_from_u64(seed),
             version: 0,
         }

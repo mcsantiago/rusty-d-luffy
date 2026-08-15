@@ -1395,6 +1395,137 @@ fn rule_7_1_battle_runs_attack_block_counter_damage_end_in_order() {
     );
 }
 
+/// 7-1-5 is an ordered list, and an effect resolves as part of activating it
+/// (8-4-1-4/5). So a 7-1-5-2 "at the end of this battle" effect is entitled to
+/// see the board 7-1-5-3 has not yet touched: the Counter's +1000 is still
+/// valid while the effect chooses its target.
+#[test]
+fn rule_7_1_5_2_end_of_battle_effect_resolves_before_7_1_5_3_clears_this_battle_effects() {
+    use op_core::effect::{Filter, Selector};
+
+    let cards = TestCards::new();
+    // "K.O. 1 of your opponent's Characters with 5000 power or less" — the
+    // power it reads is the whole test, so the Counter decides the outcome.
+    let ko_the_weak = auto_script(
+        Timing::EndOfBattle,
+        vec![
+            EffectOp::Choose {
+                key: "k".to_string(),
+                select: Selector {
+                    zone: Zone::Character,
+                    owner: Who::Opponent,
+                    from: None,
+                    up_to: 1,
+                    at_least: 1,
+                    filters: vec![Filter::PowerAtMost(5000)],
+                },
+            },
+            EffectOp::Ko {
+                key: "k".to_string(),
+            },
+        ],
+    );
+    let (mut game, _) = game_with(
+        &cards,
+        TestScripts::default().with(cards.def("CHR-2K"), ko_the_weak),
+        7,
+        ("LDR-001", deck_of("CHR-2K", 30)),
+        ("LDR-002", deck_of("CHR-5K", 30)), // 1000 Counter each
+    );
+    to_main(&mut game);
+    end_turn(&mut game);
+    end_turn(&mut game);
+
+    let attacker = put_in_play(&mut game, PlayerId::P0, "CHR-2K");
+    let defender = put_in_play(&mut game, PlayerId::P1, "CHR-5K");
+    game.state.card_mut(defender).rested = true;
+    game.state.card_mut(attacker).played_on_turn = None;
+
+    game.step(Action::Attack {
+        attacker,
+        target: defender,
+    })
+    .unwrap();
+    let counter_card = game.state.player(PlayerId::P1).hand[0];
+    game.step(Action::Counter {
+        card: counter_card,
+        to: defender,
+    })
+    .unwrap();
+    // 2000 into a countered 6000: the attacker loses and nothing happens in the
+    // battle itself (7-1-4-2), so both participants live to reach 7-1-5.
+    let out = game.step(Action::DoneCountering).unwrap();
+
+    assert!(out.events.iter().any(|e| matches!(
+        e,
+        GameEvent::BattleResolved {
+            attacker_won: false,
+            ..
+        }
+    )));
+    assert_eq!(
+        game.state.card(defender).zone,
+        Zone::Character,
+        "the Counter is still valid at 7-1-5-2, which puts the defender at 6000 \
+         and out of the effect's reach"
+    );
+}
+
+/// 7-1-5-3/4 is owed even when the 7-1-5-2 effect it waits on ends the game:
+/// the engine stops ticking there, so the sweep has to happen on the way out.
+#[test]
+fn rule_7_1_5_3_this_battle_effects_expire_when_the_effect_ends_the_game() {
+    use op_core::effect::Duration;
+
+    let cards = TestCards::new();
+    let (mut game, _) = game_with(
+        &cards,
+        TestScripts::default().with(
+            cards.def("CHR-2K"),
+            auto_script(Timing::EndOfBattle, vec![draw_for(Who::You)]),
+        ),
+        7,
+        ("LDR-001", deck_of("CHR-2K", 30)),
+        ("LDR-002", deck_of("CHR-5K", 30)),
+    );
+    to_main(&mut game);
+    end_turn(&mut game);
+    end_turn(&mut game);
+
+    let attacker = put_in_play(&mut game, PlayerId::P0, "CHR-2K");
+    let defender = put_in_play(&mut game, PlayerId::P1, "CHR-5K");
+    game.state.card_mut(defender).rested = true;
+    game.state.card_mut(attacker).played_on_turn = None;
+    // One card left, so the end-of-battle draw empties the deck (9-2-1-2).
+    game.state.player_mut(PlayerId::P0).deck.truncate(1);
+
+    game.step(Action::Attack {
+        attacker,
+        target: defender,
+    })
+    .unwrap();
+    let counter_card = game.state.player(PlayerId::P1).hand[0];
+    game.step(Action::Counter {
+        card: counter_card,
+        to: defender,
+    })
+    .unwrap();
+    game.step(Action::DoneCountering).unwrap();
+
+    assert!(
+        game.state.game_over.is_some(),
+        "the draw should deck P0 out"
+    );
+    assert!(
+        game.state
+            .modifiers
+            .iter()
+            .all(|m| m.duration != Duration::ThisBattle),
+        "the Counter outlived the battle: {:#?}",
+        game.state.modifiers
+    );
+}
+
 // ---- 8-6 Order of Effect Resolution ---------------------------------------
 
 /// A card whose whole script is one unconditional, free auto effect.

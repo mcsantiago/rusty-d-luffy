@@ -1475,13 +1475,22 @@ impl Game {
                 }
             }
         }
-        // 7-1-5-3/4: effects lasting "during this battle" become invalid.
-        self.state
-            .modifiers
-            .retain(|m| m.duration != Duration::ThisBattle);
+        // 7-1-5-3/4 waits: the effects just activated resolve as part of
+        // activating them (8-4-1-5), and are entitled to read the modifiers
+        // they invalidate.
+        self.state.this_battle_modifiers_pending = true;
+        // 7-1-5-1: the battle is over from here; only its modifiers outlive it.
         self.state.battle = None;
         self.state.damage = None;
         events.push(GameEvent::BattleEnded);
+    }
+
+    /// 7-1-5-3/4: the "during this battle" effects become invalid.
+    fn expire_this_battle_modifiers(&mut self) {
+        self.state.this_battle_modifiers_pending = false;
+        self.state
+            .modifiers
+            .retain(|m| m.duration != Duration::ThisBattle);
     }
 
     // ---- the forward loop --------------------------------------------------
@@ -1517,6 +1526,12 @@ impl Game {
         // Suspended effect resolution takes priority over everything else.
         if !self.state.resolution.is_empty() {
             self.resolve_current_frame(events);
+            return true;
+        }
+        // The battle's own 7-1-5-3/4, deferred by `end_battle` until the
+        // 7-1-5-2 effects it queued have finished resolving.
+        if self.state.this_battle_modifiers_pending {
+            self.expire_this_battle_modifiers();
             return true;
         }
         if self.state.damage.is_some() {
@@ -1843,6 +1858,11 @@ impl Game {
     }
 
     fn end_game(&mut self, result: GameOver, events: &mut Vec<GameEvent>) {
+        // An end-of-battle effect can end the game mid-resolution, and the
+        // engine ticks no further; the modifiers it outran still expire.
+        if self.state.this_battle_modifiers_pending {
+            self.expire_this_battle_modifiers();
+        }
         self.state.game_over = Some(result);
         self.state.pending = None;
         events.push(GameEvent::GameEnded { result });

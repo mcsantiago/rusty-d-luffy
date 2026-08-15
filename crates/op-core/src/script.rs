@@ -118,10 +118,10 @@ pub const TARGET_BINDING: &str = "target";
 /// Binding key under which an [`crate::effect::Timing::EndOfBattle`] effect is
 /// handed the *other* participant in the battle that just ended.
 ///
-/// It has to travel with the frame: `state.battle` is cleared as the battle
-/// ends, before the effects it queued get to resolve, so a script that went
-/// looking for "the Character I battled" at resolution time would find nothing
-/// and silently do nothing.
+/// It has to travel with the frame, and is the only record of who fought whom:
+/// the battle is over at 7-1-5-1, before these effects resolve, and a blocker
+/// may have replaced the card originally attacked (10-1-4-1), so nothing left
+/// in the state can name the participant afterwards.
 pub const BATTLED_BINDING: &str = "battled";
 
 impl CardScript {
