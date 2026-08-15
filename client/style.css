@@ -33,6 +33,14 @@
     140px
   );
   --card-h: calc(var(--card-w) * 1.4);
+  /* A card inside a modal grid, where the printed text is what the decision
+     turns on and the corner preview cannot reach — it is painted under the
+     overlay by design.
+     The ceiling is what fits three across `min(860px, 88vw)` once each card's
+     5px option padding and 2px border are counted; 240px dropped one to a
+     second row. The height term is what runs out first, and 26vh keeps the
+     arrange modal's pool and both piles inside the 700px minimum window. */
+  --modal-card-w: clamp(150px, 26vh, 230px);
   /* DON!! given to a card, as tabs fanned under it. Derived from the card for
      the same reason every zone is: at a fixed size they were unreadable at one
      end of the card's range and overbearing at the other. */
@@ -993,7 +1001,14 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
   margin-bottom: 8px;
 }
 
+/* The Choose grid, the activate and attack targets, and the arrange pool all
+   use this, and a candidate in any of them is read here or nowhere. Both
+   variables are set: `--card-h` resolved against `:root`'s width before it
+   inherited, so redeclaring the width alone would leave every card the wrong
+   shape. Every derived font size reads `--card-w` off the card and follows. */
 .choose-grid {
+  --card-w: var(--modal-card-w);
+  --card-h: calc(var(--card-w) * 1.4);
   display: flex;
   flex-wrap: wrap;
   gap: 14px;
@@ -1092,22 +1107,46 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
   gap: 18px;
   margin-top: 18px;
 }
-.arrange-pile { flex: 1; min-width: 0; }
+.arrange-pile {
+  flex: 1;
+  min-width: 0;
+  /* A column, so the slot below is a flex item and can be what shrinks when
+     the modal runs out of window. No `min-height: 0` here or below: the
+     automatic minimum is what stops a squeezed pile collapsing to its label
+     and letting the slot inside paint over the footer. */
+  display: flex;
+  flex-direction: column;
+}
+/* Board size while the pool above is at reading size: a placed card is a
+   decision already made, and what it has left to say is its depth in the pile.
+   This is also what gives when the modal runs out of window, down to half a
+   card — every card in the pool carries the two buttons that place it, and
+   those are the only control this modal has. Half a card still shows a
+   placement's depth number, and the rest scrolls. */
 .arrange-slot {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
-  min-height: calc(var(--card-h) + 18px);
+  flex: 0 1 auto;
+  min-height: calc(var(--card-h) / 2);
+  overflow: auto;
   padding: 8px;
   border-radius: 9px;
   border: 1px dashed var(--line);
   background: rgba(0, 0, 0, 0.18);
 }
+/* An empty pile still has to read as somewhere a card goes. The slot's own
+   floor is half a card now that it is what gives when the modal runs out of
+   window, so the placeholder carries the full height instead — board height,
+   like the placed cards it stands in for, not the pool's reading size. */
 .arrange-empty {
   color: var(--muted);
   font-size: 12px;
   align-self: center;
   padding: 0 6px;
+  min-height: var(--card-h);
+  display: grid;
+  place-items: center;
 }
 .arrange-buttons {
   display: flex;
@@ -1506,13 +1545,51 @@ button:disabled:hover { background: var(--felt); border-color: var(--line); }
   border: 1px solid var(--line);
 }
 
-.panel.wide { width: min(860px, 88vw); }
+/* A column so the card grid is what gives when the panel runs out of window: at
+   reading size it no longer fits beside everything else at 700px, and the
+   footer holding Confirm is the one part that must never scroll off. The
+   panel's own scrollbar is the backstop for the rest. */
+.panel.wide {
+  width: min(860px, 88vw);
+  max-height: 92vh;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+.panel.wide > * { flex: 0 0 auto; }
+/* Only the scrolling boxes give, so what one loses here it keeps behind a
+   scrollbar rather than losing outright. */
+.panel.wide > .choose-grid,
+.panel.wide > .trash-grid,
+.panel.wide > #activate-targets {
+  flex: 0 1 auto;
+  min-height: 0;
+}
+/* The piles give too, but down to their own content minimum rather than to
+   nothing — see `.arrange-pile`. */
+.panel.wide > .arrange-piles { flex: 0 1 auto; }
+/* The activate modal wraps its grid in a label, so the shrink has to reach
+   through one more box to get to it. */
+#activate-targets {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+#activate-targets > .choose-grid { flex: 0 1 auto; min-height: 0; }
 
 .trash-head { display: flex; align-items: center; gap: 12px; }
 .trash-head h1 { margin: 0; }
 .trash-head button { margin-left: auto; }
 
+/* The one grid that is not a question: dozens of cards late in a game, and
+   nothing in here is being picked. Reading size would make a full trash several
+   screenfuls of scroll, so it stays dense enough to scan and the click — free,
+   since there is nothing to select — opens the card at full size instead.
+   Its own size rather than the board's, which is set by how many cards fit
+   across a mat row and has nothing to say about this panel. */
 .trash-grid {
+  --card-w: clamp(96px, 13vh, 150px);
+  --card-h: calc(var(--card-w) * 1.4);
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
@@ -1520,6 +1597,12 @@ button:disabled:hover { background: var(--felt); border-color: var(--line); }
   overflow-y: auto;
   padding: 4px 2px;
 }
+/* Only once the art it would open has arrived. */
+.trash-grid .card.readable { cursor: zoom-in; }
+/* Nothing in the trash has DON!! or a modifier on it, so the badge only repeats
+   the power already printed on the scan — and at this size it sits across the
+   card's own name. Kept where there is no art to read it off. */
+.trash-grid .card.has-art .badges { display: none; }
 
 /* ---- debug panel ---- */
 .debug-summary {
