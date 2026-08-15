@@ -11,6 +11,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod decks;
 mod ingest;
 mod render;
 mod session;
@@ -22,15 +23,16 @@ use base64::Engine;
 use op_cards::Cards;
 use op_core::card::CardDb;
 use op_core::script::ScriptSource;
-use op_core::DeckList;
+use op_deck::store::DeckStore;
 use serde::Serialize;
 use session::{CardInfo, Difficulty, Session, Snapshot};
 
-/// A deck as the setup menu needs it: what to show, and what to send back.
-#[derive(Serialize)]
-struct DeckChoice {
-    id: &'static str,
-    name: &'static str,
+/// The saved-deck directory, opened per call.
+///
+/// Cheap — it creates the directory and keeps a path — and re-reading each time
+/// means a deck imported in another window shows up without a restart.
+fn deck_store() -> Result<DeckStore, String> {
+    DeckStore::open(ingest::decks_dir()).map_err(|e| e.to_string())
 }
 
 /// The decks the client may offer.
@@ -40,27 +42,35 @@ struct DeckChoice {
 /// The previous copy in the markup is why ST-04 and ST-08 were fully scripted
 /// and playable while the picker still showed three decks.
 #[tauri::command]
-fn decks() -> Vec<DeckChoice> {
-    op_cards::decks::ALL
-        .iter()
-        .map(|d| DeckChoice {
-            id: d.id,
-            name: d.name,
-        })
-        .collect()
-}
-
-fn deck_by_name(name: &str) -> DeckList {
-    // Falling back rather than erroring: the id comes from our own menu, so an
-    // unknown one means the front end drifted, and a playable game beats a
-    // dead window. `op_cards::decks::by_name` is the strict form.
-    op_cards::decks::by_name(name).unwrap_or_else(op_cards::decks::st01)
+fn decks(state: tauri::State<'_, AppState>) -> Vec<decks::DeckChoice> {
+    let Ok(store) = deck_store() else {
+        return Vec::new();
+    };
+    let guard = state.cards.read().unwrap();
+    decks::choices(&store, guard.as_ref().map(Loaded::as_deck_data))
 }
 
 /// Card data, once it has been fetched and loaded.
+///
+/// Holds the concrete [`Cards`] rather than a `dyn ScriptSource`: the engine
+/// wants the trait object, but deck compatibility wants `CardSupport`, and one
+/// concrete value serves both.
 struct Loaded {
     db: Arc<CardDb>,
-    scripts: Arc<dyn ScriptSource + Send + Sync>,
+    cards: Arc<Cards>,
+}
+
+impl Loaded {
+    fn scripts(&self) -> Arc<dyn ScriptSource + Send + Sync> {
+        Arc::clone(&self.cards) as Arc<dyn ScriptSource + Send + Sync>
+    }
+
+    fn as_deck_data(&self) -> decks::Loaded<'_> {
+        decks::Loaded {
+            db: &self.db,
+            cards: &self.cards,
+        }
+    }
 }
 
 struct AppState {
@@ -93,10 +103,10 @@ impl AppState {
     fn load_cards(&self) -> Result<usize, String> {
         let db = CardDb::load_dir(self.cards_dir()).map_err(|e| e.to_string())?;
         let count = db.len();
-        let scripts: Arc<dyn ScriptSource + Send + Sync> = Arc::new(Cards::new(&db));
+        let cards = Arc::new(Cards::new(&db));
         *self.cards.write().unwrap() = Some(Loaded {
             db: Arc::new(db),
-            scripts,
+            cards,
         });
         Ok(count)
     }
@@ -213,22 +223,73 @@ fn bootstrap(app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> Bootst
     }
 }
 
+/// Reads a decklist, reports on it, and saves it when it is legal.
+#[tauri::command]
+fn import_deck(
+    state: tauri::State<'_, AppState>,
+    name: String,
+    text: String,
+) -> Result<decks::ImportReport, String> {
+    let guard = state.cards.read().unwrap();
+    let loaded = guard.as_ref().ok_or("card data is not loaded yet")?;
+    decks::import(&deck_store()?, loaded.as_deck_data(), &name, &text)
+}
+
+/// A saved deck in the interoperable text format, for the clipboard.
+#[tauri::command]
+fn export_deck(id: String) -> Result<String, String> {
+    let id = op_deck::store::DeckId::new(id).map_err(|e| e.to_string())?;
+    deck_store()?
+        .load(&id)
+        .map(|d| d.to_text())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn delete_deck(id: String) -> Result<(), String> {
+    let id = op_deck::store::DeckId::new(id).map_err(|e| e.to_string())?;
+    deck_store()?.delete(&id).map_err(|e| e.to_string())
+}
+
 #[derive(Serialize)]
 struct StartResult {
     snapshot: Snapshot,
     catalogue: Vec<CardInfo>,
 }
 
-#[tauri::command]
-fn new_game(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
+/// Everything the setup panel decides, as one value.
+///
+/// A struct rather than a parameter list because the list had grown past what
+/// anyone can read at a call site, and a `bool` in seventh position is the kind
+/// of argument that gets passed in the wrong order exactly once.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NewGameOptions {
+    /// `None` asks for a fresh one; the CLI's `--seed` equivalent.
     seed: Option<u64>,
     your_deck: String,
     ai_deck: String,
     difficulty: String,
     you_first: bool,
+    /// Play a deck this build cannot fully implement — see below.
+    allow_unsupported: bool,
+}
+
+#[tauri::command]
+fn new_game(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    options: NewGameOptions,
 ) -> Result<StartResult, String> {
+    let NewGameOptions {
+        seed,
+        your_deck,
+        ai_deck,
+        difficulty,
+        you_first,
+        allow_unsupported,
+    } = options;
+
     let guard = state.cards.read().unwrap();
     let loaded = guard.as_ref().ok_or("card data is not loaded yet")?;
 
@@ -239,12 +300,28 @@ fn new_game(
             .unwrap_or(0)
     });
 
-    let human = deck_by_name(&your_deck);
-    let ai = deck_by_name(&ai_deck);
+    let store = deck_store()?;
+    let human = decks::resolve_id(&store, &your_deck)?;
+    let ai = decks::resolve_id(&store, &ai_deck)?;
+
+    // A deck with a card whose text nothing implements will play — the card
+    // just silently does nothing, which loses games for reasons that look like
+    // engine bugs. Blocked by default, and overridable, because testing a deck
+    // that is not fully supported yet is a legitimate thing to want.
+    if !allow_unsupported {
+        for (list, whose) in [(&human, "Your deck"), (&ai, "The opponent's deck")] {
+            if !decks::is_supported(loaded.as_deck_data(), list) {
+                return Err(format!(
+                    "{whose} contains cards this build cannot play as printed. \
+                     Tick “allow unsupported cards” to play anyway."
+                ));
+            }
+        }
+    }
 
     let session = Session::new(
         Arc::clone(&loaded.db),
-        Arc::clone(&loaded.scripts),
+        loaded.scripts(),
         session::SessionConfig {
             seed,
             human_deck: human.clone(),
@@ -479,6 +556,9 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             bootstrap,
             decks,
+            import_deck,
+            export_deck,
+            delete_deck,
             new_game,
             choose,
             snapshot,
