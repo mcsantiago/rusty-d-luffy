@@ -117,6 +117,7 @@ pub fn derive_all(state: &GameState, db: &CardDb, scripts: &dyn ScriptSource) ->
     // III, where applying effects changes which effects apply — conditions are
     // evaluated against the *previous* pass's characteristics.
     let base = table.clone();
+    let mut derived = Derived { table };
     for _ in 0..FIXPOINT_LIMIT {
         let mut next = base.clone();
 
@@ -128,7 +129,7 @@ pub fn derive_all(state: &GameState, db: &CardDb, scripts: &dyn ScriptSource) ->
                     continue;
                 }
                 for effect in &scripts.script(card.def).permanent {
-                    if !conditions_hold(state, db, &table, source_id, None, &effect.conditions) {
+                    if !conditions_hold(state, db, &derived, source_id, None, &effect.conditions) {
                         continue;
                     }
                     for target in targets_of(state, db, source_id, &effect.scope) {
@@ -138,13 +139,13 @@ pub fn derive_all(state: &GameState, db: &CardDb, scripts: &dyn ScriptSource) ->
             }
         }
 
-        if next == table {
+        if next == derived.table {
             break;
         }
-        table = next;
+        derived.table = next;
     }
 
-    Derived { table }
+    derived
 }
 
 fn apply(ch: &mut Characteristics, kind: ModKind) {
@@ -195,15 +196,16 @@ fn targets_of(
 
 /// Evaluates an effect's conditions against the current state.
 ///
-/// `table` is the partially-derived characteristics table, so conditions that
-/// read power see the layers resolved so far — which is what 8-4-6 asks for.
+/// `derived` is the characteristics table — partially built when called from
+/// the fixpoint, so a condition that reads cost sees the layers resolved so
+/// far, which is what 8-4-6 asks for.
 ///
 /// `frame` is the resolving effect where there is one; conditions that read a
 /// binding are false without it.
 pub fn conditions_hold(
     state: &GameState,
     db: &CardDb,
-    _table: &[Characteristics],
+    derived: &Derived,
     source: CardInstanceId,
     frame: Option<&crate::effect::EffectFrame>,
     conditions: &[Condition],
@@ -223,21 +225,19 @@ pub fn conditions_hold(
             .leader
             .is_some_and(|l| db.get(state.card(l).def).has_type(ty)),
         // "If there is a Character with a cost of N" is not restricted to your
-        // own side.
+        // own side. Derived, not printed (2-7-6): nothing is printed at cost 0,
+        // so ST06-004 and ST08-009 read a cost their own deck manufactures.
         Condition::AnyCharacterWithCost(n) => [PlayerId::P0, PlayerId::P1].iter().any(|p| {
             state
                 .player(*p)
                 .characters
                 .iter()
-                .any(|&c| db.get(state.card(c).def).cost == *n)
+                .any(|&c| derived.get(c).effective_cost() == *n)
         }),
         // The controller's own hand. "3 or less" counts what is there when the
         // condition is read, which for ST03-017 is after its power boost.
         Condition::HandAtMost(n) => state.player(card.controller).hand.len() <= *n as usize,
-    }) && {
-        let _ = db;
-        true
-    }
+    })
 }
 
 /// Whether `card` matches every filter, evaluated against derived
