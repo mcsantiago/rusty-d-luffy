@@ -357,13 +357,11 @@ impl Game {
                 // topmost once the later pushes are underneath it.
                 for &card in bottom {
                     let owner = self.state.card(card).owner;
-                    self.state
-                        .move_card(card, owner, Zone::Deck, Placement::Bottom);
+                    self.move_card(card, owner, Zone::Deck, Placement::Bottom, events);
                 }
                 for &card in top.iter().rev() {
                     let owner = self.state.card(card).owner;
-                    self.state
-                        .move_card(card, owner, Zone::Deck, Placement::Top);
+                    self.move_card(card, owner, Zone::Deck, Placement::Top, events);
                 }
 
                 self.bind_current(&key, Vec::new());
@@ -655,15 +653,20 @@ impl Game {
 
         // Ordered per 3-7-6-1: room is made before the card is played.
         if let Some(victim) = replacing {
-            self.state
-                .move_card(victim, player, Zone::Trash, Placement::Top);
-            events.push(GameEvent::KnockedOut { card: victim });
+            self.move_card(victim, player, Zone::Trash, Placement::Top, events);
+            // Not `KnockedOut`: 3-7-6-1-1 makes this rule processing, and
+            // `Timing::OnCharacterKoed` is deliberately never queued for it.
+            // Logged as a K.O. it reads as a trigger the engine dropped.
+            events.push(GameEvent::CardMoved {
+                card: victim,
+                from: Zone::Character,
+                to: Zone::Trash,
+            });
         }
 
         match category {
             Category::Character => {
-                self.state
-                    .move_card(card, player, Zone::Character, Placement::Bottom);
+                self.move_card(card, player, Zone::Character, Placement::Bottom, events);
                 self.state.card_mut(card).played_on_turn = Some(self.state.turn);
                 events.push(GameEvent::CardPlayed {
                     player,
@@ -674,12 +677,18 @@ impl Game {
                 self.queue_autos(Timing::OnPlay, card, events);
             }
             Category::Stage => {
+                // 3-8-5-1: the second Stage trashes the first. `CardPlayed`
+                // names only the arriving card, so without this the one it
+                // replaced leaves the field unmentioned.
                 if let Some(existing) = self.state.player(player).stage {
-                    self.state
-                        .move_card(existing, player, Zone::Trash, Placement::Top);
+                    self.move_card(existing, player, Zone::Trash, Placement::Top, events);
+                    events.push(GameEvent::CardMoved {
+                        card: existing,
+                        from: Zone::Stage,
+                        to: Zone::Trash,
+                    });
                 }
-                self.state
-                    .move_card(card, player, Zone::Stage, Placement::Bottom);
+                self.move_card(card, player, Zone::Stage, Placement::Bottom, events);
                 events.push(GameEvent::CardPlayed {
                     player,
                     card,
@@ -705,8 +714,7 @@ impl Game {
                 // gives and the card is out of the hand before its own cost
                 // looks there — a "trash 1 card from your hand" cost must not
                 // be able to pay itself with the Event being played.
-                self.state
-                    .move_card(card, player, Zone::Trash, Placement::Top);
+                self.move_card(card, player, Zone::Trash, Placement::Top, events);
                 events.push(GameEvent::CardPlayed {
                     player,
                     card,
@@ -997,20 +1005,32 @@ impl Game {
         discard: &[CardInstanceId],
         events: &mut Vec<GameEvent>,
     ) -> Option<Pending> {
+        // 8-3-1-5: one event per DON!! rested, since nothing else carries the
+        // count — `EffectActivated` names only the source, so a `③` that rested
+        // three and one that rested none would read alike.
         for don in self
             .active_don(player)
             .into_iter()
             .take(cost.rest_don as usize)
         {
             self.state.card_mut(don).rested = true;
+            events.push(GameEvent::Rested { card: don });
         }
         if cost.rest_self {
             self.state.card_mut(card).rested = true;
             events.push(GameEvent::Rested { card });
         }
-        for &card in discard {
-            self.state
-                .move_card(card, player, Zone::Trash, Placement::Top);
+        // 10-2-14-1: the card is selected from the hand, so the log has to say
+        // which. On the `Pending::PayCost` path the answer is a bare
+        // `PayCost(true)` and names nothing.
+        for &trashed in discard {
+            let from = self.state.card(trashed).zone;
+            self.move_card(trashed, player, Zone::Trash, Placement::Top, events);
+            events.push(GameEvent::CardMoved {
+                card: trashed,
+                from,
+                to: Zone::Trash,
+            });
         }
         // Life cards come off the top and go to hand face-up. This is not
         // damage, so no `[Trigger]` activates (10-1-5 ties Triggers to damage).
@@ -1018,8 +1038,7 @@ impl Game {
             let Some(&top) = self.state.player(player).life.first() else {
                 break;
             };
-            self.state
-                .move_card(top, player, Zone::Hand, Placement::Top);
+            self.move_card(top, player, Zone::Hand, Placement::Top, events);
             events.push(GameEvent::LifeTaken {
                 player,
                 card: top,
@@ -1277,8 +1296,7 @@ impl Game {
             .counter
             .expect("filtered to cards with a Counter value");
 
-        self.state
-            .move_card(card, player, Zone::Trash, Placement::Top);
+        self.move_card(card, player, Zone::Trash, Placement::Top, events);
         self.state.modifiers.push(Modifier {
             target: to,
             kind: ModKind::Power(amount),
@@ -1358,8 +1376,7 @@ impl Game {
             owed = self.pay(player, card, &extra, &[], events);
         }
         // 8-4-2: the Event is trashed, then its effect is carried out.
-        self.state
-            .move_card(card, player, Zone::Trash, Placement::Top);
+        self.move_card(card, player, Zone::Trash, Placement::Top, events);
         events.push(GameEvent::CardPlayed {
             player,
             card,
@@ -1493,7 +1510,7 @@ impl Game {
         events: &mut Vec<GameEvent>,
     ) {
         let to = if banish { Zone::Trash } else { Zone::Hand };
-        self.state.move_card(card, player, to, Placement::Top);
+        self.move_card(card, player, to, Placement::Top, events);
         events.push(GameEvent::LifeTaken {
             player,
             card,
@@ -1533,11 +1550,39 @@ impl Game {
         }
     }
 
+    /// [`GameState::move_card`], reporting the DON!! it sent back (6-5-5-4): a
+    /// cost area that grows on its own reads like one that was never spent.
+    ///
+    /// Every move in this file goes through here, so none can detach DON!!
+    /// silently. It emits no [`GameEvent::CardMoved`] — most callers already
+    /// name the move they made, and only the rest push one.
+    ///
+    /// The detach therefore lands just *before* the K.O. or move that explains
+    /// it. Reporting it after would read better and is not worth the price:
+    /// the caller would have to remember to flush it, which is the forgetting
+    /// this exists to prevent, and `from` names the card either way.
+    fn move_card(
+        &mut self,
+        id: CardInstanceId,
+        to_controller: PlayerId,
+        to: Zone,
+        placement: Placement,
+        events: &mut Vec<GameEvent>,
+    ) {
+        for don in self.state.move_card(id, to_controller, to, placement) {
+            let player = self.state.card(don).owner;
+            events.push(GameEvent::DonDetached {
+                player,
+                don,
+                from: id,
+            });
+        }
+    }
+
     fn knock_out(&mut self, card: CardInstanceId, events: &mut Vec<GameEvent>) {
         let was_character = self.db.get(self.state.card(card).def).category == Category::Character;
         let owner = self.state.card(card).owner;
-        self.state
-            .move_card(card, owner, Zone::Trash, Placement::Top);
+        self.move_card(card, owner, Zone::Trash, Placement::Top, events);
         events.push(GameEvent::KnockedOut { card });
 
         // "When a Character is K.O.'d" watches the whole board, not the card
@@ -2188,8 +2233,7 @@ impl Game {
                         let Some(&top) = self.state.player(victim).life.first() else {
                             break;
                         };
-                        self.state
-                            .move_card(top, victim, Zone::Trash, Placement::Top);
+                        self.move_card(top, victim, Zone::Trash, Placement::Top, events);
                         // Not damage: no `[Trigger]` (10-1-5) and nothing to
                         // hand. Reported as a plain move rather than as
                         // `LifeTaken`, whose `banished` flag names the keyword
@@ -2207,12 +2251,21 @@ impl Game {
             Op::MoveTo { key, to } => {
                 for &target in frame.bound(&key) {
                     let owner = self.state.card(target).owner;
+                    let from = self.state.card(target).zone;
                     let placement = if to == Zone::Deck {
                         Placement::Bottom
                     } else {
                         Placement::Top
                     };
-                    self.state.move_card(target, owner, to, placement);
+                    self.move_card(target, owner, to, placement, events);
+                    // The one mover with nothing else to name it. A bounce read
+                    // later without this looks like a card that never left, and
+                    // trashing it from hand for its Counter reads as 7-1-3-2-1.
+                    events.push(GameEvent::CardMoved {
+                        card: target,
+                        from,
+                        to,
+                    });
                 }
                 OpOutcome::Advance
             }
@@ -2227,8 +2280,13 @@ impl Game {
                             if self.state.player(player).characters.len() >= 5 {
                                 continue;
                             }
-                            self.state
-                                .move_card(card, player, Zone::Character, Placement::Bottom);
+                            self.move_card(
+                                card,
+                                player,
+                                Zone::Character,
+                                Placement::Bottom,
+                                events,
+                            );
                             self.state.card_mut(card).played_on_turn = Some(self.state.turn);
                             events.push(GameEvent::CardPlayed {
                                 player,
@@ -2238,12 +2296,23 @@ impl Game {
                             self.queue_autos(Timing::OnPlay, card, events);
                         }
                         Category::Stage => {
+                            // 3-8-5-1 again, reached when an effect does the
+                            // playing rather than the player.
                             if let Some(existing) = self.state.player(player).stage {
-                                self.state
-                                    .move_card(existing, player, Zone::Trash, Placement::Top);
+                                self.move_card(
+                                    existing,
+                                    player,
+                                    Zone::Trash,
+                                    Placement::Top,
+                                    events,
+                                );
+                                events.push(GameEvent::CardMoved {
+                                    card: existing,
+                                    from: Zone::Stage,
+                                    to: Zone::Trash,
+                                });
                             }
-                            self.state
-                                .move_card(card, player, Zone::Stage, Placement::Bottom);
+                            self.move_card(card, player, Zone::Stage, Placement::Bottom, events);
                             events.push(GameEvent::CardPlayed {
                                 player,
                                 card,
@@ -2269,11 +2338,9 @@ impl Game {
                     for card in looked {
                         let player = self.state.card(card).owner;
                         if chosen.contains(&card) {
-                            self.state
-                                .move_card(card, player, Zone::Hand, Placement::Bottom);
+                            self.move_card(card, player, Zone::Hand, Placement::Bottom, events);
                         } else {
-                            self.state
-                                .move_card(card, player, Zone::Deck, Placement::Bottom);
+                            self.move_card(card, player, Zone::Deck, Placement::Bottom, events);
                         }
                     }
                     return OpOutcome::Advance;

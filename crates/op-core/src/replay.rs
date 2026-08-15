@@ -731,6 +731,7 @@ fn event_ids(event: &GameEvent) -> Vec<crate::ids::CardInstanceId> {
         | E::LifeTaken { card, .. }
         | E::TriggerActivated { card, .. } => vec![*card],
         E::DonGiven { don, to, .. } => vec![*don, *to],
+        E::DonDetached { don, from, .. } => vec![*don, *from],
         E::AttackDeclared { attacker, target } => vec![*attacker, *target],
         E::Blocked { blocker, replacing } => vec![*blocker, *replacing],
         E::Countered { card, target, .. } => vec![*card, *target],

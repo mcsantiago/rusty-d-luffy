@@ -2316,3 +2316,308 @@ fn rule_10_2_14_1_an_events_hand_cost_asks_which_card_to_trash() {
         "the card named is the card spent"
     );
 }
+
+// ---- what the log records --------------------------------------------------
+//
+// A session log is the record of what happened: `op-replay` re-steps it and the
+// rules-auditor screens it. A state change that emits no event leaves a reader
+// reconstructing both hands and both DON!! pools before they can tell legal
+// play from a broken engine, so these pin the events rather than the position.
+
+/// A Character returned to hand by an effect. Without an event the card simply
+/// reappears in a hand it was never seen entering — and read later, trashing it
+/// for its Counter value looks like the flatly illegal 7-1-3-2-1.
+#[test]
+fn an_effect_that_returns_a_character_to_hand_reports_the_move() {
+    let cards = TestCards::new();
+    let bounces_itself = auto_script(
+        Timing::EndOfYourTurn,
+        vec![EffectOp::MoveTo {
+            key: SELF_BINDING.to_string(),
+            to: Zone::Hand,
+        }],
+    );
+    let (mut game, _) = game_with(
+        &cards,
+        TestScripts::default().with(cards.def("CHR-5K"), bounces_itself),
+        7,
+        ("LDR-001", deck_of("CHR-2K", 30)),
+        ("LDR-002", deck_of("CHR-2K", 30)),
+    );
+    to_main(&mut game);
+    let bouncer = put_in_play(&mut game, PlayerId::P0, "CHR-5K");
+
+    let events = game.step(Action::EndMainPhase).unwrap().events;
+
+    assert_eq!(game.state.card(bouncer).zone, Zone::Hand);
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            GameEvent::CardMoved {
+                card,
+                from: Zone::Character,
+                to: Zone::Hand
+            } if *card == bouncer
+        )),
+        "the bounce should be in the log, got {events:#?}"
+    );
+}
+
+/// 3-7-6-1-1: trashing a Character to make room for a sixth "is treated as
+/// processing a rule, and no effect can be applied" — so it is not a K.O., and
+/// `Timing::OnCharacterKoed` is deliberately never queued. Logged as a K.O. it
+/// reads as a "[When a Character is K.O.'d]" trigger the engine dropped.
+#[test]
+fn rule_3_7_6_1_1_the_replacement_trash_is_not_reported_as_a_ko() {
+    let cards = TestCards::new();
+    let (mut game, _) = game_with(
+        &cards,
+        TestScripts::default(),
+        7,
+        ("LDR-001", deck_of("CHR-2K", 30)),
+        ("LDR-002", deck_of("CHR-2K", 30)),
+    );
+    to_main(&mut game);
+    end_turn(&mut game);
+    end_turn(&mut game);
+
+    let mut board = Vec::new();
+    for _ in 0..5 {
+        board.push(put_in_play(&mut game, PlayerId::P0, "CHR-2K"));
+    }
+    let victim = board[2];
+    let in_hand = game.state.player(PlayerId::P0).hand[0];
+
+    let events = game
+        .step(Action::PlayCard {
+            card: in_hand,
+            replacing: Some(victim),
+        })
+        .unwrap()
+        .events;
+
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            GameEvent::CardMoved {
+                card,
+                from: Zone::Character,
+                to: Zone::Trash
+            } if *card == victim
+        )),
+        "the replacement trash should say where the Character went, got {events:#?}"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, GameEvent::KnockedOut { .. })),
+        "3-7-6-1-1: this is rule processing, not a K.O., got {events:#?}"
+    );
+}
+
+/// 3-8-5-1: the Stage twin of the rule above — a second Stage trashes the
+/// first. `CardPlayed` names the arriving card, so without this the one it
+/// replaced leaves the field unmentioned.
+#[test]
+fn rule_3_8_5_1_the_stage_a_new_stage_replaces_says_where_it_went() {
+    let cards = TestCards::new();
+    let (mut game, _) = game_with(
+        &cards,
+        TestScripts::default(),
+        7,
+        ("LDR-001", deck_of("STG-1K", 30)),
+        ("LDR-002", deck_of("CHR-2K", 30)),
+    );
+    to_main(&mut game);
+    end_turn(&mut game);
+    end_turn(&mut game); // turn 3: enough DON!! for two Stages
+
+    let first = game.state.player(PlayerId::P0).hand[0];
+    game.step(Action::PlayCard {
+        card: first,
+        replacing: None,
+    })
+    .unwrap();
+    assert_eq!(game.state.card(first).zone, Zone::Stage);
+
+    let second = game.state.player(PlayerId::P0).hand[0];
+    let events = game
+        .step(Action::PlayCard {
+            card: second,
+            replacing: None,
+        })
+        .unwrap()
+        .events;
+
+    assert_eq!(game.state.card(first).zone, Zone::Trash);
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            GameEvent::CardMoved {
+                card,
+                from: Zone::Stage,
+                to: Zone::Trash
+            } if *card == first
+        )),
+        "the replaced Stage should say where it went, got {events:#?}"
+    );
+}
+
+/// 8-3-1-5: a `①`-style cost rests that many active DON!! from the cost area.
+/// Nothing else in the log carries the count — `EffectActivated` names only the
+/// source — so a `③` that rested three and one that rested none read alike.
+#[test]
+fn rule_8_3_1_5_don_rested_for_a_cost_is_reported() {
+    let cards = TestCards::new();
+    let costs_two_don = CardScript {
+        activated: vec![op_core::script::ActivatedEffect {
+            conditions: vec![],
+            cost: ActivationCost {
+                rest_don: 2,
+                ..Default::default()
+            },
+            ops: vec![draw_for(Who::You)],
+            slot: 0,
+            once_per_turn: false,
+        }],
+        ..CardScript::default()
+    };
+    let (mut game, _) = game_with(
+        &cards,
+        TestScripts::default().with(cards.def("CHR-5K"), costs_two_don),
+        7,
+        ("LDR-001", deck_of("CHR-2K", 30)),
+        ("LDR-002", deck_of("CHR-2K", 30)),
+    );
+    to_main(&mut game);
+    end_turn(&mut game);
+    end_turn(&mut game); // turn 3: three DON!! in the cost area
+
+    let source = put_in_play(&mut game, PlayerId::P0, "CHR-5K");
+    let events = game
+        .step(Action::ActivateEffect {
+            card: source,
+            slot: 0,
+            discard: vec![],
+        })
+        .unwrap()
+        .events;
+
+    let rested: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            GameEvent::Rested { card } => Some(*card),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        rested.len(),
+        2,
+        "one event per DON!! the cost rested, got {events:#?}"
+    );
+    assert!(
+        rested
+            .iter()
+            .all(|&c| game.state.card(c).zone == Zone::Cost && game.state.card(c).rested),
+        "the cost rests DON!! in the cost area, not the source"
+    );
+}
+
+/// 10-2-14-1: "Trash" selects a card from the hand. On the `Pending::PayCost`
+/// path the answer is a bare `PayCost(true)` — unlike `ActivateEffect`, whose
+/// `discard` field names the card — so without an event nothing in the log says
+/// which card was spent (8-3-1).
+#[test]
+fn rule_10_2_14_1_a_hand_trashed_for_a_cost_names_the_card() {
+    let cards = TestCards::new();
+    let on_play_costing_a_card = CardScript {
+        auto: vec![AutoEffect {
+            timing: Timing::OnPlay,
+            conditions: Vec::new(),
+            cost: ActivationCost {
+                trash_from_hand: 1,
+                ..Default::default()
+            },
+            ops: vec![draw_for(Who::You)],
+            slot: 0,
+            once_per_turn: false,
+        }],
+        ..CardScript::default()
+    };
+    let (mut game, _) = game_with(
+        &cards,
+        TestScripts::default().with(cards.def("CHR-2K"), on_play_costing_a_card),
+        7,
+        ("LDR-001", deck_of("CHR-2K", 30)),
+        ("LDR-002", deck_of("CHR-2K", 30)),
+    );
+    to_main(&mut game);
+
+    let played = game.state.player(PlayerId::P0).hand[0];
+    game.step(Action::PlayCard {
+        card: played,
+        replacing: None,
+    })
+    .unwrap();
+    assert!(matches!(game.pending(), Some(Pending::PayCost { .. })));
+
+    game.step(Action::PayCost(true)).unwrap();
+
+    // Agreeing to the cost does not pay it: 8-4-4 leaves which card to the
+    // player, so the trash is a separate answer. The event still has to name
+    // whichever they picked.
+    let spent = game.state.player(PlayerId::P0).hand[0];
+    let events = game
+        .step(Action::Choose { cards: vec![spent] })
+        .unwrap()
+        .events;
+
+    assert_eq!(game.state.card(spent).zone, Zone::Trash);
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            GameEvent::CardMoved {
+                card,
+                from: Zone::Hand,
+                to: Zone::Trash
+            } if *card == spent
+        )),
+        "the cost should name the card it trashed, got {events:#?}"
+    );
+}
+
+/// 6-5-5-4: a card given DON!! that leaves the field sends that DON!! back to
+/// the cost area, rested. Unreported, the payer's pool grows between the K.O.
+/// and the next Refresh with nothing in the log to account for it.
+#[test]
+fn rule_6_5_5_4_don_detaching_from_a_koed_character_is_reported() {
+    let cards = TestCards::new();
+    let kos_itself_at_end = auto_script(Timing::EndOfYourTurn, vec![kos_itself()]);
+    let (mut game, _) = game_with(
+        &cards,
+        TestScripts::default().with(cards.def("CHR-5K"), kos_itself_at_end),
+        7,
+        ("LDR-001", deck_of("CHR-2K", 30)),
+        ("LDR-002", deck_of("CHR-2K", 30)),
+    );
+    to_main(&mut game);
+    let victim = put_in_play(&mut game, PlayerId::P0, "CHR-5K");
+    game.step(Action::GiveDon { to: victim }).unwrap();
+    let don = game.state.card(victim).attached_don[0];
+
+    let events = game.step(Action::EndMainPhase).unwrap().events;
+
+    assert_eq!(game.state.card(don).zone, Zone::Cost);
+    assert!(game.state.card(don).rested);
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            GameEvent::DonDetached {
+                player,
+                don: d,
+                from
+            } if *player == PlayerId::P0 && *d == don && *from == victim
+        )),
+        "the DON!! coming back should be in the log, got {events:#?}"
+    );
+}

@@ -357,16 +357,16 @@ impl GameState {
     /// Per 3-1-6 a card leaving the Character or Stage area is a new object:
     /// modifiers applied to it are dropped, and any DON!! given to it returns
     /// to the cost area rested (6-5-5-4). Both are handled here so no caller can
-    /// forget.
+    /// forget. That DON!! is returned, since only the caller can report it.
     pub fn move_card(
         &mut self,
         id: CardInstanceId,
         to_controller: PlayerId,
         to: Zone,
         placement: Placement,
-    ) {
+    ) -> Vec<CardInstanceId> {
         let from = self.card(id).zone;
-        self.detach_don(id);
+        let detached = self.detach_don(id);
         self.lift(id);
         self.put(id, to_controller, to, placement);
 
@@ -377,18 +377,20 @@ impl GameState {
             c.played_on_turn = None;
             c.used_once_per_turn.clear();
         }
+        detached
     }
 
     /// Returns every DON!! given to `id` to its owner's cost area, rested
-    /// (6-5-5-4).
-    pub fn detach_don(&mut self, id: CardInstanceId) {
+    /// (6-5-5-4), and reports which they were.
+    pub fn detach_don(&mut self, id: CardInstanceId) -> Vec<CardInstanceId> {
         let dons = std::mem::take(&mut self.card_mut(id).attached_don);
-        for don in dons {
+        for &don in &dons {
             let owner = self.card(don).owner;
             self.lift(don);
             self.put(don, owner, Zone::Cost, Placement::Bottom);
             self.card_mut(don).rested = true;
         }
+        dons
     }
 
     /// Cards in the Leader and Character areas of `p` — everything that can

@@ -169,8 +169,7 @@ pub struct Snapshot {
     /// Cards that reached a trash pile since the last decision.
     ///
     /// Built from the events that name the card — a K.O., a Counter spent, a
-    /// banished Life card. A card trashed to pay an activation cost is not
-    /// here, because the engine emits no event naming it.
+    /// banished Life card, a move an effect or a cost made.
     pub to_trash: Vec<CardToTrash>,
     /// The Life card whose [Trigger] the human is being asked about.
     ///
@@ -478,9 +477,8 @@ impl Session {
 
     /// A card that has just landed in a trash pile.
     ///
-    /// Only the events that name a card can be used, which leaves one real
-    /// gap: trashing a card to pay an activation cost — ST02-001's leader and
-    /// several ST-06 cards — emits nothing naming it, so it cannot be shown.
+    /// Only the events that name a card can be used, so a move into a deck or
+    /// a hand the viewer may not look at arrives redacted and is skipped.
     fn note_card_to_trash(&mut self, event: &op_core::PlayerEvent) {
         use op_core::PlayerEvent as E;
 
@@ -508,6 +506,30 @@ impl Session {
                 },
             ),
             E::Countered { card, .. } => (*card, "hand", "played as a Counter".to_string()),
+            // What an effect or a cost moved to the trash. The 3-7-6-1 and
+            // 3-8-5-1 replacement trashes come through here too, and are not
+            // K.O.s.
+            //
+            // A card from hand went to pay a cost, and costs are paid *before*
+            // their effect announces itself — so `resolving` still holds
+            // whatever ran last, and naming it would credit the wrong card.
+            E::CardMoved {
+                card,
+                from,
+                to: op_core::Zone::Trash,
+            } => (
+                *card,
+                match from {
+                    op_core::Zone::Hand => "hand",
+                    op_core::Zone::Life => "life",
+                    _ => "field",
+                },
+                match (from, &self.resolving) {
+                    (op_core::Zone::Hand, _) => "trashed".to_string(),
+                    (_, Some(by)) => format!("trashed by {by}"),
+                    (_, None) => "trashed".to_string(),
+                },
+            ),
             E::LifeTaken {
                 card,
                 banished: true,

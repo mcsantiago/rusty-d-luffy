@@ -6,7 +6,7 @@
 
 use op_core::card::CardDb;
 use op_core::view::{PlayerSide, PlayerView, VisibleCard};
-use op_core::{Action, CardRef, DonClass, Game, PlayerEvent, PlayerId};
+use op_core::{Action, CardRef, DonClass, Game, PlayerEvent, PlayerId, Zone};
 
 const RULE: &str = "──────────────────────────────────────────────────────────────";
 
@@ -296,6 +296,14 @@ pub fn event(event: &PlayerEvent, game: &Game, viewer: PlayerId) -> Option<Strin
             }
         ),
         E::KnockedOut { card } => format!("{} is K.O.'d", name(*card)),
+        // A card leaving an area it was visible in. Without a line the board
+        // readout simply differs from the one before it.
+        E::CardMoved { card, from, to } => match (from, to) {
+            (_, Zone::Hand) => format!("{} returns to hand", name(*card)),
+            (_, Zone::Trash) => format!("{} is trashed", name(*card)),
+            (_, Zone::Deck) => format!("{} goes back to the deck", name(*card)),
+            _ => return None,
+        },
         E::DamageDealt { player, amount } => {
             format!(
                 "{} take{} {amount} damage",
