@@ -150,6 +150,8 @@ fn visible_card(
         number: revealed.then(|| db.get(card.def).number.clone()),
         rested: card.rested,
         attached_don: card.attached_don.len(),
+        // 2-6-2: the printed `Option` is a presence test only because `CardDb`
+        // normalises it to the category — see `CardDef::power`.
         power: revealed
             .then(|| db.get(card.def).power.map(|_| derived.power(id)))
             .flatten(),
