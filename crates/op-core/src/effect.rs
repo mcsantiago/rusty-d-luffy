@@ -394,6 +394,11 @@ pub enum Condition {
     HandAtMost(u8),
 }
 
+/// Key on the [`crate::action::Pending::Choose`] a "trash N cards from your
+/// hand" cost raises (10-2-14-1). It names the question rather than binding an
+/// answer: the cards chosen are spent as payment, not read back by an op.
+pub const COST_TRASH_KEY: &str = "cost:trash-from-hand";
+
 /// An auto effect's cost, offered to its controller before the effect runs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingCost {

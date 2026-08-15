@@ -10,6 +10,7 @@ use std::sync::Arc;
 use op_cards::Cards;
 use op_core::action::Pending;
 use op_core::card::{CardDb, Keyword};
+use op_core::effect::COST_TRASH_KEY;
 use op_core::script::ScriptSource;
 use op_core::state::Placement;
 use op_core::zone::Zone;
@@ -206,12 +207,19 @@ fn battle_through(game: &mut Game) {
     }
 }
 
-/// Agrees to an auto effect's activation cost.
+/// Agrees to an auto effect's activation cost, and names a card where the cost
+/// takes one from hand.
 ///
 /// An auto effect with a non-free cost now asks before spending anything
 /// (8-3-1-4), so a test that wants the effect to resolve has to say yes. The
 /// assertion is the point: if the prompt stops appearing, these tests should
 /// fail rather than quietly go back to testing forced payment.
+///
+/// Which card a hand cost takes is the player's too (10-2-14-1), so it asks a
+/// second question. Answered with the leading option — the front of the hand,
+/// which is what the engine used to take unasked — so these tests pin the same
+/// outcome as before. `rules::rule_10_2_14_1_a_hand_cost_asks_which_card_to_trash`
+/// is what holds that gate.
 fn pay_cost(game: &mut Game) {
     assert!(
         matches!(game.pending(), Some(Pending::PayCost { .. })),
@@ -219,6 +227,16 @@ fn pay_cost(game: &mut Game) {
         game.pending()
     );
     game.step(Action::PayCost(true)).unwrap();
+
+    // Matched on the key, so an effect that asks a question of its own on
+    // resolving is left for the test to answer.
+    if matches!(game.pending(), Some(Pending::Choose { key, .. }) if key == COST_TRASH_KEY) {
+        let answer = legal_actions(game)
+            .into_iter()
+            .next()
+            .expect("a payable hand cost always has a legal answer");
+        game.step(answer).unwrap();
+    }
 }
 
 /// Answers a pending `DON!! −X`, if it asked at all.
