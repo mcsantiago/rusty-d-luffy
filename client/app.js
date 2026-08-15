@@ -94,8 +94,9 @@ async function art(number) {
  *
  * `preview` drops the corner panel too, which every overlay wants: the panel is
  * painted under them by design, so a hover wired to it from inside one is a
- * hover that does nothing. The battle modal has a second reason — it shows the
- * cards it is about at full size already.
+ * hover that does nothing. Each overlay answers for itself instead — the
+ * question grids draw their candidates at reading size, the trash opens one at
+ * full size on a click, and the battle modal shows its two cards large already.
  */
 function cardEl(
   card,
@@ -629,12 +630,30 @@ function renderTrash(side, prefix, label) {
 
 function openTrash(side, label) {
   $("trash-title").textContent = `${label} trash`;
-  $("trash-sub").textContent =
-    `${side.trash.length} card(s), most recent first`;
+  const count = `${side.trash.length} card(s), most recent first`;
+  $("trash-sub").textContent = count;
   const grid = $("trash-grid");
   grid.innerHTML = "";
   for (const card of side.trash) {
-    grid.appendChild(cardEl(card, { plain: true, preview: false }));
+    const el = cardEl(card, { plain: true, preview: false });
+    // The one grid where a click means nothing yet, so it can mean "let me read
+    // this" — the gesture the question grids have already spent on picking.
+    if (card.number) {
+      el.addEventListener("click", async (e) => {
+        // A click that reaches the document is taken for a miss.
+        e.stopPropagation();
+        const uri = await art(card.number);
+        if (uri) openZoom(uri, card.number);
+      });
+      // Both the cursor and the offer wait on the art: with none cached there
+      // is nothing to open, and an offer that does nothing is worse than none.
+      art(card.number).then((uri) => {
+        if (!uri || !grid.contains(el)) return;
+        el.classList.add("readable");
+        $("trash-sub").textContent = `${count} — click one to read it`;
+      });
+    }
+    grid.appendChild(el);
   }
   $("trash-modal").hidden = false;
 }
