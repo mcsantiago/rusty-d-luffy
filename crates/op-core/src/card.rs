@@ -92,8 +92,11 @@ pub struct CardDef {
     pub cost: u8,
     /// Life value, Leaders only (2-9-3).
     pub life: Option<u8>,
+    /// Printed power. `Some` for Leaders and Characters, `None` for everything
+    /// else (2-6-2) — normalised at load, so it is safe as a presence test.
     pub power: Option<i32>,
-    /// Counter value (2-10). Characters only.
+    /// Counter value (2-10). Characters only, and optional even there: `None` is
+    /// the printed `-`, which no card prints as 0.
     pub counter: Option<i32>,
     /// Trait list, e.g. `{Straw Hat Crew}`. Card text filters on these.
     pub types: Vec<String>,
@@ -343,6 +346,15 @@ fn convert(raw: RawCard) -> Result<CardDef, CardDbError> {
         _ => (raw.cost.unwrap_or(0) as u8, None),
     };
 
+    // 2-6-2: a Leader or Character has a power; nothing else does. Upstream
+    // writes null for the 149 whose printed power is 0 (ST08-009 Makino,
+    // OP01-006 Otama), so `is_some()` cannot mean "has a power" — category
+    // decides that, and the null becomes the 0 it stands for.
+    let power = match category {
+        Category::Leader | Category::Character => Some(raw.power.unwrap_or(0) as i32),
+        _ => None,
+    };
+
     let effect = text(raw.effect);
     let keywords = effect.as_deref().map(scan_keywords).unwrap_or_default();
 
@@ -353,7 +365,7 @@ fn convert(raw: RawCard) -> Result<CardDef, CardDbError> {
         colors: raw.colors.iter().filter_map(|c| Color::parse(c)).collect(),
         cost,
         life,
-        power: raw.power.map(|p| p as i32),
+        power,
         counter: raw.counter.map(|c| c as i32),
         types: raw.types,
         attributes: raw.attributes,
