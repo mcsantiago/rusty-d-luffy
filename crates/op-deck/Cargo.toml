@@ -1,5 +1,5 @@
 [package]
-name = "op-cards"
+name = "op-deck"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,16 +8,6 @@ repository.workspace = true
 
 [dependencies]
 op-core = { workspace = true }
-op-deck = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
-
-[dev-dependencies]
-rand = { workspace = true }
-
-[[bin]]
-name = "coverage"
-path = "src/bin/coverage.rs"
-
-[[bin]]
-name = "dump-scripts"
-path = "src/bin/dump_scripts.rs"
+thiserror = { workspace = true }

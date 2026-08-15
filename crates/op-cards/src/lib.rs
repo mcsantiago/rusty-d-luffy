@@ -10,7 +10,7 @@ pub mod decks;
 pub mod dsl;
 pub mod sets;
 
-use op_core::card::CardDb;
+use op_core::card::{CardDb, CardDef};
 use op_core::ids::CardDefId;
 use op_core::script::{CardScript, ScriptSource};
 use op_core::validate::{validate_script, Diagnostic};
@@ -59,6 +59,66 @@ impl Cards {
 impl ScriptSource for Cards {
     fn script(&self, def: CardDefId) -> &CardScript {
         self.scripts.get(def.index()).unwrap_or(&self.empty)
+    }
+}
+
+/// Why a card does, or does not, play as printed.
+///
+/// One classification with two consumers: the `coverage` binary, which reports
+/// it per set, and [`op_deck::compat`], which reports it per deck. They were
+/// always going to answer the same question, and two implementations of it
+/// would drift the first time a new way to be unplayable appeared.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Coverage {
+    /// Has a script, and the script is well-formed.
+    Scripted,
+    /// Needs no script: no rules text at all, or text that is entirely a
+    /// printed keyword the database already carries.
+    NoScriptNeeded,
+    /// Scripted, but [`validate_script`] finds the script does less than the
+    /// printed text says.
+    Malformed(Vec<Diagnostic>),
+    /// Has rules text and no script. It will play — as a vanilla body, with its
+    /// text silently doing nothing, which is the case worth warning about.
+    Unscripted,
+}
+
+impl Cards {
+    /// How completely this build implements one card.
+    pub fn coverage(&self, def: CardDefId, card: &CardDef) -> Coverage {
+        let script = self.script(def);
+        if !script.is_vanilla() {
+            let problems = validate_script(script);
+            return if problems.is_empty() {
+                Coverage::Scripted
+            } else {
+                Coverage::Malformed(problems)
+            };
+        }
+        if card.effect.is_none() && card.trigger.is_none() {
+            return Coverage::NoScriptNeeded;
+        }
+        if KEYWORD_ONLY.contains(&card.number.as_str()) {
+            return Coverage::NoScriptNeeded;
+        }
+        Coverage::Unscripted
+    }
+}
+
+impl op_deck::compat::CardSupport for Cards {
+    fn support(&self, def: CardDefId, card: &CardDef) -> op_deck::compat::Support {
+        use op_deck::compat::Support;
+        match self.coverage(def, card) {
+            Coverage::Scripted | Coverage::NoScriptNeeded => Support::Full,
+            Coverage::Malformed(problems) => Support::Partial(
+                problems
+                    .iter()
+                    .map(|d| d.to_string())
+                    .collect::<Vec<_>>()
+                    .join("; "),
+            ),
+            Coverage::Unscripted => Support::Unsupported("card script unavailable".into()),
+        }
     }
 }
 
