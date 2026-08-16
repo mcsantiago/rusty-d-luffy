@@ -25,6 +25,40 @@
           <select id="ai-deck"></select>
         </label>
 
+        <!-- Open by default, and `open` written down rather than left to the
+             engine's default for a closed `<details>`: importing is the new
+             thing on this panel, and a fold would hide it. -->
+        <details id="deck-manager" open>
+          <summary>Import &amp; manage decks</summary>
+
+          <label>
+            Deck name
+            <input
+              type="text"
+              id="import-name"
+              placeholder="Taken from the Leader if left blank"
+            />
+          </label>
+
+          <label>
+            Decklist
+            <textarea
+              id="import-text"
+              rows="6"
+              spellcheck="false"
+              placeholder="1 ST01-001&#10;4 ST01-002&#10;4 ST01-003&#10;…"
+            ></textarea>
+          </label>
+
+          <div class="deck-actions">
+            <button id="import-run" class="ghost">Import</button>
+            <button id="export-run" class="ghost">Copy your deck</button>
+            <button id="delete-run" class="ghost danger">Delete</button>
+          </div>
+
+          <div id="import-report" class="import-report" hidden></div>
+        </details>
+
         <label>
           Difficulty
           <select id="difficulty">
@@ -37,6 +71,14 @@
         <label class="check">
           <input type="checkbox" id="you-first" checked />
           You go first
+        </label>
+
+        <!-- A deck can be perfectly legal and still contain a card this build
+             does not implement; that card plays as a vanilla body and quietly
+             loses games. Blocked by default, overridable on purpose. -->
+        <label class="check">
+          <input type="checkbox" id="allow-unsupported" />
+          Allow unsupported cards
         </label>
 
         <button id="start" class="primary">Start game</button>

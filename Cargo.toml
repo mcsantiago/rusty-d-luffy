@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/op-core",
     "crates/op-cards",
+    "crates/op-deck",
     "crates/op-ai",
     "crates/op-cli",
     "crates/op-desktop",
@@ -22,6 +23,7 @@ repository = "https://github.com/mcsantiago/rusty-d-luffy"
 [workspace.dependencies]
 op-core = { path = "crates/op-core" }
 op-cards = { path = "crates/op-cards" }
+op-deck = { path = "crates/op-deck" }
 op-ai = { path = "crates/op-ai" }
 op-ingest = { path = "crates/op-ingest" }
 

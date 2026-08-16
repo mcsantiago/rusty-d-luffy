@@ -118,6 +118,7 @@ cargo run -p op-cards --bin coverage     # which cards have scripts
 |---|---|
 | `op-core` | The kernel: zones, state, turn and battle machines, effect resolution, derived characteristics, legal-action generation, per-player views |
 | `op-cards` | Card scripts, one module per product, plus the scripting DSL |
+| `op-deck` | Decklist import/export, construction rules, engine support, saved decks |
 | `op-ai` | Determinization, a heuristic evaluation/agent, and ISMCTS |
 | `op-cli` | Terminal client |
 | `op-desktop` | Tauri desktop client; `client/` holds the front end |

@@ -2105,11 +2105,14 @@ async function start() {
   $("setup-error").textContent = "";
   try {
     const result = await invoke("new_game", {
-      seed: null,
-      yourDeck: $("your-deck").value,
-      aiDeck: $("ai-deck").value,
-      difficulty: $("difficulty").value,
-      youFirst: $("you-first").checked,
+      options: {
+        seed: null,
+        yourDeck: $("your-deck").value,
+        aiDeck: $("ai-deck").value,
+        difficulty: $("difficulty").value,
+        youFirst: $("you-first").checked,
+        allowUnsupported: $("allow-unsupported").checked,
+      },
     });
     catalogue = new Map(result.catalogue.map((c) => [c.number, c]));
     artCache.clear();
@@ -2222,30 +2225,186 @@ $("ingest-retry").addEventListener("click", () => {
   bootstrap();
 });
 
+// ---- decks -----------------------------------------------------------------
+
+/** Every deck the backend offers, by id. Kept so the manage buttons can tell a
+ *  saved deck from a built-in one without re-querying. */
+let deckIndex = new Map();
+
 /** Fills both deck pickers from the backend's list.
  *
  *  The menu is generated rather than written into `index.html` so that a newly
  *  scripted set appears by being added to `op_cards::decks::ALL` alone. The two
  *  lists default to different decks, which is only a nicety — nothing stops a
- *  mirror match. */
-async function loadDecks() {
+ *  mirror match.
+ *
+ *  `keep` preserves the current selection across a refresh, so importing a deck
+ *  does not silently move the opponent's. */
+async function loadDecks(keep = true) {
   const decks = await invoke("decks");
+  deckIndex = new Map(decks.map((d) => [d.id, d]));
   if (!decks.length) return;
+
+  const builtin = decks.filter((d) => d.source === "builtin");
+  const saved = decks.filter((d) => d.source === "saved");
+
   for (const [id, fallback] of [
     ["your-deck", 0],
     ["ai-deck", Math.min(1, decks.length - 1)],
   ]) {
     const select = $(id);
+    const previous = keep ? select.value : null;
     select.innerHTML = "";
-    for (const deck of decks) {
-      const opt = document.createElement("option");
-      opt.value = deck.id;
-      opt.textContent = deck.name;
-      select.appendChild(opt);
+
+    for (const [label, group] of [
+      ["Starter decks", builtin],
+      ["Your decks", saved],
+    ]) {
+      if (!group.length) continue;
+      const optgroup = document.createElement("optgroup");
+      optgroup.label = label;
+      for (const deck of group) {
+        const opt = document.createElement("option");
+        opt.value = deck.id;
+        // Marked rather than disabled: playing one is allowed, deliberately.
+        opt.textContent =
+          deck.supported === false ? `${deck.name} — partial` : deck.name;
+        if (deck.supported === false) opt.className = "unsupported";
+        optgroup.appendChild(opt);
+      }
+      select.appendChild(optgroup);
     }
-    select.selectedIndex = fallback;
+
+    if (previous && deckIndex.has(previous)) select.value = previous;
+    else select.selectedIndex = fallback;
+  }
+
+  syncDeckActions();
+}
+
+/** Export and delete act on "your deck", and only a saved deck owns a file. */
+function syncDeckActions() {
+  const deck = deckIndex.get($("your-deck").value);
+  const saved = deck?.source === "saved";
+  $("delete-run").disabled = !saved;
+  $("export-run").disabled = !deck;
+  $("delete-run").title = saved
+    ? `Delete “${deck.name}”`
+    : "Starter decks cannot be deleted";
+}
+
+/** Renders an import report: the four layers, each said separately. */
+function renderImportReport(report) {
+  const box = $("import-report");
+  const parts = [];
+  const list = (items) =>
+    `<ul>${items.map((t) => `<li>${escapeHtml(t)}</li>`).join("")}</ul>`;
+
+  if (report.parse_problems.length) {
+    parts.push(`<h4 class="bad">Could not read</h4>${list(report.parse_problems)}`);
+  }
+  if (report.unknown.length) {
+    parts.push(
+      `<h4 class="bad">Not in your card data</h4>${list(report.unknown)}` +
+        `<div>Fetch the pack, or check the spelling.</div>`,
+    );
+  }
+  if (report.legality.length) {
+    parts.push(`<h4 class="bad">Not a legal deck</h4>${list(report.legality)}`);
+  } else if (report.leader) {
+    parts.push(`<div class="ok">Deck legal — ${report.size}/50 cards</div>`);
+  }
+
+  if (report.total_copies) {
+    const full = report.supported_copies === report.total_copies;
+    parts.push(
+      `<div class="${full ? "ok" : "warn"}">Engine support: ` +
+        `${report.supported_copies}/${report.total_copies} cards</div>`,
+    );
+  }
+  if (report.unsupported.length) {
+    parts.push(`<h4 class="warn">Plays as a vanilla card</h4>${list(report.unsupported)}`);
+  }
+
+  parts.push(
+    report.saved
+      ? `<div class="ok">Saved as “${escapeHtml(report.name)}”.</div>`
+      : `<div class="bad">Not saved — fix the errors above first.</div>`,
+  );
+
+  box.innerHTML = parts.join("");
+  box.hidden = false;
+}
+
+/** The panel builds its report from card text and deck names, so anything
+ *  going in as markup is escaped: a deck named `<img onerror=…>` would
+ *  otherwise run. */
+function escapeHtml(text) {
+  const div = document.createElement("div");
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+async function importDeck() {
+  $("setup-error").textContent = "";
+  const text = $("import-text").value;
+  if (!text.trim()) {
+    $("setup-error").textContent = "Paste a decklist first.";
+    return;
+  }
+  try {
+    const report = await invoke("import_deck", {
+      name: $("import-name").value,
+      text,
+    });
+    renderImportReport(report);
+    if (report.saved) {
+      await loadDecks();
+      // Select what was just imported: it is almost always what you want to
+      // play next, and hunting for it in the list is the tedious alternative.
+      $("your-deck").value = report.saved;
+      syncDeckActions();
+      $("import-text").value = "";
+      $("import-name").value = "";
+    }
+  } catch (err) {
+    $("setup-error").textContent = String(err);
   }
 }
+
+async function exportDeck() {
+  $("setup-error").textContent = "";
+  const id = $("your-deck").value;
+  try {
+    const text = await invoke("export_deck", { id });
+    await navigator.clipboard.writeText(text);
+    $("setup-error").textContent = "Copied to the clipboard.";
+  } catch (err) {
+    // A starter deck has no file to export; say so rather than showing the
+    // backend's "no saved deck" wording.
+    $("setup-error").textContent = deckIndex.get(id)?.source === "builtin"
+      ? "Starter decks are built in; import one to edit and export it."
+      : String(err);
+  }
+}
+
+async function deleteDeck() {
+  const deck = deckIndex.get($("your-deck").value);
+  if (!deck || deck.source !== "saved") return;
+  $("setup-error").textContent = "";
+  try {
+    await invoke("delete_deck", { id: deck.id });
+    await loadDecks(false);
+    $("import-report").hidden = true;
+  } catch (err) {
+    $("setup-error").textContent = String(err);
+  }
+}
+
+$("import-run").addEventListener("click", importDeck);
+$("export-run").addEventListener("click", exportDeck);
+$("delete-run").addEventListener("click", deleteDeck);
+$("your-deck").addEventListener("change", syncDeckActions);
 
 loadDecks();
 bootstrap();

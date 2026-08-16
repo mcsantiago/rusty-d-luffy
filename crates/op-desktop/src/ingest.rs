@@ -100,6 +100,16 @@ pub fn data_dir() -> PathBuf {
     op_ingest::default_data_dir(APP_ID)
 }
 
+/// Where saved decks live.
+///
+/// Always the per-user application directory, never the checkout's `data/` even
+/// when card data is being read from there. A deck a player built is their
+/// work: it must survive a card re-fetch, which rewrites `data/`, and moving to
+/// a different checkout, which changes where it points.
+pub fn decks_dir() -> PathBuf {
+    op_ingest::default_data_dir(APP_ID).join("decks")
+}
+
 /// Everything, in one pass, the way a phone TCG client does it: one long
 /// download on first launch, then the app is fully offline.
 ///

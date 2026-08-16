@@ -154,6 +154,96 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
 
 .error { color: var(--accent); font-size: 12px; min-height: 16px; margin: 8px 0 0; }
 
+/* ---- deck import ---- */
+
+input[type="text"],
+textarea {
+  width: 100%;
+  margin-top: 6px;
+  padding: 9px 10px;
+  background: var(--bg);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 13px;
+  /* Uppercase labels are the panel's voice, not the field's. */
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+textarea {
+  /* A decklist is a column of card numbers; proportional type makes it ragged. */
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  resize: vertical;
+}
+
+input[type="text"]:focus,
+textarea:focus {
+  outline: none;
+  border-color: #3a4f68;
+}
+
+#deck-manager {
+  margin-bottom: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+#deck-manager > summary {
+  padding: 9px 10px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+#deck-manager > summary:hover { color: var(--ink); }
+#deck-manager[open] > summary { border-bottom: 1px solid var(--line); }
+#deck-manager > *:not(summary) { margin: 14px 10px; }
+
+.deck-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.deck-actions button { flex: 1; }
+button.danger:hover { background: #3a2226; border-color: var(--accent); }
+
+.import-report {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.import-report h4 {
+  margin: 10px 0 2px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.import-report h4:first-child { margin-top: 0; }
+
+.import-report ul {
+  margin: 0;
+  padding-left: 16px;
+  /* Card numbers line up, and a long effect name wraps under itself. */
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+
+.import-report .ok { color: var(--good); }
+.import-report .warn { color: var(--accent-2); }
+.import-report .bad { color: var(--accent); }
+
+/* A deck the engine cannot fully play, in the picker. */
+option.unsupported { color: var(--accent-2); }
+
 /* ---- layout ---- */
 
 #game {

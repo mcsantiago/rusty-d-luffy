@@ -2025,6 +2025,7 @@ name = "op-cards"
 version = "0.4.0"
 dependencies = [
  "op-core",
+ "op-deck",
  "rand",
  "serde_json",
 ]
@@ -2053,6 +2054,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "op-deck"
+version = "0.4.0"
+dependencies = [
+ "op-core",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "op-desktop"
 version = "0.4.0"
 dependencies = [
@@ -2060,6 +2071,7 @@ dependencies = [
  "op-ai",
  "op-cards",
  "op-core",
+ "op-deck",
  "op-ingest",
  "rand",
  "serde",

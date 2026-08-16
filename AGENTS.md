@@ -40,6 +40,7 @@ cargo run -p op-ingest --bin op-fetch -- --data-dir data --packs ST-01 ST-02 ST-
 |---|---|
 | `op-core` | The rules kernel. Knows the rules, knows nothing about individual cards. |
 | `op-cards` | Card scripts, one module per product, plus the scripting DSL. |
+| `op-deck` | Decklist import/export, construction rules, engine support, saved decks. |
 | `op-ai` | Determinization, a hand-written evaluation, ISMCTS. |
 | `op-ingest` | Fetching card data and art. |
 | `op-desktop` | Tauri client; `client/` is its front end. |
@@ -100,6 +101,16 @@ to write a silently-dead script appears.
 action mask, and (eventually) the server validator. Keep it faithful to the
 rules — advice for the UI belongs in a separate helper, as
 `activation_finds_targets` is.
+
+**A deck's legality and its playability are different questions.** `op-deck`
+answers four in order — is it a decklist (`text`), do we have these cards
+(`resolve`), is it legal (`legality`, 5-1-2), can this build play it
+(`compat`) — and they must not collapse into each other. A legal deck with an
+unscripted card is legal; an off-colour deck is not, however well scripted.
+Only `legality` cites the rules, and only `compat` knows what we have
+implemented. Note that `Game::new`'s own `validate_deck` checks size and the
+copy limit but *not* colour (5-1-2-2) or category (5-1-2-1), so a path that
+skips `op-deck` will happily build an illegal deck.
 
 ## Conventions
 

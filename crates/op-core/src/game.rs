@@ -65,7 +65,7 @@ use crate::card::{CardDb, Category, Keyword};
 use crate::derive::{self, Derived};
 use crate::effect::{Duration, EffectFrame, ModKind, Modifier, Timing};
 use crate::event::{GameEvent, PlayerEvent};
-use crate::ids::{CardInstanceId, PlayerId};
+use crate::ids::{CardDefId, CardInstanceId, PlayerId};
 use crate::script::{ScriptSource, BATTLED_BINDING};
 use crate::state::{BattleState, BattleStep, DamageState, GameOver, GameState, Phase, Placement};
 use crate::zone::Zone;
@@ -97,6 +97,12 @@ pub enum SetupError {
     DeckSize(usize),
     #[error("more than 4 copies of {0} in deck")]
     TooManyCopies(String),
+    /// 5-1-2-2.
+    #[error("{number} shares no color with Leader {leader}")]
+    OffColor { number: String, leader: String },
+    /// 5-1-2-1.
+    #[error("{0} is not a Character, Event or Stage card")]
+    NotADeckCard(String),
 }
 
 /// What executing one effect op means for the frame's instruction pointer.
@@ -224,16 +230,19 @@ impl Game {
         for (idx, deck) in config.decks.iter().enumerate() {
             let player = PlayerId(idx as u8);
 
-            if !config.allow_illegal_decks {
-                validate_deck(deck)?;
-            }
-
+            // The Leader is resolved first because two clauses of 5-1-2 are
+            // about the deck's relationship to it.
             let leader_def = db
                 .by_number(&deck.leader)
                 .ok_or_else(|| SetupError::UnknownCard(deck.leader.clone()))?;
             if db.get(leader_def).category != Category::Leader {
                 return Err(SetupError::NotALeader(deck.leader.clone()));
             }
+
+            if !config.allow_illegal_decks {
+                validate_deck(deck, &db, leader_def)?;
+            }
+
             state.spawn(leader_def, player, Zone::Leader);
 
             for number in &deck.cards {
@@ -2697,18 +2706,54 @@ fn draw_one(state: &mut GameState, player: PlayerId) -> Option<CardInstanceId> {
     Some(card)
 }
 
-fn validate_deck(deck: &DeckList) -> Result<(), SetupError> {
+/// The deck construction rules, 5-1-2.
+///
+/// Takes the database because two of the four clauses are about the cards
+/// rather than the counts, and stops at the first violation: by the time this
+/// runs a game is being built, and there is nobody to show a list to.
+///
+/// `op_deck::legality` answers the same question for a deck builder, where all
+/// the violations at once is the useful answer. The two must agree, and
+/// `op-cards/tests/deck_import.rs` is what keeps them agreeing.
+fn validate_deck(deck: &DeckList, db: &CardDb, leader: CardDefId) -> Result<(), SetupError> {
     // 5-1-2: exactly 50 cards.
     if deck.cards.len() != 50 {
         return Err(SetupError::DeckSize(deck.cards.len()));
     }
-    // 5-1-2-3: no more than 4 with the same card number.
+
+    // A Leader with no colour is synthetic test data — every printed one has at
+    // least one — and 5-1-2-2 has nothing to say about it.
+    let leader_colors = &db.get(leader).colors;
+    let check_colors = !leader_colors.is_empty();
+
     let mut counts: std::collections::BTreeMap<&str, usize> = Default::default();
     for number in &deck.cards {
+        // 5-1-2-3: no more than 4 with the same card number.
         let entry = counts.entry(number.as_str()).or_default();
         *entry += 1;
         if *entry > 4 {
             return Err(SetupError::TooManyCopies(number.clone()));
+        }
+
+        let def = db
+            .by_number(number)
+            .ok_or_else(|| SetupError::UnknownCard(number.clone()))?;
+        let card = db.get(def);
+
+        // 5-1-2-1: a deck is Character, Event and Stage cards.
+        if !matches!(
+            card.category,
+            Category::Character | Category::Event | Category::Stage
+        ) {
+            return Err(SetupError::NotADeckCard(number.clone()));
+        }
+
+        // 5-1-2-2: only cards of a colour included on the Leader.
+        if check_colors && !card.colors.iter().any(|c| leader_colors.contains(c)) {
+            return Err(SetupError::OffColor {
+                number: number.clone(),
+                leader: deck.leader.clone(),
+            });
         }
     }
     Ok(())

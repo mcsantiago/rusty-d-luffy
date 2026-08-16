@@ -13,6 +13,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 op-core = { workspace = true }
 op-cards = { workspace = true }
+op-deck = { workspace = true }
 op-ai = { workspace = true }
 op-ingest = { workspace = true }
 tauri = { version = "2", features = [] }

@@ -9,9 +9,8 @@
 use std::collections::BTreeMap;
 use std::process::ExitCode;
 
-use op_cards::{validate_all_scripts, Cards, KEYWORD_ONLY};
+use op_cards::{validate_all_scripts, Cards, Coverage};
 use op_core::card::CardDb;
-use op_core::script::ScriptSource;
 
 #[derive(Default)]
 struct SetStats {
@@ -52,20 +51,19 @@ fn main() -> ExitCode {
         };
         let entry = by_set.entry(set.to_string()).or_default();
 
-        if !cards.script(def).is_vanilla() {
-            entry.scripted.push(card.number.clone());
-        } else if card.effect.is_none() && card.trigger.is_none() {
-            // No rules text: a vanilla body is the correct implementation.
-            entry.no_script_needed.push(card.number.clone());
-        } else if KEYWORD_ONLY.contains(&card.number.as_str()) {
-            entry.no_script_needed.push(card.number.clone());
-        } else {
-            let text = card
-                .effect
-                .clone()
-                .or_else(|| card.trigger.clone())
-                .unwrap_or_default();
-            entry.todo.push((card.number.clone(), text));
+        match cards.coverage(def, card) {
+            // A malformed script still counts as scripted here; `report_problems`
+            // is what surfaces it, and moving it to `todo` would double-report.
+            Coverage::Scripted | Coverage::Malformed(_) => entry.scripted.push(card.number.clone()),
+            Coverage::NoScriptNeeded => entry.no_script_needed.push(card.number.clone()),
+            Coverage::Unscripted => {
+                let text = card
+                    .effect
+                    .clone()
+                    .or_else(|| card.trigger.clone())
+                    .unwrap_or_default();
+                entry.todo.push((card.number.clone(), text));
+            }
         }
     }
 
