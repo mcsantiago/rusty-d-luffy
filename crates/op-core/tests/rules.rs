@@ -2203,3 +2203,116 @@ fn rule_7_1_2_3_an_on_block_effect_removing_the_attacker_ends_the_battle() {
         "7-1-2-3 proceeds straight to the end of the battle, got {steps:?}"
     );
 }
+
+/// An Event with a `"You may <cost>: <effect>"` [Main] ability, for the two
+/// tests below.
+fn event_costing_a_card() -> CardScript {
+    CardScript {
+        activated: vec![op_core::script::ActivatedEffect {
+            conditions: vec![],
+            cost: ActivationCost {
+                trash_from_hand: 1,
+                ..Default::default()
+            },
+            ops: vec![draw_for(Who::You)],
+            slot: 0,
+            once_per_turn: false,
+        }],
+        ..CardScript::default()
+    }
+}
+
+/// 8-3-1-4: a cost is the controller's to decline, and an Event's "You may" is
+/// no exception. The DON!! already spent do not make the choice for them —
+/// ST08-014 asks for a Life card, which at 1 Life is worth more than the
+/// effect, and taking it unasked spends the game to save the card.
+#[test]
+fn rule_8_3_1_4_an_events_optional_cost_may_be_declined() {
+    let cards = TestCards::new();
+    let (mut game, _) = game_with(
+        &cards,
+        TestScripts::default().with(cards.def("EVT-1"), event_costing_a_card()),
+        7,
+        ("LDR-001", deck_of("CHR-2K", 30)),
+        ("LDR-002", deck_of("CHR-2K", 30)),
+    );
+    to_main(&mut game);
+
+    let event = put_in_hand(&mut game, PlayerId::P0, "EVT-1");
+    let keep = put_in_hand(&mut game, PlayerId::P0, "CHR-5K");
+    let hand_before = game.state.player(PlayerId::P0).hand.len();
+
+    game.step(Action::PlayCard {
+        card: event,
+        replacing: None,
+    })
+    .unwrap();
+    assert!(
+        matches!(game.pending(), Some(Pending::PayCost { .. })),
+        "the cost should be offered, not taken, got {:?}",
+        game.pending()
+    );
+
+    let events = game.step(Action::PayCost(false)).unwrap().events;
+
+    // 8-4-2: the Event is played and trashed either way. Only its effect is
+    // declined.
+    assert_eq!(game.state.card(event).zone, Zone::Trash);
+    assert_eq!(
+        game.state.card(keep).zone,
+        Zone::Hand,
+        "declining spends nothing from hand"
+    );
+    assert_eq!(
+        game.state.player(PlayerId::P0).hand.len(),
+        hand_before - 1,
+        "only the Event itself left the hand"
+    );
+    assert!(
+        !events.iter().any(|e| matches!(e, GameEvent::Drew { .. })),
+        "the declined effect must not resolve, got {events:#?}"
+    );
+}
+
+/// 10-2-14-1 for the third payment path. An Event's own hand cost is selected
+/// from the hand like any other — this one used to take the front of it.
+#[test]
+fn rule_10_2_14_1_an_events_hand_cost_asks_which_card_to_trash() {
+    let cards = TestCards::new();
+    let (mut game, _) = game_with(
+        &cards,
+        TestScripts::default().with(cards.def("EVT-1"), event_costing_a_card()),
+        7,
+        ("LDR-001", deck_of("CHR-2K", 30)),
+        ("LDR-002", deck_of("CHR-2K", 30)),
+    );
+    to_main(&mut game);
+
+    let event = put_in_hand(&mut game, PlayerId::P0, "EVT-1");
+    let keep = put_in_hand(&mut game, PlayerId::P0, "CHR-5K");
+    let spend = put_in_hand(&mut game, PlayerId::P0, "CHR-7K");
+
+    game.step(Action::PlayCard {
+        card: event,
+        replacing: None,
+    })
+    .unwrap();
+    game.step(Action::PayCost(true)).unwrap();
+
+    let Some(Pending::Choose { options, .. }) = game.pending().cloned() else {
+        panic!("a hand cost asks which card, got {:?}", game.pending());
+    };
+    assert!(
+        !options.contains(&event),
+        "the Event reached the trash at 8-4-2 and cannot pay for itself"
+    );
+
+    game.step(Action::Choose { cards: vec![spend] }).unwrap();
+
+    assert_eq!(game.state.card(spend).zone, Zone::Trash);
+    assert_eq!(
+        game.state.card(keep).zone,
+        Zone::Hand,
+        "the card named is the card spent"
+    );
+}

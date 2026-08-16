@@ -417,7 +417,8 @@ pub struct EffectFrame {
     pub controller: PlayerId,
     pub ops: Vec<EffectOp>,
     /// 8-3-1-4: a cost the controller has not agreed to yet. While set, the
-    /// frame runs no ops. Only auto effects arrive here.
+    /// frame runs no ops. Set by an auto effect's cost and by the further cost
+    /// an Event's [Main] text may name beyond the DON!! it was played for.
     pub pending_cost: Option<PendingCost>,
     /// Instruction pointer — where to resume after a suspension.
     pub ip: usize,

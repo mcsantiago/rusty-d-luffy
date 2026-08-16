@@ -660,10 +660,6 @@ impl Game {
             events.push(GameEvent::KnockedOut { card: victim });
         }
 
-        // Set by the Event branch when its further cost carries a `DON!! −X`
-        // whose selection is the player's to make.
-        let mut owed = None;
-
         match category {
             Category::Character => {
                 self.state
@@ -704,33 +700,11 @@ impl Game {
                     .first()
                     .cloned();
                 let extra = main.as_ref().map(|a| a.cost.clone()).unwrap_or_default();
-                // 8-3-1-3: a cost that cannot be paid in full cannot be paid at
-                // all, and then the effect does not resolve. The card is still
-                // played and trashed.
-                //
-                // Diverges from "You may ...:" in one direction only: with the
-                // cost payable, the engine pays. Declining would resolve
-                // nothing at all for DON!! already spent, so it is never a
-                // choice a player would take — and playing the Event is itself
-                // the decision. Same simplification as an auto effect with a
-                // cost; see `queue_autos`.
-                let paying = extra.is_free() || self.can_pay(player, card, &extra);
-                let ops = match &main {
-                    Some(a) if paying => a.ops.clone(),
-                    _ => Vec::new(),
-                };
-                if paying && !extra.is_free() {
-                    let discard: Vec<CardInstanceId> = self
-                        .state
-                        .player(player)
-                        .hand
-                        .iter()
-                        .filter(|&&c| c != card)
-                        .take(extra.trash_from_hand as usize)
-                        .copied()
-                        .collect();
-                    owed = self.pay(player, card, &extra, &discard, events);
-                }
+
+                // The trash comes first, so the log reads in the order 8-4-2
+                // gives and the card is out of the hand before its own cost
+                // looks there — a "trash 1 card from your hand" cost must not
+                // be able to pay itself with the Event being played.
                 self.state
                     .move_card(card, player, Zone::Trash, Placement::Top);
                 events.push(GameEvent::CardPlayed {
@@ -738,14 +712,34 @@ impl Game {
                     card,
                     cost_paid: cost,
                 });
-                if !ops.is_empty() {
-                    events.push(GameEvent::EffectActivated {
-                        source: card,
-                        controller: player,
-                    });
-                    self.state
-                        .resolution
-                        .push(EffectFrame::new(card, player, ops));
+
+                // 8-3-1-3: a cost that cannot be paid in full cannot be paid at
+                // all, and then the effect does not resolve. The card is still
+                // played and trashed.
+                if let Some(a) = main {
+                    if extra.is_free() {
+                        events.push(GameEvent::EffectActivated {
+                            source: card,
+                            controller: player,
+                        });
+                        self.state
+                            .resolution
+                            .push(EffectFrame::new(card, player, a.ops));
+                    } else if self.can_pay(player, card, &extra) {
+                        // 8-3-1-4: a "You may ...:" cost is the controller's to
+                        // decline, and the DON!! already spent do not make the
+                        // choice for them — ST08-014 asks for a Life card, which
+                        // at 1 Life is worth more than the effect. Pushed unpaid,
+                        // exactly as an auto effect's cost is; the frame runs no
+                        // ops and announces itself only once paid.
+                        let mut frame = EffectFrame::new(card, player, a.ops);
+                        frame.pending_cost = Some(PendingCost {
+                            cost: extra,
+                            slot: a.slot,
+                            once_per_turn: a.once_per_turn,
+                        });
+                        self.state.resolution.push(frame);
+                    }
                 }
             }
             Category::Leader | Category::Don => {
@@ -753,7 +747,10 @@ impl Game {
             }
         }
 
-        self.state.pending = owed;
+        // Nothing here asks a question of its own any more: an Event's further
+        // cost is carried on the frame and asked for by `resolve_current_frame`,
+        // which is also where a `DON!! −X` selection inside one now surfaces.
+        self.state.pending = None;
         Ok(())
     }
 

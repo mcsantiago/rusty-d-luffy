@@ -748,6 +748,10 @@ fn st08_014_pays_a_life_card_to_shrink_a_character_by_seven() {
         replacing: None,
     })
     .unwrap();
+    // 8-3-1-4: the Life card is the controller's to decline, so it is asked for
+    // rather than taken. `rules::rule_8_3_1_4_an_events_optional_cost_may_be_declined`
+    // holds that gate; here it is agreed to.
+    game.step(Action::PayCost(true)).unwrap();
     game.step(Action::Choose {
         cards: vec![victim],
     })
