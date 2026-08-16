@@ -29,20 +29,40 @@ pub fn line(event: &PlayerEvent, game: &Game, viewer: PlayerId) -> Option<String
         E::AttackDeclared { attacker, target } => {
             format!("{} attacks {}", name(*attacker), name(*target))
         }
-        E::Blocked { blocker, .. } => format!("{} blocks", name(*blocker)),
+        // 10-1-4-1: the blocker becomes the new target. Naming who it came off
+        // is the whole event — otherwise the attack appears to still be aimed
+        // where it was declared.
+        E::Blocked { blocker, replacing } => format!(
+            "{} blocks — now the target instead of {}",
+            name(*blocker),
+            name(*replacing)
+        ),
         E::Countered {
             player,
+            card,
             target,
             amount,
-            ..
-        } => format!("{} countered: {} +{amount}", who(*player), name(*target)),
+        } => format!(
+            "{} countered: {} +{amount} (trashed {})",
+            who(*player),
+            name(*target),
+            name(*card)
+        ),
+        // Both sides named, because a blocker may have changed who is in this
+        // battle since it was declared. The powers are the event's own, not
+        // derived here: `line` renders against the state after the whole step,
+        // so recomputing them would report what they became, not what they were
+        // when the battle was decided (7-1-4-1).
         E::BattleResolved {
+            attacker,
+            target,
             attacker_power,
             target_power,
             attacker_won,
-            ..
         } => format!(
-            "Battle {attacker_power} vs {target_power} — {}",
+            "{} {attacker_power} vs {} {target_power} — {}",
+            name(*attacker),
+            name(*target),
             if *attacker_won {
                 "attacker wins"
             } else {

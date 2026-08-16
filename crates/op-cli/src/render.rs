@@ -275,20 +275,37 @@ pub fn event(event: &PlayerEvent, game: &Game, viewer: PlayerId) -> Option<Strin
         E::AttackDeclared { attacker, target } => {
             format!("{} attacks {}", name(*attacker), name(*target))
         }
-        E::Blocked { blocker, .. } => format!("{} blocks", name(*blocker)),
+        // 10-1-4-1: the blocker becomes the new target, so the attack is no
+        // longer aimed where it was declared.
+        E::Blocked { blocker, replacing } => format!(
+            "{} blocks — now the target instead of {}",
+            name(*blocker),
+            name(*replacing)
+        ),
         E::Countered {
             player,
+            card,
             target,
             amount,
-            ..
-        } => format!("{} counters: {} +{amount}", who(*player), name(*target)),
+        } => format!(
+            "{} counters: {} +{amount} (trashed {})",
+            who(*player),
+            name(*target),
+            name(*card)
+        ),
+        // The powers are the event's own: this renders against the state after
+        // the step, so recomputing them would report what they became rather
+        // than what decided the battle (7-1-4-1).
         E::BattleResolved {
+            attacker,
+            target,
             attacker_power,
             target_power,
             attacker_won,
-            ..
         } => format!(
-            "battle: {attacker_power} vs {target_power} — {}",
+            "battle: {} {attacker_power} vs {} {target_power} — {}",
+            name(*attacker),
+            name(*target),
             if *attacker_won {
                 "attacker wins"
             } else {
