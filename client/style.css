@@ -81,7 +81,10 @@ html, body {
 #choose-modal,
 /* Same reasoning, same hazard: a [Trigger] that looks at the top of the deck
    suspends mid-battle, and this overlay is declared before the battle's. */
-#arrange-modal {
+#arrange-modal,
+/* And again: an [On Block] or [Counter] effect with a cost asks for it while
+   the battle is still running. */
+#cost-modal {
   z-index: 60;
 }
 
@@ -966,13 +969,12 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
    The engine offers a Choose as one action per subset. Shown as cards rather
    than as a list of combinations, which is unreadable past two candidates. */
 
-/* The card doing the asking. "Choose up to 1" says nothing about why, and by
-   the time the prompt appears several cards on the board could have caused it. */
-/* The card that is asking, and the card that is attacking: the same panel,
-   because they answer the same question about a modal that has appeared. */
-#choose-source,
-#attack-source,
-#activate-source {
+/* The card that is asking, the card that is attacking, and the card whose cost
+   is being demanded: the same panel, because they answer the same question
+   about a modal that has appeared — "why am I being asked this?". A class
+   rather than a list of ids, so the next modal that needs it says so in its own
+   markup instead of editing a selector over here. */
+.source-panel {
   display: flex;
   gap: 14px;
   align-items: flex-start;
@@ -1050,6 +1052,13 @@ button.ghost { background: transparent; font-size: 12px; padding: 5px 10px; }
   gap: 10px;
   margin-top: 18px;
 }
+/* `button.primary` is `width: 100%` for the setup panel, where buttons stack.
+   In a row that reads as "take everything", and the button beside it gets
+   squeezed until its label wraps — which lands hardest on the short one, since
+   "Don't pay" has nowhere to wrap that is not silly. So the others keep their
+   own width and the primary takes what is left. */
+.choose-foot > button { flex: 0 0 auto; white-space: nowrap; }
+.choose-foot > .primary { flex: 1 1 auto; min-width: 0; }
 
 /* What an action is about to be worth, said before it is taken. Quiet when it
    is only telling you the size of a choice; loud when the answer is "nothing",

@@ -2553,7 +2553,34 @@ impl Game {
             .activated
             .iter()
             .find(|a| a.slot == slot)?;
+        self.ops_shortfall(card, &effect.ops)
+    }
 
+    /// The same reading, for a cost the player has been asked for and not yet
+    /// paid (8-3-1-4).
+    ///
+    /// Taken off the waiting frame rather than looked up by slot, because an
+    /// `[On Play]` effect lives in the script's `auto` list and
+    /// [`Game::activation_shortfall`] searches only `activated`. The frame is
+    /// where both kinds can be read the same way — and by the time a cost is
+    /// pending, the effect that owns it is already on one.
+    ///
+    /// Advice, never a rule: paying for an effect that will find nothing is
+    /// legal and still costs (8-4-1-3). It is knowing *before* paying that the
+    /// player is otherwise denied.
+    pub fn pending_cost_shortfall(&self) -> Option<Shortfall<'_>> {
+        let frame = self.state.resolution.current()?;
+        frame.pending_cost.as_ref()?;
+        self.ops_shortfall(frame.source, &frame.ops)
+    }
+
+    /// What `ops` would find nothing for, if anything. Shared by both readings
+    /// above so they cannot drift apart.
+    fn ops_shortfall<'a>(
+        &'a self,
+        card: CardInstanceId,
+        ops: &'a [crate::effect::EffectOp],
+    ) -> Option<Shortfall<'a>> {
         let controller = self.state.card(card).controller;
         let frame = EffectFrame::new(card, controller, Vec::new());
 
@@ -2562,7 +2589,7 @@ impl Game {
         // the effect works on, and change nothing themselves.
         let mut done_something = false;
 
-        for op in &effect.ops {
+        for op in ops {
             let req = match op {
                 // The effect stops here, so nothing after it happens.
                 crate::effect::EffectOp::RequireIf { cond } => {
