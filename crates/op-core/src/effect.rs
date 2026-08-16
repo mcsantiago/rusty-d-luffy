@@ -24,7 +24,9 @@ pub enum Duration {
     ThisBattle,
     /// Ends in the End Phase (6-6-1-3).
     ThisTurn,
-    /// Ends in the End Phase of this player's next turn.
+    /// Ends in the Refresh Phase of its controller's next turn, a full turn
+    /// earlier than `ThisTurn`'s End Phase — 6-2-1: "effects lasting until
+    /// the start of your turn end".
     UntilYourNextTurn,
 }
 
@@ -272,8 +274,13 @@ impl EffectOp {
             | EffectOp::Draw { .. }
             | EffectOp::AddDon { .. }
             | EffectOp::TrashLife { .. }
-            | EffectOp::RequireIf { .. }
             | EffectOp::TrashIfInLimbo => None,
+            // "You may X. If you do, Y" (8-3-3): the condition reads the
+            // choose it follows, so RequireIf is that binding's consumer.
+            EffectOp::RequireIf { cond } => match cond {
+                Condition::Bound(key) => Some(key.as_str()),
+                _ => None,
+            },
         }
     }
 

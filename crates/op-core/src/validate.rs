@@ -17,8 +17,9 @@
 use std::collections::BTreeSet;
 use std::fmt;
 
-use crate::effect::{Condition, EffectOp, Timing, SELF_BINDING};
+use crate::effect::{Condition, EffectOp, Selector, Timing, Who, SELF_BINDING};
 use crate::script::{ActivationCost, CardScript, BATTLED_BINDING, TARGET_BINDING};
+use crate::zone::Zone;
 
 /// Which part of a script a [`Diagnostic`] came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,6 +77,13 @@ pub enum Problem {
     /// the card is always rested by the time the cost is checked and the effect
     /// can never be paid for.
     RestSelfOnBlock,
+    /// A `Choose` whose selector names a secret zone (3-1-5). `selector_options`
+    /// hands the zone's real `CardInstanceId`s to whichever player is asked,
+    /// and ids are assigned in decklist order at setup (see `AGENTS.md`), so
+    /// this leaks the zone's contents — to the opponent for most secret zones,
+    /// and to the card's own owner for `Zone::Life`, which 3-1-4 keeps hidden
+    /// even from them (#73).
+    SelectsSecretZone { zone: Zone },
 }
 
 impl fmt::Display for Problem {
@@ -116,6 +124,11 @@ impl fmt::Display for Problem {
                 f,
                 "[On Block] costs a rest of the source, which blocking has \
                  already rested (10-1-4-1)"
+            ),
+            Problem::SelectsSecretZone { zone } => write!(
+                f,
+                "selects from {zone:?}, a secret zone; its card ids would leak \
+                 the zone's contents to whoever is asked to choose"
             ),
         }
     }
@@ -218,6 +231,42 @@ fn check_conditions(
     }
 }
 
+/// Whether a `Selector` reads a zone `Game::selector_options` should never
+/// hand back to a player (#73).
+///
+/// `Zone::is_open` almost answers this, but three carve-outs matter here that
+/// it does not capture, so this is defined locally rather than as
+/// `Zone::is_open` itself:
+/// - `Zone::DonDeck` reads `is_open() == true` even though it is face down,
+///   because every DON!! card is identical (3-3-2) — its ids carry no hidden
+///   information, and that reasoning is exactly the one this check needs too.
+/// - `Zone::Hand` and `Zone::Deck` read `is_open() == false`, but a
+///   `Selector` whose `owner` is `Who::You` only ever asks a player about
+///   their own hand or deck, which "trash a card from your hand" and
+///   "search your deck for X" (ST03-007, `your_deck()`) already do
+///   correctly and are not a leak — the searching player is exactly who the
+///   printed text says looks. Only `Who::Opponent`/`Who::Both` reach a
+///   Hand/Deck the asking player does not already know.
+/// - `Zone::Life` has no such carve-out: unlike a deck search, 3-1-4 does not
+///   let even the owner look through their own Life freely, so every
+///   `Selector` on it stays flagged (nothing ships one today — see
+///   `EffectOp::TrashLife`, which exists so Life removal never needs one).
+fn selects_secret_zone(select: &Selector) -> bool {
+    if select.from.is_some() {
+        // The pool comes from a prior binding, not `select.zone`/`owner` —
+        // see `Game::selector_options`. `zone` is a required field but unused
+        // in this branch.
+        return false;
+    }
+    if select.zone.is_open() {
+        return false;
+    }
+    if matches!(select.zone, Zone::Hand | Zone::Deck) && select.owner == Who::You {
+        return false;
+    }
+    true
+}
+
 /// Walks an op list in execution order, tracking which keys are bound by the
 /// time each op runs.
 fn check_ops(site: Site, ops: &[EffectOp], supplied: &[&str], out: &mut Vec<Diagnostic>) {
@@ -226,6 +275,14 @@ fn check_ops(site: Site, ops: &[EffectOp], supplied: &[&str], out: &mut Vec<Diag
     let mut read: BTreeSet<&str> = BTreeSet::new();
 
     for op in ops {
+        if let EffectOp::Choose { select, .. } = op {
+            if selects_secret_zone(select) {
+                out.push(Diagnostic {
+                    site,
+                    problem: Problem::SelectsSecretZone { zone: select.zone },
+                });
+            }
+        }
         if let Some(key) = op.reads() {
             read.insert(key);
             if !bound.contains(key) {
@@ -481,6 +538,29 @@ mod tests {
         );
     }
 
+    /// #75: "you may X. If you do, Y" (8-3-3) binds a key with `choose`, then
+    /// reads it back only through `RequireIf`'s condition — no other op reads
+    /// it. That is a complete, correct script, not a dead binding.
+    #[test]
+    fn require_if_reading_its_bound_condition_satisfies_the_binding() {
+        let script = CardScript {
+            activated: vec![ActivatedEffect {
+                conditions: Vec::new(),
+                cost: ActivationCost::default(),
+                ops: vec![
+                    pick("done"),
+                    EffectOp::RequireIf {
+                        cond: Condition::Bound("done".to_string()),
+                    },
+                ],
+                slot: 0,
+                once_per_turn: false,
+            }],
+            ..CardScript::default()
+        };
+        assert_eq!(problems(&script), []);
+    }
+
     #[test]
     fn timings_the_engine_never_fires_are_rejected() {
         for timing in [Timing::OnKo, Timing::Trigger] {
@@ -555,6 +635,92 @@ mod tests {
             ..CardScript::default()
         };
         assert_eq!(problems(&script), [Problem::ContradictoryTurnConditions]);
+    }
+
+    /// #73: a `Selector` naming a secret zone hands its real card ids to
+    /// whoever is asked to choose, leaking hidden information (3-1-5).
+    #[test]
+    fn a_selector_naming_a_secret_zone_is_reported() {
+        let script = CardScript {
+            trigger: vec![
+                EffectOp::Choose {
+                    key: "leak".to_string(),
+                    select: Selector {
+                        zone: Zone::Life,
+                        owner: Who::Opponent,
+                        from: None,
+                        up_to: 1,
+                        at_least: 0,
+                        filters: Vec::new(),
+                    },
+                },
+                ko("leak"),
+            ],
+            ..CardScript::default()
+        };
+        assert_eq!(
+            problems(&script),
+            [Problem::SelectsSecretZone { zone: Zone::Life }]
+        );
+    }
+
+    /// Carve-outs that must *not* trip the check: your own hand (you already
+    /// see it — `your_hand()` ships on several cards), your own deck (a
+    /// search you can already see the results of — `your_deck()` ships on
+    /// ST03-007), and the DON!! deck (every DON!! card is identical, so its
+    /// ids carry no hidden information despite being face down, 3-3-2).
+    #[test]
+    fn your_own_hand_and_deck_and_the_don_deck_are_not_secret_here() {
+        for zone in [Zone::Hand, Zone::Deck, Zone::DonDeck] {
+            let script = CardScript {
+                trigger: vec![
+                    EffectOp::Choose {
+                        key: "k".to_string(),
+                        select: Selector {
+                            zone,
+                            owner: Who::You,
+                            from: None,
+                            up_to: 1,
+                            at_least: 0,
+                            filters: Vec::new(),
+                        },
+                    },
+                    ko("k"),
+                ],
+                ..CardScript::default()
+            };
+            assert_eq!(problems(&script), [], "{zone:?} should not be flagged");
+        }
+    }
+
+    /// The opponent's hand and deck are secret even though your own are not
+    /// — only `Who::You` is exempt.
+    #[test]
+    fn the_opponents_hand_and_deck_are_still_secret() {
+        for zone in [Zone::Hand, Zone::Deck] {
+            let script = CardScript {
+                trigger: vec![
+                    EffectOp::Choose {
+                        key: "k".to_string(),
+                        select: Selector {
+                            zone,
+                            owner: Who::Opponent,
+                            from: None,
+                            up_to: 1,
+                            at_least: 0,
+                            filters: Vec::new(),
+                        },
+                    },
+                    ko("k"),
+                ],
+                ..CardScript::default()
+            };
+            assert_eq!(
+                problems(&script),
+                [Problem::SelectsSecretZone { zone }],
+                "{zone:?} owned by the opponent should still be flagged"
+            );
+        }
     }
 
     #[test]
