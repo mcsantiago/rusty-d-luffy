@@ -584,8 +584,14 @@ impl Session {
                 self.battle_result = None;
                 b
             }
-            E::Blocked { blocker, .. } => beat(
-                format!("{} blocks, and becomes the target", name(*blocker)),
+            // 10-1-4-1: naming who the attack came off is the point. "Becomes
+            // the target" leaves the reader to remember who it was aimed at.
+            E::Blocked { blocker, replacing } => beat(
+                format!(
+                    "{} blocks, replacing {} as the target",
+                    name(*blocker),
+                    name(*replacing)
+                ),
                 *blocker,
                 "block",
             ),
@@ -1080,6 +1086,68 @@ mod tests {
             session.run_ai();
             session
         })
+    }
+
+    /// The scrollback log is what a player scans to reconstruct a battle, so
+    /// every line about one has to name the cards in it.
+    ///
+    /// Driven from constructed events rather than a played game: a block is not
+    /// guaranteed to occur in a random playthrough, and a test that silently
+    /// never sees one is not testing the line that most needed fixing.
+    #[test]
+    fn battle_lines_name_the_cards_that_are_in_the_battle() {
+        use op_core::PlayerEvent;
+
+        let Some(session) = fixture() else { return };
+        let game = &session.game;
+        let leader = |p: PlayerId| {
+            op_core::CardRef::Visible(game.state.player(p).leader.expect("a Leader is in play"))
+        };
+        let named = |id: op_core::CardRef| {
+            game.db()
+                .get(game.state.card(id.id().unwrap()).def)
+                .name
+                .clone()
+        };
+
+        let (attacker, target) = (leader(session.human.opponent()), leader(session.human));
+        let line = |event| crate::render::line(&event, game, session.human).expect("worth a line");
+
+        // 10-1-4-1: a blocker replaces the target, so the line has to say whose
+        // place it took or the attack still reads as aimed where it started.
+        let blocked = line(PlayerEvent::Blocked {
+            blocker: attacker,
+            replacing: target,
+        });
+        assert!(blocked.contains(&named(target)), "{blocked}");
+
+        // The powers alone were the whole line before, which after a block does
+        // not even say which two cards they belong to.
+        let resolved = line(PlayerEvent::BattleResolved {
+            attacker,
+            target,
+            attacker_power: 5000,
+            target_power: 6000,
+            attacker_won: false,
+        });
+        assert!(resolved.contains(&named(attacker)), "{resolved}");
+        assert!(resolved.contains(&named(target)), "{resolved}");
+        assert!(
+            resolved.contains("5000") && resolved.contains("6000"),
+            "{resolved}"
+        );
+
+        // A counter costs a card from hand (7-1-3-2-1); which one is spent is
+        // half of what happened.
+        let countered = line(PlayerEvent::Countered {
+            player: session.human,
+            card: attacker,
+            target,
+            amount: 2000,
+        });
+        assert!(countered.contains(&named(attacker)), "{countered}");
+        assert!(countered.contains(&named(target)), "{countered}");
+        assert!(countered.contains("2000"), "{countered}");
     }
 
     /// Cards reaching a trash pile are announced so the UI can animate them.
