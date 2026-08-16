@@ -111,7 +111,7 @@ pub fn legal_actions(game: &Game) -> Vec<Action> {
                     if !derive::conditions_hold(
                         state,
                         game.db(),
-                        &[],
+                        &derived,
                         card,
                         None,
                         &effect.conditions,

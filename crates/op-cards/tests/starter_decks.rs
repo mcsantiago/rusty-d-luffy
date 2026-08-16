@@ -775,6 +775,127 @@ fn st08_014_does_nothing_with_no_life_to_pay_with() {
     assert_eq!(game.derived().get(victim).effective_cost(), 4);
 }
 
+/// Shrinks `target` by `amount` for the turn, as ST-06 and ST-08's reduction
+/// effects do, without having to play the card that would.
+fn shrink(game: &mut Game, target: op_core::CardInstanceId, amount: i32) {
+    game.state.modifiers.push(op_core::effect::Modifier {
+        target,
+        kind: op_core::effect::ModKind::Cost(-amount),
+        duration: op_core::effect::Duration::ThisTurn,
+        source: target,
+        controller: PlayerId::P0,
+    });
+}
+
+/// Plays ST08-009 Makino for P0 and reports whether its [On Play] drew.
+fn makino_draws(game: &mut Game) -> bool {
+    let def = game.db().by_number("ST08-009").unwrap();
+    let makino = game.state.spawn(def, PlayerId::P0, Zone::Hand);
+    let deck_before = game.state.player(PlayerId::P0).deck.len();
+    game.step(Action::PlayCard {
+        card: makino,
+        replacing: None,
+    })
+    .unwrap();
+    assert_eq!(
+        game.state.card(makino).zone,
+        Zone::Character,
+        "Makino played"
+    );
+    deck_before - game.state.player(PlayerId::P0).deck.len() == 1
+}
+
+/// 2-7-6: "an effect may make a cost greater or less than the written value",
+/// and 8-4-6 resolves an effect against the continuous effects already applied.
+/// So ST08-009's "if there is a Character with a cost of 0" reads *derived*
+/// cost. Nothing in the pool is printed at 0 — against printed cost the clause
+/// is unreachable and the card never draws.
+///
+/// The full line, as ST-08 intends it: the opponent has a 2-cost Character,
+/// Higuma takes it to 0, Makino draws.
+#[test]
+fn rule_2_7_6_st08_009_reads_derived_cost_not_printed() {
+    let Some((db, cards)) = load() else { return };
+
+    // Turn 3, where P0's 3 DON!! cover Higuma at 1 and Makino at 2.
+    let mut game = st08_at_main(Arc::clone(&db), Arc::clone(&cards), 5, 2);
+    put_in_play(&mut game, PlayerId::P1, "ST08-003"); // cost 2
+    assert!(
+        !makino_draws(&mut game),
+        "cost 2 is not cost 0, so there is nothing to draw off"
+    );
+
+    let mut game = st08_at_main(db, cards, 5, 2);
+    let gaimon = put_in_play(&mut game, PlayerId::P1, "ST08-003");
+    let def = game.db().by_number("ST08-008").unwrap(); // Higuma, -2 cost
+    let higuma = game.state.spawn(def, PlayerId::P0, Zone::Hand);
+    game.step(Action::PlayCard {
+        card: higuma,
+        replacing: None,
+    })
+    .unwrap();
+    game.step(Action::Choose {
+        cards: vec![gaimon],
+    })
+    .unwrap();
+    assert_eq!(game.derived().get(gaimon).effective_cost(), 0);
+
+    assert!(
+        makino_draws(&mut game),
+        "the reduced Character is a cost-0 Character"
+    );
+}
+
+/// 1-3-6-2: a cost driven below 0 "is treated as being 0". ST08-014's -7 on a
+/// 2-cost Character leaves -5, which is still a Character with a cost of 0 for
+/// ST08-009 to read.
+#[test]
+fn rule_1_3_6_2_st08_009_counts_a_character_reduced_below_zero() {
+    let Some((db, cards)) = load() else { return };
+    let mut game = st08_at_main(db, cards, 5, 2);
+
+    let gaimon = put_in_play(&mut game, PlayerId::P1, "ST08-003"); // cost 2
+    shrink(&mut game, gaimon, 7);
+    assert_eq!(game.derived().get(gaimon).cost, -5, "the raw value is kept");
+
+    assert!(makino_draws(&mut game), "-5 reads as 0");
+}
+
+/// The same clause on a permanent effect: ST06-004 Smoker's "[DON!! x1] If
+/// there is a Character with a cost of 0, this Character gains [Double
+/// Attack]". 8-4-6 has it see the reduction that has already resolved, so the
+/// keyword tracks the derived board and not the printed cost.
+#[test]
+fn rule_8_4_6_st06_004_gains_double_attack_off_a_derived_cost_zero_character() {
+    let Some((db, cards)) = load() else { return };
+    let mut game = at_main(db, cards, 5, [st06(), st01()], 0);
+
+    let smoker = put_in_play(&mut game, PlayerId::P0, "ST06-004");
+    let t_bone = put_in_play(&mut game, PlayerId::P1, "ST06-013"); // cost 3
+    assert!(!game
+        .derived()
+        .get(smoker)
+        .has_keyword(Keyword::DoubleAttack));
+
+    shrink(&mut game, t_bone, 4);
+    assert_eq!(game.derived().get(t_bone).effective_cost(), 0);
+    assert!(
+        !game
+            .derived()
+            .get(smoker)
+            .has_keyword(Keyword::DoubleAttack),
+        "the [DON!! x1] half is a separate gate"
+    );
+
+    game.step(Action::GiveDon { to: smoker }).unwrap();
+    assert!(
+        game.derived()
+            .get(smoker)
+            .has_keyword(Keyword::DoubleAttack),
+        "cost 3 shrunk to 0 is a Character with a cost of 0"
+    );
+}
+
 /// ST08-013's trade. It is only reachable when the attacker *loses* — 7-1-4-2,
 /// where nothing happens — so both Characters are still standing when the
 /// end-of-battle effect resolves.

@@ -770,7 +770,16 @@ impl Game {
             ));
         }
         // 8-4-1-1: conditions must be met before activation.
-        if !derive::conditions_hold(&self.state, &self.db, &[], card, None, &effect.conditions) {
+        if !effect.conditions.is_empty()
+            && !derive::conditions_hold(
+                &self.state,
+                &self.db,
+                &self.derived(),
+                card,
+                None,
+                &effect.conditions,
+            )
+        {
             return Err(IllegalAction::Illegal(
                 "the effect's conditions are not met".into(),
             ));
@@ -2278,16 +2287,14 @@ impl Game {
             }
 
             Op::RequireIf { cond } => {
-                let derived = self.derived();
                 let holds = derive::conditions_hold(
                     &self.state,
                     &self.db,
-                    &[],
+                    &self.derived(),
                     frame.source,
                     Some(frame),
                     std::slice::from_ref(&cond),
                 );
-                let _ = derived;
                 if holds {
                     OpOutcome::Advance
                 } else {
@@ -2424,7 +2431,7 @@ impl Game {
         derive::conditions_hold(
             &self.state,
             &self.db,
-            &[],
+            &self.derived(),
             frame.source,
             Some(frame),
             std::slice::from_ref(cond),
@@ -2627,6 +2634,10 @@ impl Game {
             .cloned()
             .collect();
 
+        // Built on first need and then reused: queuing a frame changes nothing
+        // derivation reads, and most autos have no condition to read it — this
+        // runs once per card in play on every K.O. and every end of turn.
+        let mut derived: Option<Derived> = None;
         for effect in effects {
             if effect.once_per_turn
                 && self
@@ -2637,9 +2648,18 @@ impl Game {
             {
                 continue;
             }
-            if !derive::conditions_hold(&self.state, &self.db, &[], card, None, &effect.conditions)
-            {
-                continue;
+            if !effect.conditions.is_empty() {
+                let table = derived.get_or_insert_with(|| self.derived());
+                if !derive::conditions_hold(
+                    &self.state,
+                    &self.db,
+                    table,
+                    card,
+                    None,
+                    &effect.conditions,
+                ) {
+                    continue;
+                }
             }
             // 8-3-1-3: a cost that cannot be paid in full cannot be paid at all,
             // so an unaffordable one stops the effect here rather than asking.

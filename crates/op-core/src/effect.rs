@@ -384,7 +384,8 @@ pub enum Condition {
     SelfRested,
     /// "If your Leader has the {Type} type".
     LeaderHasType(String),
-    /// "If there is a Character with a cost of N" — either player's.
+    /// "If there is a Character with a cost of N" — either player's, and its
+    /// derived cost (2-7-6).
     AnyCharacterWithCost(u8),
     /// "If you have N or less cards in your hand" (ST03-017). The controller's
     /// hand, counted after everything before it in the effect has resolved —
