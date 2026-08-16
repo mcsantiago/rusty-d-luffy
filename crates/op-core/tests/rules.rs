@@ -590,6 +590,16 @@ fn put_in_play(game: &mut Game, player: PlayerId, number: &str) -> op_core::Card
     card
 }
 
+/// Appends a card to `player`'s hand, so a test can state the hand order it
+/// depends on rather than inheriting whatever the shuffle dealt.
+fn put_in_hand(game: &mut Game, player: PlayerId, number: &str) -> op_core::CardInstanceId {
+    let def = game.db().by_number(number).unwrap();
+    let card = game.state.spawn(def, player, Zone::Limbo);
+    game.state
+        .move_card(card, player, Zone::Hand, Placement::Bottom);
+    card
+}
+
 #[test]
 fn rule_7_1_4_1_attacker_wins_ties_and_kos_the_character() {
     let cards = TestCards::new();
@@ -1341,6 +1351,171 @@ fn rule_8_3_1_a_hand_cost_is_the_players_choice() {
         .all(|&c| game.state.card(c).zone == Zone::Hand));
 }
 
+/// 8-3-1-3: a cost is paid in full or not at all — so one card cannot answer
+/// for two. The second trip to the trash would find it already there, leaving
+/// a two-card cost settled with one card and reported paid.
+#[test]
+fn rule_8_3_1_3_the_same_card_cannot_pay_a_hand_cost_twice() {
+    let cards = TestCards::new();
+    let scripts = TestScripts::default().with(
+        cards.def("CHR-5K"),
+        CardScript {
+            activated: vec![op_core::script::ActivatedEffect {
+                conditions: vec![],
+                cost: ActivationCost {
+                    trash_from_hand: 2,
+                    ..Default::default()
+                },
+                ops: vec![EffectOp::Draw {
+                    player: Who::You,
+                    n: 1,
+                }],
+                slot: 0,
+                once_per_turn: false,
+            }],
+            ..Default::default()
+        },
+    );
+    let (mut game, _) = game_with(
+        &cards,
+        scripts,
+        7,
+        ("LDR-001", deck_of("CHR-5K", 30)),
+        ("LDR-002", deck_of("CHR-5K", 30)),
+    );
+    to_main(&mut game);
+    let source = put_in_play(&mut game, PlayerId::P0, "CHR-5K");
+
+    let twice = game.state.player(PlayerId::P0).hand[0];
+    assert!(game
+        .step(Action::ActivateEffect {
+            card: source,
+            slot: 0,
+            discard: vec![twice, twice],
+        })
+        .is_err());
+    assert_eq!(
+        game.state.card(twice).zone,
+        Zone::Hand,
+        "a refused activation spends nothing"
+    );
+}
+
+/// 10-2-14-1: "trash" moves a card *selected from* the hand, and 8-4-4 leaves
+/// the selection to the player — so an auto effect's cost asks, exactly as the
+/// same cost named up front with an `ActivateEffect` does.
+///
+/// The hand is two cards with the one worth keeping on the left, because that
+/// is the case a cost paying itself out of the front of the hand gets wrong
+/// while a one-card hand hides it.
+#[test]
+fn rule_10_2_14_1_a_hand_cost_asks_which_card_to_trash() {
+    let cards = TestCards::new();
+    let scripts = TestScripts::default().with(
+        cards.def("CHR-BLOCK"),
+        CardScript {
+            auto: vec![AutoEffect {
+                timing: Timing::OnPlay,
+                conditions: vec![],
+                cost: ActivationCost {
+                    trash_from_hand: 1,
+                    ..Default::default()
+                },
+                ops: vec![EffectOp::Draw {
+                    player: Who::You,
+                    n: 1,
+                }],
+                slot: 0,
+                once_per_turn: false,
+            }],
+            ..Default::default()
+        },
+    );
+    let (mut game, _) = game_with(
+        &cards,
+        scripts,
+        7,
+        ("LDR-001", deck_of("CHR-5K", 30)),
+        ("LDR-002", deck_of("CHR-5K", 30)),
+    );
+    to_main(&mut game);
+
+    // A stated hand: the card being played, then the Counter card the player
+    // needs, then the one they can spare.
+    for card in game.state.player(PlayerId::P0).hand.clone() {
+        game.state
+            .move_card(card, PlayerId::P0, Zone::Deck, Placement::Bottom);
+    }
+    let source = put_in_hand(&mut game, PlayerId::P0, "CHR-BLOCK");
+    let keeper = put_in_hand(&mut game, PlayerId::P0, "CHR-2K");
+    let spare = put_in_hand(&mut game, PlayerId::P0, "CHR-7K");
+
+    game.step(Action::PlayCard {
+        card: source,
+        replacing: None,
+    })
+    .unwrap();
+    assert!(
+        matches!(game.pending(), Some(Pending::PayCost { .. })),
+        "the [On Play] cost is the controller's to decline first (8-3-1-4)"
+    );
+
+    let out = game.step(Action::PayCost(true)).unwrap();
+    let Some(Pending::Choose {
+        options,
+        up_to,
+        at_least,
+        ..
+    }) = out.pending
+    else {
+        panic!("agreeing to a hand cost should ask which card to trash");
+    };
+    assert_eq!(
+        options,
+        vec![keeper, spare],
+        "every card in hand is eligible"
+    );
+    assert_eq!(
+        (up_to, at_least),
+        (1, 1),
+        "the cost fixes the count; only which card is open"
+    );
+    assert_eq!(
+        game.state.card(keeper).zone,
+        Zone::Hand,
+        "nothing may be spent before the player has answered"
+    );
+
+    // The generator offers both, so search and the RL mask see the decision too.
+    assert_eq!(
+        op_core::legal_actions(&game),
+        vec![
+            Action::Choose {
+                cards: vec![keeper]
+            },
+            Action::Choose { cards: vec![spare] },
+        ]
+    );
+
+    // Answering with nothing is refused: the cost is an instruction, not an
+    // "up to" (8-4-4-1).
+    assert!(game.step(Action::Choose { cards: vec![] }).is_err());
+    // And a card that is not in hand cannot pay a cost taken from the hand.
+    assert!(game
+        .step(Action::Choose {
+            cards: vec![source]
+        })
+        .is_err());
+
+    game.step(Action::Choose { cards: vec![spare] }).unwrap();
+    assert_eq!(game.state.card(spare).zone, Zone::Trash, "the card named");
+    assert_eq!(
+        game.state.card(keeper).zone,
+        Zone::Hand,
+        "and not whichever card happened to be first"
+    );
+}
+
 // ---- battle step sequencing ------------------------------------------------
 
 /// The battle steps a step outcome announced, in order.
@@ -2026,5 +2201,118 @@ fn rule_7_1_2_3_an_on_block_effect_removing_the_attacker_ends_the_battle() {
     assert!(
         !steps.contains(&BattleStep::Counter) && !steps.contains(&BattleStep::Damage),
         "7-1-2-3 proceeds straight to the end of the battle, got {steps:?}"
+    );
+}
+
+/// An Event with a `"You may <cost>: <effect>"` [Main] ability, for the two
+/// tests below.
+fn event_costing_a_card() -> CardScript {
+    CardScript {
+        activated: vec![op_core::script::ActivatedEffect {
+            conditions: vec![],
+            cost: ActivationCost {
+                trash_from_hand: 1,
+                ..Default::default()
+            },
+            ops: vec![draw_for(Who::You)],
+            slot: 0,
+            once_per_turn: false,
+        }],
+        ..CardScript::default()
+    }
+}
+
+/// 8-3-1-4: a cost is the controller's to decline, and an Event's "You may" is
+/// no exception. The DON!! already spent do not make the choice for them —
+/// ST08-014 asks for a Life card, which at 1 Life is worth more than the
+/// effect, and taking it unasked spends the game to save the card.
+#[test]
+fn rule_8_3_1_4_an_events_optional_cost_may_be_declined() {
+    let cards = TestCards::new();
+    let (mut game, _) = game_with(
+        &cards,
+        TestScripts::default().with(cards.def("EVT-1"), event_costing_a_card()),
+        7,
+        ("LDR-001", deck_of("CHR-2K", 30)),
+        ("LDR-002", deck_of("CHR-2K", 30)),
+    );
+    to_main(&mut game);
+
+    let event = put_in_hand(&mut game, PlayerId::P0, "EVT-1");
+    let keep = put_in_hand(&mut game, PlayerId::P0, "CHR-5K");
+    let hand_before = game.state.player(PlayerId::P0).hand.len();
+
+    game.step(Action::PlayCard {
+        card: event,
+        replacing: None,
+    })
+    .unwrap();
+    assert!(
+        matches!(game.pending(), Some(Pending::PayCost { .. })),
+        "the cost should be offered, not taken, got {:?}",
+        game.pending()
+    );
+
+    let events = game.step(Action::PayCost(false)).unwrap().events;
+
+    // 8-4-2: the Event is played and trashed either way. Only its effect is
+    // declined.
+    assert_eq!(game.state.card(event).zone, Zone::Trash);
+    assert_eq!(
+        game.state.card(keep).zone,
+        Zone::Hand,
+        "declining spends nothing from hand"
+    );
+    assert_eq!(
+        game.state.player(PlayerId::P0).hand.len(),
+        hand_before - 1,
+        "only the Event itself left the hand"
+    );
+    assert!(
+        !events.iter().any(|e| matches!(e, GameEvent::Drew { .. })),
+        "the declined effect must not resolve, got {events:#?}"
+    );
+}
+
+/// 10-2-14-1 for the third payment path. An Event's own hand cost is selected
+/// from the hand like any other — this one used to take the front of it.
+#[test]
+fn rule_10_2_14_1_an_events_hand_cost_asks_which_card_to_trash() {
+    let cards = TestCards::new();
+    let (mut game, _) = game_with(
+        &cards,
+        TestScripts::default().with(cards.def("EVT-1"), event_costing_a_card()),
+        7,
+        ("LDR-001", deck_of("CHR-2K", 30)),
+        ("LDR-002", deck_of("CHR-2K", 30)),
+    );
+    to_main(&mut game);
+
+    let event = put_in_hand(&mut game, PlayerId::P0, "EVT-1");
+    let keep = put_in_hand(&mut game, PlayerId::P0, "CHR-5K");
+    let spend = put_in_hand(&mut game, PlayerId::P0, "CHR-7K");
+
+    game.step(Action::PlayCard {
+        card: event,
+        replacing: None,
+    })
+    .unwrap();
+    game.step(Action::PayCost(true)).unwrap();
+
+    let Some(Pending::Choose { options, .. }) = game.pending().cloned() else {
+        panic!("a hand cost asks which card, got {:?}", game.pending());
+    };
+    assert!(
+        !options.contains(&event),
+        "the Event reached the trash at 8-4-2 and cannot pay for itself"
+    );
+
+    game.step(Action::Choose { cards: vec![spend] }).unwrap();
+
+    assert_eq!(game.state.card(spend).zone, Zone::Trash);
+    assert_eq!(
+        game.state.card(keep).zone,
+        Zone::Hand,
+        "the card named is the card spent"
     );
 }

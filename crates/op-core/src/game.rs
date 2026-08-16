@@ -63,7 +63,9 @@ pub struct ActivationChoice<'a> {
 use crate::action::{Action, IllegalAction, Pending};
 use crate::card::{CardDb, Category, Keyword};
 use crate::derive::{self, Derived};
-use crate::effect::{Duration, EffectFrame, ModKind, Modifier, Timing};
+use crate::effect::{
+    Duration, EffectFrame, ModKind, Modifier, PendingCost, Timing, COST_TRASH_KEY,
+};
 use crate::event::{GameEvent, PlayerEvent};
 use crate::ids::{CardInstanceId, PlayerId};
 use crate::script::{ScriptSource, BATTLED_BINDING};
@@ -377,7 +379,10 @@ impl Game {
                         "no effect is waiting on a cost".into(),
                     ));
                 };
-                let Some(pc) = current.pending_cost.take() else {
+                // Left on the frame until it is actually paid: a hand cost asks
+                // which cards to trash first, and that answer arrives as its own
+                // action.
+                let Some(pc) = current.pending_cost.clone() else {
                     return Err(IllegalAction::Illegal(
                         "that effect is not waiting on a cost".into(),
                     ));
@@ -395,24 +400,24 @@ impl Game {
                     self.state.pending = None;
                     return Ok(());
                 }
-                // Simplification: a hand cost takes the leftmost cards.
-                let discard: Vec<CardInstanceId> = self
-                    .state
-                    .player(player)
-                    .hand
-                    .iter()
-                    .take(pc.cost.trash_from_hand as usize)
-                    .copied()
-                    .collect();
-                let owed = self.pay(player, source, &pc.cost, &discard, events);
-                if pc.once_per_turn {
-                    self.state.card_mut(source).used_once_per_turn.push(pc.slot);
+                // 10-2-14-1: a hand cost trashes cards *selected from* the hand,
+                // and 8-4-4 leaves the selection to the player.
+                let hand = self.state.player(player).hand.to_vec();
+                let n = pc.cost.trash_from_hand as usize;
+                if n > 0 && hand.len() > n {
+                    self.state.pending = Some(Pending::Choose {
+                        player,
+                        key: COST_TRASH_KEY.to_string(),
+                        options: hand,
+                        up_to: n as u8,
+                        at_least: n as u8,
+                    });
+                    return Ok(());
                 }
-                events.push(GameEvent::EffectActivated {
-                    source,
-                    controller: player,
-                });
-                self.state.pending = owed;
+                // One legal answer is not a decision, as in `Op::Choose`: a hand
+                // no bigger than the cost has only one way to pay it.
+                let discard = hand[..n].to_vec();
+                self.settle_cost(player, source, &pc, &discard, events);
                 Ok(())
             }
 
@@ -511,6 +516,16 @@ impl Game {
                 }
                 let key = key.clone();
                 let cards = cards.clone();
+                // A cost's own question, not a script's: a frame runs no ops
+                // while its cost is unpaid, so no `Choose` op can be waiting.
+                if self
+                    .state
+                    .resolution
+                    .current()
+                    .is_some_and(|f| f.pending_cost.is_some())
+                {
+                    return self.pay_hand_cost(*player, &cards, events);
+                }
                 let _ = player;
                 if let Some(frame) = self.state.resolution.current_mut() {
                     frame.bind(&key, cards);
@@ -645,10 +660,6 @@ impl Game {
             events.push(GameEvent::KnockedOut { card: victim });
         }
 
-        // Set by the Event branch when its further cost carries a `DON!! −X`
-        // whose selection is the player's to make.
-        let mut owed = None;
-
         match category {
             Category::Character => {
                 self.state
@@ -689,33 +700,11 @@ impl Game {
                     .first()
                     .cloned();
                 let extra = main.as_ref().map(|a| a.cost.clone()).unwrap_or_default();
-                // 8-3-1-3: a cost that cannot be paid in full cannot be paid at
-                // all, and then the effect does not resolve. The card is still
-                // played and trashed.
-                //
-                // Diverges from "You may ...:" in one direction only: with the
-                // cost payable, the engine pays. Declining would resolve
-                // nothing at all for DON!! already spent, so it is never a
-                // choice a player would take — and playing the Event is itself
-                // the decision. Same simplification as an auto effect with a
-                // cost; see `queue_autos`.
-                let paying = extra.is_free() || self.can_pay(player, card, &extra);
-                let ops = match &main {
-                    Some(a) if paying => a.ops.clone(),
-                    _ => Vec::new(),
-                };
-                if paying && !extra.is_free() {
-                    let discard: Vec<CardInstanceId> = self
-                        .state
-                        .player(player)
-                        .hand
-                        .iter()
-                        .filter(|&&c| c != card)
-                        .take(extra.trash_from_hand as usize)
-                        .copied()
-                        .collect();
-                    owed = self.pay(player, card, &extra, &discard, events);
-                }
+
+                // The trash comes first, so the log reads in the order 8-4-2
+                // gives and the card is out of the hand before its own cost
+                // looks there — a "trash 1 card from your hand" cost must not
+                // be able to pay itself with the Event being played.
                 self.state
                     .move_card(card, player, Zone::Trash, Placement::Top);
                 events.push(GameEvent::CardPlayed {
@@ -723,14 +712,37 @@ impl Game {
                     card,
                     cost_paid: cost,
                 });
-                if !ops.is_empty() {
-                    events.push(GameEvent::EffectActivated {
-                        source: card,
-                        controller: player,
-                    });
-                    self.state
-                        .resolution
-                        .push(EffectFrame::new(card, player, ops));
+
+                // 8-3-1-3: a cost that cannot be paid in full cannot be paid at
+                // all, and then the effect does not resolve. The card is still
+                // played and trashed.
+                // An `activated[0]` that resolves to nothing is not an effect to
+                // activate, and asking for its cost first would be asking a
+                // player to pay for nothing.
+                if let Some(a) = main.filter(|a| !a.ops.is_empty()) {
+                    if extra.is_free() {
+                        events.push(GameEvent::EffectActivated {
+                            source: card,
+                            controller: player,
+                        });
+                        self.state
+                            .resolution
+                            .push(EffectFrame::new(card, player, a.ops));
+                    } else if self.can_pay(player, card, &extra) {
+                        // 8-3-1-4: a "You may ...:" cost is the controller's to
+                        // decline, and the DON!! already spent do not make the
+                        // choice for them — ST08-014 asks for a Life card, which
+                        // at 1 Life is worth more than the effect. Pushed unpaid,
+                        // exactly as an auto effect's cost is; the frame runs no
+                        // ops and announces itself only once paid.
+                        let mut frame = EffectFrame::new(card, player, a.ops);
+                        frame.pending_cost = Some(PendingCost {
+                            cost: extra,
+                            slot: a.slot,
+                            once_per_turn: a.once_per_turn,
+                        });
+                        self.state.resolution.push(frame);
+                    }
                 }
             }
             Category::Leader | Category::Don => {
@@ -738,7 +750,10 @@ impl Game {
             }
         }
 
-        self.state.pending = owed;
+        // Nothing here asks a question of its own any more: an Event's further
+        // cost is carried on the frame and asked for by `resolve_current_frame`,
+        // which is also where a `DON!! −X` selection inside one now surfaces.
+        self.state.pending = None;
         Ok(())
     }
 
@@ -791,21 +806,7 @@ impl Game {
                 "cannot pay the activation cost".into(),
             ));
         }
-        if discard.len() != effect.cost.trash_from_hand as usize {
-            return Err(IllegalAction::Illegal(format!(
-                "this costs {} card(s) from hand, {} named",
-                effect.cost.trash_from_hand,
-                discard.len()
-            )));
-        }
-        if let Some(bad) = discard
-            .iter()
-            .find(|c| !self.state.player(player).hand.contains(c))
-        {
-            return Err(IllegalAction::Illegal(format!(
-                "{bad:?} is not in your hand"
-            )));
-        }
+        self.check_hand_cost(player, effect.cost.trash_from_hand, discard)?;
         let owed = self.pay(player, card, &effect.cost, discard, events);
 
         if effect.once_per_turn {
@@ -820,6 +821,96 @@ impl Game {
             .push(EffectFrame::new(card, player, effect.ops));
         self.state.pending = owed;
         Ok(())
+    }
+
+    /// Checks the cards named for a "trash N cards from your hand" cost.
+    ///
+    /// The count comes from the cost and the cards from the live hand, so this
+    /// holds for either way of paying: named up front with an `ActivateEffect`,
+    /// or answered later to the `Choose` an auto effect's cost raises.
+    fn check_hand_cost(
+        &self,
+        player: PlayerId,
+        trash_from_hand: u8,
+        discard: &[CardInstanceId],
+    ) -> Result<(), IllegalAction> {
+        if discard.len() != trash_from_hand as usize {
+            return Err(IllegalAction::Illegal(format!(
+                "this costs {} card(s) from hand, {} named",
+                trash_from_hand,
+                discard.len()
+            )));
+        }
+        if let Some(bad) = discard
+            .iter()
+            .find(|c| !self.state.player(player).hand.contains(c))
+        {
+            return Err(IllegalAction::Illegal(format!(
+                "{bad:?} is not in your hand"
+            )));
+        }
+        // 8-3-1-3: naming the same card twice would pay a two-card cost with
+        // one — the second trip to the trash finds it already there — and
+        // report it paid in full.
+        if discard
+            .iter()
+            .enumerate()
+            .any(|(i, c)| discard[i + 1..].contains(c))
+        {
+            return Err(IllegalAction::Illegal("the same card named twice".into()));
+        }
+        Ok(())
+    }
+
+    /// Answers the `Choose` a hand cost raised (10-2-14-1), paying with the
+    /// cards named. Validated against the hand rather than trusted, the same as
+    /// the discard travelling with an `ActivateEffect`.
+    fn pay_hand_cost(
+        &mut self,
+        player: PlayerId,
+        discard: &[CardInstanceId],
+        events: &mut Vec<GameEvent>,
+    ) -> Result<(), IllegalAction> {
+        let Some(current) = self.state.resolution.current() else {
+            return Err(IllegalAction::Illegal(
+                "no effect is waiting on a cost".into(),
+            ));
+        };
+        let Some(pc) = current.pending_cost.clone() else {
+            return Err(IllegalAction::Illegal(
+                "that effect is not waiting on a cost".into(),
+            ));
+        };
+        let source = current.source;
+        self.check_hand_cost(player, pc.cost.trash_from_hand, discard)?;
+        self.settle_cost(player, source, &pc, discard, events);
+        Ok(())
+    }
+
+    /// Spends an agreed auto-effect cost and releases the frame to run.
+    ///
+    /// Clearing `pending_cost` is what releases it: while set, the frame runs no
+    /// ops and `resolve_current_frame` re-asks for payment.
+    fn settle_cost(
+        &mut self,
+        player: PlayerId,
+        source: CardInstanceId,
+        pc: &PendingCost,
+        discard: &[CardInstanceId],
+        events: &mut Vec<GameEvent>,
+    ) {
+        if let Some(current) = self.state.resolution.current_mut() {
+            current.pending_cost = None;
+        }
+        let owed = self.pay(player, source, &pc.cost, discard, events);
+        if pc.once_per_turn {
+            self.state.card_mut(source).used_once_per_turn.push(pc.slot);
+        }
+        events.push(GameEvent::EffectActivated {
+            source,
+            controller: player,
+        });
+        self.state.pending = owed;
     }
 
     pub(crate) fn can_pay(

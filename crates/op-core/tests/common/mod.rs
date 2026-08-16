@@ -54,6 +54,8 @@ impl TestCards {
         trig.trigger = Some("[Trigger] Draw 1 card.".to_string());
         db.insert(trig);
 
+        db.insert(event("EVT-1"));
+
         TestCards { db }
     }
 
@@ -101,6 +103,26 @@ fn character(
         types: vec!["Test".to_string()],
         attributes: Vec::new(),
         keywords: keywords.to_vec(),
+        effect: None,
+        trigger: None,
+    }
+}
+
+/// An Event, which is a card with no power and no counter (2-7-1). Cost 1 so a
+/// test at its first Main Phase can afford it and still have DON!! left over.
+fn event(number: &str) -> CardDef {
+    CardDef {
+        number: number.to_string(),
+        name: number.to_string(),
+        category: Category::Event,
+        colors: vec![Color::Red],
+        cost: 1,
+        life: None,
+        power: None,
+        counter: None,
+        types: vec!["Test".to_string()],
+        attributes: Vec::new(),
+        keywords: Vec::new(),
         effect: None,
         trigger: None,
     }

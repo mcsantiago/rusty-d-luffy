@@ -226,6 +226,12 @@ pub fn question(pending: &Pending) -> String {
                 n => format!("these {n} cards"),
             }
         ),
+        // The cost asking, not the effect: without this it is the same "Choose
+        // 1" the target picker puts up a moment later, over cards the player is
+        // about to lose.
+        Pending::Choose { key, up_to, .. } if key == op_core::effect::COST_TRASH_KEY => {
+            format!("Trash {up_to} from your hand to pay the cost")
+        }
         // "up to" is an offer the player may decline; a non-zero floor is an
         // instruction, and saying "up to" there would suggest otherwise.
         Pending::Choose {

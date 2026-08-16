@@ -245,6 +245,11 @@ fn question(pending: &op_core::Pending) -> String {
             "Put these {} back on your deck, top or bottom, in any order:",
             cards.len()
         ),
+        // The cost asking, not the effect: the cards on offer are the ones the
+        // player is about to lose, which "Choose 1" does not say.
+        P::Choose { key, up_to, .. } if key == op_core::effect::COST_TRASH_KEY => {
+            format!("Trash {up_to} from your hand to pay the cost:")
+        }
         // "Up to" is an offer the player may decline; a floor is an
         // instruction, and saying "up to" there invites an answer the engine
         // will refuse.
