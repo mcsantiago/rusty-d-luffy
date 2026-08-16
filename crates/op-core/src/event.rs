@@ -106,6 +106,15 @@ pub enum GameEvent {
         player: PlayerId,
         count: u8,
     },
+    /// 6-5-5-4: a card leaving the field sends the DON!! given to it back to
+    /// the cost area, rested. The inverse of [`GameEvent::DonGiven`], and
+    /// separate from [`GameEvent::DonReturned`] because that one is the
+    /// Refresh Phase returning DON!! from cards that stayed put.
+    DonDetached {
+        player: PlayerId,
+        don: CardInstanceId,
+        from: CardInstanceId,
+    },
     /// The "DON!! −N" cost: DON!! leaves the field for the DON!! deck. The
     /// opposite of [`GameEvent::DonReturned`] in effect — the player is down
     /// that much DON!! until it comes back around off the deck.
@@ -232,6 +241,11 @@ pub enum PlayerEvent {
         player: PlayerId,
         count: u8,
     },
+    DonDetached {
+        player: PlayerId,
+        don: CardRef,
+        from: CardRef,
+    },
     DonSpentToDonDeck {
         player: PlayerId,
         count: u8,
@@ -349,6 +363,14 @@ impl GameEvent {
                 to: vis(to),
             },
             GameEvent::DonReturned { player, count } => PlayerEvent::DonReturned { player, count },
+            // The DON!! lands in the cost area, which is open (3-3-2). The card
+            // it came off has just left the field and may now be somewhere the
+            // viewer may not look, so it redacts like any other move.
+            GameEvent::DonDetached { player, don, from } => PlayerEvent::DonDetached {
+                player,
+                don: vis(don),
+                from: vis(from),
+            },
             // Both areas involved are open (3-3-2), so nothing is redacted.
             GameEvent::DonSpentToDonDeck { player, count } => {
                 PlayerEvent::DonSpentToDonDeck { player, count }
@@ -460,6 +482,7 @@ impl PlayerEvent {
             | PlayerEvent::LifeTaken { card, .. }
             | PlayerEvent::TriggerActivated { card, .. } => vec![card],
             PlayerEvent::DonGiven { don, to, .. } => vec![don, to],
+            PlayerEvent::DonDetached { don, from, .. } => vec![don, from],
             PlayerEvent::AttackDeclared { attacker, target } => vec![attacker, target],
             PlayerEvent::Blocked { blocker, replacing } => vec![blocker, replacing],
             PlayerEvent::Countered { card, target, .. } => vec![card, target],

@@ -49,6 +49,9 @@ impl TestCards {
             &[Keyword::Unblockable],
         ));
 
+        // A Stage, for the one-at-a-time rule (3-8-5).
+        db.insert(stage("STG-1K", 1));
+
         // A card with a [Trigger], for damage-step suspension tests.
         let mut trig = character("CHR-TRIGGER", 1, 1000, Some(1000), &[]);
         trig.trigger = Some("[Trigger] Draw 1 card.".to_string());
@@ -117,6 +120,25 @@ fn event(number: &str) -> CardDef {
         category: Category::Event,
         colors: vec![Color::Red],
         cost: 1,
+        life: None,
+        power: None,
+        counter: None,
+        types: vec!["Test".to_string()],
+        attributes: Vec::new(),
+        keywords: Vec::new(),
+        effect: None,
+        trigger: None,
+    }
+}
+
+/// A Stage, for the replacement rule of 3-8-5-1.
+fn stage(number: &str, cost: u8) -> CardDef {
+    CardDef {
+        number: number.to_string(),
+        name: number.to_string(),
+        category: Category::Stage,
+        colors: vec![Color::Red],
+        cost,
         life: None,
         power: None,
         counter: None,

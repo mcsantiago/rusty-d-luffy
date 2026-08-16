@@ -3,7 +3,7 @@
 //! Event rendering takes a [`PlayerEvent`], so a card the viewer may not
 //! identify has no id to look up and cannot be named by accident.
 
-use op_core::{Action, CardRef, DonClass, Game, Pending, PlayerEvent, PlayerId};
+use op_core::{Action, CardRef, DonClass, Game, Pending, PlayerEvent, PlayerId, Zone};
 
 pub fn line(event: &PlayerEvent, game: &Game, viewer: PlayerId) -> Option<String> {
     use PlayerEvent as E;
@@ -50,6 +50,14 @@ pub fn line(event: &PlayerEvent, game: &Game, viewer: PlayerId) -> Option<String
             }
         ),
         E::KnockedOut { card } => format!("{} was K.O.'d", name(*card)),
+        // A card leaving an area it was visible in. Without a line it just
+        // stops being on the board.
+        E::CardMoved { card, from, to } => match (from, to) {
+            (_, Zone::Hand) => format!("{} returned to hand", name(*card)),
+            (_, Zone::Trash) => format!("{} was trashed", name(*card)),
+            (_, Zone::Deck) => format!("{} went back to the deck", name(*card)),
+            _ => return None,
+        },
         E::DamageDealt { player, amount } => {
             format!("{} took {amount} damage", who(*player))
         }
