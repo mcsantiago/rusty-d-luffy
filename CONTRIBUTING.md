@@ -27,6 +27,9 @@ Reviews judge the change, not its provenance.
 - `cargo fmt --all` — CI rejects unformatted code
 - `cargo clippy --workspace --all-targets` — CI runs it with `-D warnings`
 - `cargo test --workspace --release`
+- `python3 tools/lint/comments.py` — comment blocks over the budgets in
+  [AGENTS.md](AGENTS.md). Advisory for now; it will become a CI gate once the
+  existing backlog is cleared
 - Fetch card data first if you touched anything card-related; those tests skip
   themselves without it, so a green run can be hollow
 

@@ -11,6 +11,7 @@ cargo test --workspace --release   # release: the ISMCTS matches are ~60s even
                                    # fanned out across cores, and far worse in debug
 cargo fmt --all
 cargo clippy --workspace --all-targets   # CI runs this with -D warnings
+python3 tools/lint/comments.py           # comment blocks over their budget
 
 cargo run -p op-desktop            # desktop client
 cargo run -p op-cli -- --help      # terminal client
@@ -124,19 +125,43 @@ scripts before rolling it out.
 **Comments explain why, not what.** Prefer recording the reason a thing is
 surprising over narrating the code.
 
-**One line is the default; four is the ceiling.** The median comment in this
-repo is a single line. A rule citation and the divergence it justifies fit in
-one: `// 8-3-1-4: the cost is the controller's to decline.` If the reasoning
-needs a paragraph, it belongs in the commit message, where it is searchable,
-dated, and does not rot in place as the code moves under it.
+**Every comment has a budget, and they differ because the jobs differ.**
+
+| | ceiling | its job |
+|---|---|---|
+| `//` inline | 4 | one surprise, at the line that surprises |
+| `///` item | 4 | what this one thing does, and what will bite you |
+| `//!` module | 10 | orient a reader: what lives here, and the one thing they cannot guess |
+
+One line is the default in all three. A rule citation and the divergence it
+justifies fit in one: `// 8-3-1-4: the cost is the controller's to decline.`
+
+The ceilings are checked:
+
+```bash
+python3 tools/lint/comments.py           # what is over, worst first
+python3 tools/lint/comments.py --stats   # how much, by kind
+```
+
+There is no opt-out marker, deliberately. Reasoning that will not fit belongs
+somewhere it can be found and maintained — a note in `docs/` if it spans
+crates, otherwise the commit message, which is searchable, dated, and does not
+rot in place as the code moves under it. A comment is the worst home for a
+long argument because it is the one place nobody rereads.
 
 Do not write a comment that says what the code used to do, re-argues a decision
 already made in the commit message or an issue, or restates the function name,
 the type, or the next statement. Agents are especially prone to the first two:
 having just done the reasoning, the urge is to leave all of it behind.
 
+Reviewing one: cover it and read the code. If the code still reads, the comment
+was narration — say so. If it does not, ask which single sentence would have
+saved you, and keep that one. "This is too long" is not review feedback a
+writer can act on; "lines 2-6 restate the signature" is.
+
 Card scripts are the exception — each keeps its printed text above it, and any
-divergence from that text cites its rule.
+divergence from that text cites its rule. `crates/op-cards/src/sets/` is
+exempt from the check for that reason.
 
 **A test that cannot fail is not a test.** For anything security- or
 correctness-critical, verify the test fails against the old behaviour before
