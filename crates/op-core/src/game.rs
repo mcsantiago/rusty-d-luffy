@@ -716,7 +716,10 @@ impl Game {
                 // 8-3-1-3: a cost that cannot be paid in full cannot be paid at
                 // all, and then the effect does not resolve. The card is still
                 // played and trashed.
-                if let Some(a) = main {
+                // An `activated[0]` that resolves to nothing is not an effect to
+                // activate, and asking for its cost first would be asking a
+                // player to pay for nothing.
+                if let Some(a) = main.filter(|a| !a.ops.is_empty()) {
                     if extra.is_free() {
                         events.push(GameEvent::EffectActivated {
                             source: card,
