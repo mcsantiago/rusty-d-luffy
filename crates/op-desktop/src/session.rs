@@ -190,6 +190,19 @@ pub struct Snapshot {
     /// activated in the open, or from a [Trigger] revealed by activating it
     /// (10-1-5-1).
     pub choose_source: Option<String>,
+    /// The card whose cost is being asked for, while a `PayCost` is pending.
+    ///
+    /// Same standing as `choose_source`, and needed for the same reason: the
+    /// question names a cost, not the effect buying it, and an `[On Play]` cost
+    /// arrives with the card already on the board rather than under the cursor.
+    pub cost_source: Option<String>,
+    /// Why paying would achieve nothing, when that can already be seen.
+    ///
+    /// Same standing as a `Choice::warning`: advice, never a rule. Paying for an
+    /// effect that finds nothing is legal and still costs (8-4-1-3) — this is
+    /// only so the decline 8-3-1-4 grants is an informed one, rather than
+    /// something the player learns after spending.
+    pub cost_warning: Option<String>,
     /// The human owes a card-picking decision, of at most this many cards.
     ///
     /// Carries no card ids of its own: the engine offers such a decision as one
@@ -727,6 +740,24 @@ impl Session {
         }
         .map(|card| self.db.get(self.game.state.card(card).def).number.clone());
 
+        // The same two facts for a pending cost: which card is asking, and
+        // whether paying would buy anything. Both read off the waiting frame,
+        // since the question itself names only the price.
+        let (cost_source, cost_warning) = match mine {
+            Some(Pending::PayCost { source, .. }) => (
+                Some(
+                    self.db
+                        .get(self.game.state.card(*source).def)
+                        .number
+                        .clone(),
+                ),
+                self.game
+                    .pending_cost_shortfall()
+                    .map(|req| crate::render::shortfall_label(&req)),
+            ),
+            _ => (None, None),
+        };
+
         // Every card the decision may take. Read from the pending itself where
         // it publishes one: a `ReturnDon` offers one representative per class,
         // so the union of the offered sets is a strict subset of the pool and
@@ -785,6 +816,8 @@ impl Session {
             pending_kind,
             trigger_card,
             choose_source,
+            cost_source,
+            cost_warning,
             choose_up_to,
             choose_at_least,
             choose_candidates,
@@ -965,6 +998,10 @@ fn action_kind(action: &Action) -> &'static str {
         // coloured for what it does rather than sharing one neutral style.
         Action::Mulligan(false) => "keep",
         Action::Mulligan(true) => "mulligan",
+        // Same shape, same reason — and the modal needs to tell them apart to
+        // put each on its own button (8-3-1-4).
+        Action::PayCost(true) => "pay",
+        Action::PayCost(false) => "decline",
         _ => "other",
     }
 }

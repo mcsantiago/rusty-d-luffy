@@ -180,7 +180,7 @@
       <div id="choose-modal" class="overlay" hidden>
         <div class="panel wide">
           <h1 id="choose-title">Choose</h1>
-          <div id="choose-source" hidden></div>
+          <div id="choose-source" class="source-panel" hidden></div>
           <p class="sub" id="choose-sub"></p>
           <div class="choose-label">Eligible cards</div>
           <div class="choose-grid" id="choose-grid"></div>
@@ -194,7 +194,7 @@
       <div id="activate-modal" class="overlay" hidden>
         <div class="panel wide">
           <h1 id="activate-title">Activate?</h1>
-          <div id="activate-source" hidden></div>
+          <div id="activate-source" class="source-panel" hidden></div>
           <p class="sub" id="activate-sub"></p>
           <div id="activate-warning" hidden></div>
           <div id="activate-targets" hidden>
@@ -208,10 +208,27 @@
         </div>
       </div>
 
+      <!-- The cost half of the activate modal above. Same parts in the same
+           order — the card and its text, then why paying might buy nothing —
+           because it is the same question asked one step later, about an
+           effect that is already on its way. -->
+      <div id="cost-modal" class="overlay" hidden>
+        <div class="panel wide">
+          <h1 id="cost-title">Pay?</h1>
+          <div id="cost-source" class="source-panel" hidden></div>
+          <p class="sub" id="cost-sub"></p>
+          <div id="cost-warning" hidden></div>
+          <div class="choose-foot">
+            <button id="cost-decline" class="ghost">Don't pay</button>
+            <button id="cost-pay" class="primary">Pay</button>
+          </div>
+        </div>
+      </div>
+
       <div id="attack-modal" class="overlay" hidden>
         <div class="panel wide">
           <h1 id="attack-title">Attack</h1>
-          <div id="attack-source" hidden></div>
+          <div id="attack-source" class="source-panel" hidden></div>
           <p class="sub" id="attack-sub"></p>
           <div class="choose-label">Eligible targets</div>
           <div class="choose-grid" id="attack-grid"></div>

@@ -1176,9 +1176,12 @@ const sameSet = (a, b) =>
 /** The card whose effect is asking, with its text.
  *
  * "Choose up to 1" says nothing about why, and by the time the prompt appears
- * the source may be one of several cards that could have produced it. */
-async function renderChooseSource(number) {
-  const box = $("choose-source");
+ * the source may be one of several cards that could have produced it. A cost
+ * prompt has the same problem one step earlier — it names a price and not what
+ * is buying it — so both render through here.
+ */
+async function renderSourceCard(boxId, number) {
+  const box = $(boxId);
   if (!number) {
     box.hidden = true;
     return;
@@ -1195,6 +1198,62 @@ async function renderChooseSource(number) {
     </div>
   `;
   box.hidden = false;
+}
+
+const renderChooseSource = (number) => renderSourceCard("choose-source", number);
+
+/** The cost prompt, given the same parts as the activation modal.
+ *
+ * 8-3-1-4 lets a player decline a cost, but declining is only a decision if
+ * they can see what they would be declining — and an `[On Play]` cost is asked
+ * after the card is already on the board, with nothing on screen to read the
+ * effect off. The sidebar's one-line "Pay the cost" named the price and never
+ * the thing being bought.
+ *
+ * The warning is the same one the activate modal shows, from the same
+ * `Shortfall`, and matters more here: there the player still has the ability,
+ * while here the cost is spent for an effect that will find nothing.
+ */
+function renderCost(snap) {
+  const modal = $("cost-modal");
+  if (snap.pending_kind !== "pay-cost") {
+    modal.hidden = true;
+    return;
+  }
+
+  const pay = snap.options.find((o) => o.kind === "pay");
+  const decline = snap.options.find((o) => o.kind === "decline");
+  // Both answers always exist for a pending cost. If one is ever missing the
+  // sidebar still lists them, so falling back is losing the modal, not the
+  // decision.
+  if (!pay || !decline) {
+    modal.hidden = true;
+    return;
+  }
+
+  const info = snap.cost_source ? catalogue.get(snap.cost_source) : null;
+  $("cost-title").textContent = info ? `Pay for ${info.name}?` : "Pay?";
+  // The engine's own question names the price; the option label only says
+  // "Pay the cost", which the button already says.
+  $("cost-sub").textContent = snap.question ?? pay.label;
+  renderSourceCard("cost-source", snap.cost_source);
+
+  const warn = $("cost-warning");
+  if (snap.cost_warning) {
+    warn.className = "notice bad";
+    warn.textContent = `${snap.cost_warning} Paying spends the cost and changes nothing.`;
+    warn.hidden = false;
+  } else {
+    warn.hidden = true;
+  }
+
+  // Named for what each does rather than yes/no, and the warning renames the
+  // one it argues against so the default reads as the considered answer.
+  const payBtn = $("cost-pay");
+  payBtn.textContent = snap.cost_warning ? "Pay anyway" : "Pay";
+  payBtn.onclick = () => choose(pay.index);
+  $("cost-decline").onclick = () => choose(decline.index);
+  modal.hidden = false;
 }
 
 function renderChoose(snap) {
@@ -1982,6 +2041,7 @@ function render(snap) {
   announceTurn(snap);
   announceResult(snap.battle_result ?? null);
   renderChoose(snap);
+  renderCost(snap);
   renderArrange(snap);
 
   $("question").textContent =
