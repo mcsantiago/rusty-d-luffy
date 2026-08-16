@@ -913,7 +913,11 @@ function renderActivateWarning(opt) {
     return;
   }
   box.className = "notice bad";
-  box.textContent = `${opt.warning} Activating spends the ability and changes nothing.`;
+  // Verbatim, for the reason `renderCost` gives: the engine's label already
+  // ends with the verdict, and says "the rest of the effect still happens"
+  // where only part of it is wasted. ST06-015 draws a card before it looks for
+  // a Character, and appending "changes nothing" talked the player out of it.
+  box.textContent = opt.warning;
   box.hidden = false;
 }
 
@@ -1241,7 +1245,10 @@ function renderCost(snap) {
   const warn = $("cost-warning");
   if (snap.cost_warning) {
     warn.className = "notice bad";
-    warn.textContent = `${snap.cost_warning} Paying spends the cost and changes nothing.`;
+    // Verbatim. `shortfall_label` already ends with the verdict, and picks
+    // between "changes nothing" and "the rest of the effect still happens" —
+    // adding a sentence here overrides the distinction it exists to draw.
+    warn.textContent = snap.cost_warning;
     warn.hidden = false;
   } else {
     warn.hidden = true;
@@ -1253,7 +1260,10 @@ function renderCost(snap) {
   payBtn.textContent = snap.cost_warning ? "Pay anyway" : "Pay";
   payBtn.onclick = () => choose(pay.index);
   $("cost-decline").onclick = () => choose(decline.index);
-  modal.hidden = false;
+  // Held back while the board is still moving, as the other modals are: an
+  // `[On Play]` cost is asked while its own card is still arriving, and this
+  // overlay would land on top of the card it is naming.
+  modal.hidden = animating();
 }
 
 function renderChoose(snap) {
